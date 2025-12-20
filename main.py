@@ -3,6 +3,7 @@ from tkinter import filedialog, messagebox, colorchooser
 from PIL import Image, ImageTk
 import os
 import json
+import platform
 
 Image.MAX_IMAGE_PIXELS = None 
 
@@ -12,21 +13,17 @@ class SessaoImagem:
         self.caminho = caminho
         self.nome = os.path.basename(caminho)
         
-        # Carrega imagem
         self.imagem_original = Image.open(caminho)
         self.w_real, self.h_real = self.imagem_original.size
         
-        # Cache (LOD)
         self.imagem_preview = None
         self.preview_scale = 1.0
         self._gerar_cache()
         
-        # Estado Visual
         self.zoom_level = 1.0
         self.camera_x = 0
         self.camera_y = 0
         
-        # Estado de Trabalho
         self.grid_w = 1000
         self.grid_h = 1000
         self.grid_color = "#FFFF00"
@@ -52,7 +49,9 @@ class SessaoImagem:
 class AppScientificSlicer:
     def __init__(self, root):
         self.root = root
-        self.root.title("Slicer Lab Pro - AutoSave Enabled")
+        self.is_mac = platform.system() == "Darwin" # Detecção do SO
+        
+        self.root.title(f"Slicer Lab Pro - {'macOS Mode' if self.is_mac else 'Windows Mode'}")
         self.root.geometry("1400x900")
         self.root.configure(bg="#1e1e1e")
 
@@ -73,37 +72,35 @@ class AppScientificSlicer:
         main = tk.Frame(self.root, bg=self.colors["bg"])
         main.pack(fill=tk.BOTH, expand=True)
 
-        # 1. Sidebar
         self.sidebar = tk.Frame(main, width=250, bg=self.colors["sidebar"])
         self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
         self.sidebar.pack_propagate(False)
         
-        tk.Label(self.sidebar, text="PROJETO / IMAGENS", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=10, pady=(10,5))
+        tk.Label(self.sidebar, text="PROJECT / IMAGES", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=10, pady=(10,5))
         self.lista_arquivos = tk.Listbox(self.sidebar, bg=self.colors["sidebar"], fg=self.colors["text"], selectbackground="#37373d", selectforeground="white", bd=0, highlightthickness=0, font=("Segoe UI", 10), activestyle="none")
         self.lista_arquivos.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.lista_arquivos.bind("<<ListboxSelect>>", self.trocar_aba_imagem)
         
-        tk.Button(self.sidebar, text="+ ADICIONAR IMAGEM", command=self.add_imagem_btn, bg=self.colors["accent"], fg="white", relief="flat", font=("Segoe UI", 9, "bold")).pack(fill=tk.X, padx=10, pady=10)
+        tk.Button(self.sidebar, text="+ ADD IMAGE", command=self.add_imagem_btn, bg=self.colors["accent"], fg="white", relief="flat", font=("Segoe UI", 9, "bold")).pack(fill=tk.X, padx=10, pady=10)
 
-        # 2. Área Principal
+        # 2. Main Area
         content = tk.Frame(main, bg=self.colors["bg"])
         content.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # Toolbar
         self.toolbar = tk.Frame(content, bg=self.colors["toolbar"], height=50)
         self.toolbar.pack(fill=tk.X)
         
         self._setup_inputs_grid()
-        self._btn_toolbar("🎨 Cor", self.escolher_cor)
+        self._btn_toolbar("🎨 Color", self.escolher_cor)
         tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
         
         # Botões de Projeto
         self.lbl_status_save = tk.Label(self.toolbar, text="", bg=self.colors["toolbar"], fg="#aaa", font=("Segoe UI", 8, "italic"))
         self.lbl_status_save.pack(side=tk.RIGHT, padx=10)
         
-        self._btn_toolbar("💾 Salvar Como...", self.salvar_projeto_como)
-        self._btn_toolbar("📂 Abrir Projeto", self.abrir_projeto)
-        self._btn_toolbar("✂️ Fatiar Seleção", self.salvar_selecionados, bg="#27ae60")
+        self._btn_toolbar("💾 Save As...", self.salvar_projeto_como)
+        self._btn_toolbar("📂 Open Project", self.abrir_projeto)
+        self._btn_toolbar("✂️ Slice Selection", self.salvar_selecionados, bg="#27ae60")
 
         # Canvas
         self.canvas_area = tk.Frame(content, bg="black")
@@ -111,7 +108,7 @@ class AppScientificSlicer:
         self.canvas = tk.Canvas(self.canvas_area, bg="#111", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
-        self.status_bar = tk.Label(content, text="Pronto.", bg=self.colors["accent"], fg="white", anchor="w", font=("Segoe UI", 8))
+        self.status_bar = tk.Label(content, text="Ready.", bg=self.colors["accent"], fg="white", anchor="w", font=("Segoe UI", 8))
         self.status_bar.pack(fill=tk.X)
 
         self._setup_binds()
@@ -130,7 +127,7 @@ class AppScientificSlicer:
         
         self.entry_w.bind("<KeyRelease>", lambda e: self.trigger_modificacao())
         self.entry_h.bind("<KeyRelease>", lambda e: self.trigger_modificacao())
-        self.entry_w.bind("<FocusOut>", lambda e: self.redesenhar()) # Sync forçado
+        self.entry_w.bind("<FocusOut>", lambda e: self.redesenhar())
         self.entry_h.bind("<FocusOut>", lambda e: self.redesenhar())
 
     def _btn_toolbar(self, txt, cmd, bg="#444"):
@@ -140,33 +137,38 @@ class AppScientificSlicer:
         c = self.canvas
         c.bind("<ButtonPress-1>", self.on_pan_start)
         c.bind("<B1-Motion>", self.on_pan_move)
-        c.bind("<Button-3>", self.on_right_click)
         
-        # Scroll Zoom/Pan
+        c.bind("<Button-3>", self.on_right_click) 
+        if self.is_mac:
+            c.bind("<Button-2>", self.on_right_click)
+            c.bind("<Control-Button-1>", self.on_right_click)
+        
         c.bind("<MouseWheel>", self.on_scroll_win)
         c.bind("<Shift-MouseWheel>", self.on_shift_scroll_win)
         c.bind("<Control-MouseWheel>", self.on_zoom_win)
         
+        
         c.bind("<Configure>", self.on_resize)
         self.root.bind("<c>", self.limpar_selecao)
 
-    # --- LÓGICA DE AUTO-SAVE (CORAÇÃO DA MUDANÇA) ---
-    
+    def _get_scroll_delta(self, event):
+        """Normaliza a velocidade do scroll entre sistemas"""
+        if self.is_mac:
+            return event.delta * 10 
+        else:
+            return (event.delta / 120) * 30
+
     def trigger_modificacao(self, event=None):
-        """Chamado sempre que algo importante muda (seleção, grid, cor, novas imagens)"""
         if not self.caminho_projeto_atual:
             self.lbl_status_save.config(text="* Não salvo")
             return
 
         self.lbl_status_save.config(text="Modificado...")
-        
         if self.timer_autosave:
             self.root.after_cancel(self.timer_autosave)
-        
         self.timer_autosave = self.root.after(2000, self._executar_autosave)
 
     def _executar_autosave(self):
-        """Grava no disco silenciosamente"""
         if self.caminho_projeto_atual:
             try:
                 self._gravar_arquivo(self.caminho_projeto_atual)
@@ -176,7 +178,6 @@ class AppScientificSlicer:
                 print(f"Erro AutoSave: {e}")
 
     def _gravar_arquivo(self, caminho):
-        """Reúne todos os dados e escreve o JSON"""
         if self.sessao_atual:
             try:
                 self.sessao_atual.grid_w = int(self.entry_w.get())
@@ -184,7 +185,8 @@ class AppScientificSlicer:
             except: pass
 
         dados_projeto = {
-            "versao": "2.0",
+            "versao": "2.1",
+            "plataforma_origem": platform.system(),
             "indice_ativo": self.sessoes.index(self.sessao_atual) if self.sessao_atual in self.sessoes else 0,
             "imagens": []
         }
@@ -205,10 +207,9 @@ class AppScientificSlicer:
         with open(caminho, 'w', encoding='utf-8') as f:
             json.dump(dados_projeto, f, indent=4)
 
-
     def salvar_projeto_como(self):
         if not self.sessoes:
-            messagebox.showwarning("Aviso", "Nenhuma imagem para salvar.")
+            messagebox.showwarning("Warn", "No images to save.")
             return
             
         f = filedialog.asksaveasfilename(defaultextension=".lab", filetypes=[("Projeto Lab", "*.lab")])
@@ -216,7 +217,7 @@ class AppScientificSlicer:
             self.caminho_projeto_atual = f
             self._gravar_arquivo(f)
             self.root.title(f"Slicer Lab - {os.path.basename(f)}")
-            messagebox.showinfo("Sucesso", "Projeto salvo! O salvamento automático agora está ativo.")
+            messagebox.showinfo("Success", "Project saved! AutoSave enabled.")
 
     def abrir_projeto(self):
         f = filedialog.askopenfilename(filetypes=[("Projeto Lab", "*.lab")])
@@ -240,6 +241,13 @@ class AppScientificSlicer:
             for img_data in lista_imgs:
                 path = img_data.get("caminho", img_data.get("path"))
                 
+                if not os.path.exists(path):
+                    nome_arq = os.path.basename(path)
+                    pasta_proj = os.path.dirname(f)
+                    tentativa = os.path.join(pasta_proj, nome_arq)
+                    if os.path.exists(tentativa):
+                        path = tentativa
+                
                 if path and os.path.exists(path):
                     nova_sessao = SessaoImagem(path)
                     
@@ -259,26 +267,22 @@ class AppScientificSlicer:
             idx_ativo = dados.get("indice_ativo", 0)
             
             if not self.sessoes:
-                messagebox.showwarning("Aviso", "O projeto não contem imagens válidas ou os caminhos mudaram.")
+                messagebox.showwarning("Warning", "Images not found. If you moved the project to another PC, place the images in the same folder as the .lab file.")
                 return
 
-            if idx_ativo >= len(self.sessoes):
-                idx_ativo = 0
+            if idx_ativo >= len(self.sessoes): idx_ativo = 0
                 
             self.lista_arquivos.selection_clear(0, tk.END)
             self.lista_arquivos.selection_set(idx_ativo)
-            
             self._ativar_sessao(self.sessoes[idx_ativo])
             
             self.caminho_projeto_atual = f
             self.root.title(f"Slicer Lab - {os.path.basename(f)}")
-            self.lbl_status_save.config(text="Projeto Carregado")
+            self.lbl_status_save.config(text="Project Loaded")
             
         except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao abrir: {e}")
+            messagebox.showerror("Error", f"Error opening: {e}")
             print(e)
-
-    # --- GERENCIAMENTO DE ABAS ---
 
     def add_imagem_btn(self):
         path = filedialog.askopenfilename(filetypes=[("Imagens", "*.jpg;*.png;*.tif;*.tiff;*.bmp")])
@@ -333,7 +337,6 @@ class AppScientificSlicer:
         self.status_bar.config(text=f"Imagem: {sessao.nome} | Dim: {sessao.w_real}x{sessao.h_real}")
         self.redesenhar()
 
-    # --- RENDERIZAÇÃO ---
     def on_resize(self, event):
         if self.sessao_atual: self.redesenhar()
 
@@ -386,7 +389,7 @@ class AppScientificSlicer:
             self.tk_image = ImageTk.PhotoImage(img)
             self.canvas.create_image(0, 0, image=self.tk_image, anchor="nw")
             
-            if (r-l)/s.grid_w < 400: # Culling grid
+            if (r-l)/s.grid_w < 400: 
                 sc, ec = int(l//s.grid_w), int(r//s.grid_w)+1
                 sr, er = int(t//s.grid_h), int(b//s.grid_h)+1
                 
@@ -396,7 +399,11 @@ class AppScientificSlicer:
                         y1 = (ro*s.grid_h - t)*s.zoom_level
                         x2 = x1 + (s.grid_w*s.zoom_level)
                         y2 = y1 + (s.grid_h*s.zoom_level)
-                        self.canvas.create_rectangle(x1, y1, x2, y2, fill="cyan", outline=s.grid_color, stipple="gray25")
+                        
+                        if self.is_mac:
+                            self.canvas.create_rectangle(x1, y1, x2, y2, outline="cyan", width=2)
+                        else:
+                            self.canvas.create_rectangle(x1, y1, x2, y2, fill="cyan", outline=s.grid_color, stipple="gray25")
                 
                 cx = (sc * s.grid_w)
                 if cx < l: cx += s.grid_w
@@ -413,10 +420,10 @@ class AppScientificSlicer:
 
         except Exception as e: pass
 
-    # --- INTERAÇÃO ---
     def on_pan_start(self, e):
         self.last_mouse_x = e.x
         self.last_mouse_y = e.y
+        
     def on_pan_move(self, e):
         if self.sessao_atual:
             dx = e.x - self.last_mouse_x
@@ -439,7 +446,7 @@ class AppScientificSlicer:
             if k in s.selected_cells: s.selected_cells.remove(k)
             else: s.selected_cells.add(k)
             self.redesenhar()
-            self.trigger_modificacao() # AutoSave
+            self.trigger_modificacao()
 
     def aplicar_zoom(self, f, mx, my):
         s = self.sessao_atual
@@ -455,14 +462,20 @@ class AppScientificSlicer:
 
     def on_scroll_win(self, e): 
         if self.sessao_atual: 
-            self.sessao_atual.camera_y -= (e.delta/120)*30 / self.sessao_atual.zoom_level
+            # Correção de velocidade
+            delta = self._get_scroll_delta(e)
+            self.sessao_atual.camera_y -= delta / self.sessao_atual.zoom_level
             self.redesenhar()
+            
     def on_shift_scroll_win(self, e):
         if self.sessao_atual: 
-            self.sessao_atual.camera_x -= (e.delta/120)*30 / self.sessao_atual.zoom_level
+            delta = self._get_scroll_delta(e)
+            self.sessao_atual.camera_x -= delta / self.sessao_atual.zoom_level
             self.redesenhar()
+            
     def on_zoom_win(self, e):
-        self.aplicar_zoom(1.2 if e.delta > 0 else 0.8, e.x, e.y)
+        fator = 1.2 if e.delta > 0 else 0.8
+        self.aplicar_zoom(fator, e.x, e.y)
 
     def escolher_cor(self):
         if self.sessao_atual:
@@ -481,7 +494,10 @@ class AppScientificSlicer:
     def salvar_selecionados(self):
         s = self.sessao_atual
         if not s or not s.selected_cells: return
-        if not messagebox.askyesno("Confirmar", f"Salvar {len(s.selected_cells)} fatias?"): return
+        
+        msg = f"Salvar {len(s.selected_cells)} fatias?"
+        if not messagebox.askyesno("Confirmar", msg): return
+        
         out = filedialog.askdirectory()
         if out:
             count = 0
@@ -490,9 +506,13 @@ class AppScientificSlicer:
                 y1 = r * s.grid_h
                 x2 = min(x1 + s.grid_w, s.w_real)
                 y2 = min(y1 + s.grid_h, s.h_real)
-                s.imagem_original.crop((x1, y1, x2, y2)).save(os.path.join(out, f"{s.nome}_L{r}_C{c}.png"))
+                
+                nome_arquivo = f"{s.nome}_L{r}_C{c}.png"
+                caminho_final = os.path.join(out, nome_arquivo)
+                
+                s.imagem_original.crop((x1, y1, x2, y2)).save(caminho_final)
                 count += 1
-            messagebox.showinfo("Fim", f"{count} fatias salvas.")
+            messagebox.showinfo("End", f"{count} slices saved.")
 
 if __name__ == "__main__":
     root = tk.Tk()
