@@ -23,7 +23,7 @@ O projeto requer **Python 3.8+**. As dependências principais são:
 
 1. Clone o repositório:
    ```bash
-   git clone [https://github.com/seu-usuario/seu-projeto.git](https://github.com/seu-usuario/seu-projeto.git)
+   git clone [https://github.com/m4Fagundes/grid-image-analyzer.git](https://github.com/m4Fagundes/grid-image-analyzer.git)
    cd seu-projeto
 
 2. Instale as dependências:
