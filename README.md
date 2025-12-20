@@ -25,3 +25,12 @@ O projeto requer **Python 3.8+**. As dependências principais são:
    ```bash
    git clone [https://github.com/seu-usuario/seu-projeto.git](https://github.com/seu-usuario/seu-projeto.git)
    cd seu-projeto
+
+2. Instale as dependências:
+   ```bash
+   pip install image-slicer Pillow
+
+
+3. Execute o script principal:
+   ```bash
+   python main.py
