@@ -17,9 +17,9 @@ class AppVisualizadorPro:
 
         # --- Variáveis de Estado ---
         self.caminho_imagem = None
-        self.imagem_original = None     # Imagem GIGANTE (RAW)
-        self.imagem_preview = None      # Imagem LEVE (Thumbnail para zoom out rápido)
-        self.preview_scale = 1.0        # Relação de tamanho entre Original e Preview
+        self.imagem_original = None
+        self.imagem_preview = None
+        self.preview_scale = 1.0
         self.tk_image = None            
         
         # Câmera e Zoom
@@ -72,13 +72,11 @@ class AppVisualizadorPro:
         
         self.caminho_imagem = path
         try:
-            # Carrega a imagem original
             self.imagem_original = Image.open(path)
             w_real, h_real = self.imagem_original.size
             
-            # --- CORREÇÃO 2: CRIAR CACHE DE BAIXA RESOLUÇÃO (LOD) ---
-            # Se a imagem for maior que 2048px, criamos uma cópia pequena para usar no zoom out.
-            # Isso evita processar 1GB de dados quando você quer ver a imagem inteira.
+            # --- CRIAR CACHE DE BAIXA RESOLUÇÃO (LOD) ---
+
             max_preview_size = 2048
             if w_real > max_preview_size or h_real > max_preview_size:
                 ratio = min(max_preview_size / w_real, max_preview_size / h_real)
@@ -86,16 +84,14 @@ class AppVisualizadorPro:
                 new_h = int(h_real * ratio)
                 print(f"Gerando cache de visualização: {new_w}x{new_h}...")
                 self.imagem_preview = self.imagem_original.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                self.preview_scale = w_real / new_w  # Guardamos a proporção para converter coords
+                self.preview_scale = w_real / new_w
             else:
                 self.imagem_preview = self.imagem_original.copy()
                 self.preview_scale = 1.0
 
-            # Ajusta zoom inicial
             w_tela = self.canvas.winfo_width()
             h_tela = self.canvas.winfo_height()
             
-            # Zoom inicial para caber na tela
             self.zoom_level = min(w_tela/w_real, h_tela/h_real)
             self.camera_x = 0
             self.camera_y = 0
@@ -131,7 +127,6 @@ class AppVisualizadorPro:
         if not self.imagem_original: return
         novo_zoom = self.zoom_level * fator
         
-        # Limite mínimo: não deixar afastar mais que ver a imagem inteira pequenininha
         if novo_zoom < 0.001: return 
 
         world_x = self.camera_x + (mouse_x / self.zoom_level)
@@ -150,36 +145,29 @@ class AppVisualizadorPro:
         w_canvas = self.canvas.winfo_width()
         h_canvas = self.canvas.winfo_height()
         
-        # Coordenadas do Viewport no Mundo Real
         left = self.camera_x
         top = self.camera_y
         right = left + (w_canvas / self.zoom_level)
         bottom = top + (h_canvas / self.zoom_level)
 
         # --- LÓGICA HÍBRIDA (LOD - Level of Detail) ---
-        # Se estamos muito afastados (vendo muita área), usamos o Preview (rápido)
-        # Se estamos perto (zoom in), usamos o Original (detalhado)
         
         usar_preview = False
-        # Se 1 pixel da tela representa mais que 2 pixels reais, use o preview
         if self.zoom_level < 0.5 and self.preview_scale > 1.0:
             usar_preview = True
         
         try:
             if usar_preview:
-                # Converter coordenadas do Mundo Real -> Coordenadas do Preview
                 p_left = int(left / self.preview_scale)
                 p_top = int(top / self.preview_scale)
                 p_right = int(right / self.preview_scale)
                 p_bottom = int(bottom / self.preview_scale)
                 
-                # Crop do cache (muito rápido)
                 region = self.imagem_preview.crop((p_left, p_top, p_right, p_bottom))
                 img_display = region.resize((w_canvas, h_canvas), Image.Resampling.NEAREST)
                 
             else:
-                # Crop do Original (detalhado, mas mais lento se a área for grande)
-                # Proteção: Clamp coordinates para não sair da imagem
+
                 w_real, h_real = self.imagem_original.size
                 c_left = max(0, int(left))
                 c_top = max(0, int(top))
@@ -189,10 +177,8 @@ class AppVisualizadorPro:
                 if c_right > c_left and c_bottom > c_top:
                     region = self.imagem_original.crop((c_left, c_top, c_right, c_bottom))
                     
-                    # Se o crop for menor que o canvas (bordas), precisamos colar numa imagem preta
                     final_img = Image.new("RGB", (w_canvas, h_canvas), (17, 17, 17)) # Fundo cinza escuro
                     
-                    # Calcular onde colar
                     paste_x = int((c_left - left) * self.zoom_level)
                     paste_y = int((c_top - top) * self.zoom_level)
                     paste_w = int((c_right - c_left) * self.zoom_level)
@@ -223,9 +209,8 @@ class AppVisualizadorPro:
             block_size = int(self.entry_grid.get())
         except: return
         
-        # Limita quantidade de linhas para não travar se der muito zoom out
         if (right - left) / block_size > 200: 
-            return # Se houver mais de 200 linhas na tela, não desenha o grid (fica poluído)
+            return
 
         start_x = (left // block_size) * block_size
         if start_x < left: start_x += block_size
