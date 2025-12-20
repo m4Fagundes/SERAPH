@@ -4,8 +4,6 @@ Ferramenta de alta performance desenvolvida em Python para visualização, naveg
 
 Este projeto foi desenhado para superar as limitações de memória RAM (MemoryErrors) e travas de segurança (`DecompressionBombWarning`) comuns ao processar imagens de alta resolução
 
-> **Contexto:** Projeto de apoio à pesquisa de doutorado.
-
 ## 🚀 Funcionalidades Avançadas
 
 - **Navegação "Deep Zoom":** Interface estilo *Google Earth* ou *Canva*. Permite arrastar (Pan) e aproximar (Zoom) livremente pela imagem.
