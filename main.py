@@ -1,386 +1,500 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, colorchooser
 from PIL import Image, ImageTk
-import math
 import os
+import json
 
-# --- CONFIGURAÇÃO DE ALTA PERFORMANCE ---
 Image.MAX_IMAGE_PIXELS = None 
 
-class AppVisualizadorPro:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Slicer Visual Scientific - Notebook Touchpad Support")
-        self.root.geometry("1280x800")
-        self.root.configure(bg="#1e1e1e")
-
-        # --- Variáveis de Estado ---
-        self.caminho_imagem = None
-        self.imagem_original = None     
-        self.imagem_preview = None      
-        self.preview_scale = 1.0        
-        self.tk_image = None            
+# --- MODELO DE DADOS (SESSÃO) ---
+class SessaoImagem:
+    def __init__(self, caminho):
+        self.caminho = caminho
+        self.nome = os.path.basename(caminho)
         
-        # Grid e Seleção
-        self.grid_color = "#FFFF00"
-        self.selected_cells = set() 
+        # Carrega imagem
+        self.imagem_original = Image.open(caminho)
+        self.w_real, self.h_real = self.imagem_original.size
         
-        # Câmera e Zoom
+        # Cache (LOD)
+        self.imagem_preview = None
+        self.preview_scale = 1.0
+        self._gerar_cache()
+        
+        # Estado Visual
         self.zoom_level = 1.0
-        self.camera_x = 0  
+        self.camera_x = 0
         self.camera_y = 0
         
-        # Mouse (Arrastar)
-        self.last_mouse_x = 0
-        self.last_mouse_y = 0
+        # Estado de Trabalho
+        self.grid_w = 1000
+        self.grid_h = 1000
+        self.grid_color = "#FFFF00"
+        self.selected_cells = set()
 
-        self.criar_interface()
-
-    def criar_interface(self):
-        # Barra de Ferramentas
-        frame_topo = tk.Frame(self.root, bg="#2c3e50", height=60)
-        frame_topo.pack(fill=tk.X)
-
-        style_lbl = {"bg": "#2c3e50", "fg": "white", "font": ("Arial", 9)}
-        style_btn = {"bg": "#34495e", "fg": "white", "relief": "flat", "font": ("Arial", 9)}
-
-        # Controles
-        tk.Button(frame_topo, text="📂 Abrir", command=self.carregar_imagem, **style_btn).pack(side=tk.LEFT, padx=5, pady=10)
-
-        tk.Label(frame_topo, text="Largura (W):", **style_lbl).pack(side=tk.LEFT, padx=(10, 2))
-        self.entry_w = tk.Entry(frame_topo, width=5, justify="center")
-        self.entry_w.insert(0, "1000")
-        self.entry_w.pack(side=tk.LEFT)
-
-        tk.Label(frame_topo, text="Altura (H):", **style_lbl).pack(side=tk.LEFT, padx=(10, 2))
-        self.entry_h = tk.Entry(frame_topo, width=5, justify="center")
-        self.entry_h.insert(0, "1000")
-        self.entry_h.pack(side=tk.LEFT)
-        
-        tk.Button(frame_topo, text="🎨 Cor", command=self.escolher_cor, **style_btn).pack(side=tk.LEFT, padx=5)
-        tk.Button(frame_topo, text="🔄 Atualizar", command=self.redesenhar, **style_btn).pack(side=tk.LEFT, padx=5)
-
-        tk.Label(frame_topo, text="| Scroll: Mover | Ctrl+Scroll: Zoom |", bg="#2c3e50", fg="#f1c40f", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=15)
-
-        tk.Button(frame_topo, text="💾 SALVAR SELEÇÃO", command=self.salvar_selecionados, bg="#3498db", fg="white", font=("Arial", 9, "bold")).pack(side=tk.RIGHT, padx=5)
-        tk.Button(frame_topo, text="✂️ SALVAR TUDO", command=self.fatiar_tudo, bg="#e74c3c", fg="white", font=("Arial", 9, "bold")).pack(side=tk.RIGHT, padx=5)
-
-        # Canvas
-        self.canvas_frame = tk.Frame(self.root, bg="#000")
-        self.canvas_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.canvas = tk.Canvas(self.canvas_frame, bg="#111", highlightthickness=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-
-        # --- BINDINGS (CONTROLES) ATUALIZADOS PARA NOTEBOOK ---
-        
-        # 1. Clique e Arrastar (Mãozinha)
-        self.canvas.bind("<ButtonPress-1>", self.clique_iniciar)
-        self.canvas.bind("<B1-Motion>", self.clique_arrastar)
-        
-        # 2. Seleção (Botão Direito)
-        self.canvas.bind("<Button-3>", self.toggle_selecao)
-        
-        # 3. WINDOWS: Scroll do Touchpad
-        # Sem Modifier -> PAN (Mover Vertical)
-        self.canvas.bind("<MouseWheel>", self.scroll_vertical_windows)
-        # Shift -> PAN (Mover Horizontal)
-        self.canvas.bind("<Shift-MouseWheel>", self.scroll_horizontal_windows)
-        # Control -> ZOOM
-        self.canvas.bind("<Control-MouseWheel>", self.zoom_windows)
-        
-        # 4. LINUX: Scroll (Button 4/5 = Vertical, Shift+... = Horizontal)
-        self.canvas.bind("<Button-4>", self.scroll_linux_up)
-        self.canvas.bind("<Button-5>", self.scroll_linux_down)
-        self.canvas.bind("<Control-Button-4>", lambda e: self.aplicar_zoom(1.1, e.x, e.y))
-        self.canvas.bind("<Control-Button-5>", lambda e: self.aplicar_zoom(0.9, e.x, e.y))
-        self.canvas.bind("<Shift-Button-4>", self.scroll_linux_left)
-        self.canvas.bind("<Shift-Button-5>", self.scroll_linux_right)
-
-        # 5. Geral
-        self.canvas.bind("<Configure>", lambda e: self.redesenhar())
-        self.root.bind("<c>", self.limpar_selecao)
-        self.root.bind("<C>", self.limpar_selecao)
-
-    # --- Lógica de Scroll e Pan (Touchpad) ---
-    
-    def scroll_vertical_windows(self, event):
-        """Touchpad 2 dedos para cima/baixo -> Move Vertical"""
-        if not self.imagem_original: return
-        # Sensibilidade do touchpad (ajuste o divisor se ficar muito rápido)
-        speed = 20 
-        delta = -1 * (event.delta / 120) * speed 
-        self.camera_y += delta / self.zoom_level
-        self.redesenhar()
-
-    def scroll_horizontal_windows(self, event):
-        """Touchpad Shift + 2 dedos -> Move Horizontal"""
-        if not self.imagem_original: return
-        speed = 20
-        delta = -1 * (event.delta / 120) * speed
-        self.camera_x += delta / self.zoom_level
-        self.redesenhar()
-
-    def scroll_linux_up(self, event):
-        # Linux Button-4 é "Roda pra cima"
-        if not self.imagem_original: return
-        self.camera_y -= 50 / self.zoom_level
-        self.redesenhar()
-
-    def scroll_linux_down(self, event):
-        # Linux Button-5 é "Roda pra baixo"
-        if not self.imagem_original: return
-        self.camera_y += 50 / self.zoom_level
-        self.redesenhar()
-
-    def scroll_linux_left(self, event):
-        if not self.imagem_original: return
-        self.camera_x -= 50 / self.zoom_level
-        self.redesenhar()
-
-    def scroll_linux_right(self, event):
-        if not self.imagem_original: return
-        self.camera_x += 50 / self.zoom_level
-        self.redesenhar()
-
-    # --- Lógica de Zoom (Apenas com CTRL) ---
-    def zoom_windows(self, event):
-        """Só dá zoom se segurar CTRL"""
-        # Verifica se o CTRL está pressionado (state 4 ou 12 geralmente) ou via bind direto
-        if event.delta > 0: self.aplicar_zoom(1.2, event.x, event.y)
-        else: self.aplicar_zoom(0.8, event.x, event.y)
-
-    # ... RESTANTE DO CÓDIGO PERMANECE IGUAL ...
-    
-    def get_dimensoes_grid(self):
+    def _gerar_cache(self):
         try:
-            w = int(self.entry_w.get())
-            h = int(self.entry_h.get())
-            return max(10, w), max(10, h)
-        except: return 1000, 1000
-
-    def carregar_imagem(self):
-        path = filedialog.askopenfilename(filetypes=[("Imagens", "*.jpg;*.png;*.tif;*.tiff;*.bmp")])
-        if not path: return
-        
-        self.caminho_imagem = path
-        self.selected_cells.clear()
-        
-        try:
-            self.imagem_original = Image.open(path)
-            w_real, h_real = self.imagem_original.size
-            
-            max_preview_size = 2048
-            if w_real > max_preview_size or h_real > max_preview_size:
-                ratio = min(max_preview_size / w_real, max_preview_size / h_real)
-                new_w = int(w_real * ratio)
-                new_h = int(h_real * ratio)
+            max_size = 2048
+            if self.w_real > max_size or self.h_real > max_size:
+                ratio = min(max_size / self.w_real, max_size / self.h_real)
+                new_w = int(self.w_real * ratio)
+                new_h = int(self.h_real * ratio)
                 self.imagem_preview = self.imagem_original.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                self.preview_scale = w_real / new_w
+                self.preview_scale = self.w_real / new_w
             else:
                 self.imagem_preview = self.imagem_original.copy()
                 self.preview_scale = 1.0
+        except:
+            self.imagem_preview = self.imagem_original.copy()
+            self.preview_scale = 1.0
 
-            w_tela = self.canvas.winfo_width()
-            h_tela = self.canvas.winfo_height()
-            self.zoom_level = min(w_tela/w_real, h_tela/h_real)
-            self.camera_x = 0
-            self.camera_y = 0
-            self.redesenhar()
+# --- APLICAÇÃO PRINCIPAL ---
+class AppScientificSlicer:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Slicer Lab Pro - AutoSave Enabled")
+        self.root.geometry("1400x900")
+        self.root.configure(bg="#1e1e1e")
+
+        self.sessoes = []
+        self.sessao_atual = None
+        self.caminho_projeto_atual = None
+        self.timer_autosave = None
+        
+        self.tk_image = None
+        self.last_mouse_x = 0
+        self.last_mouse_y = 0
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.colors = {"bg": "#1e1e1e", "sidebar": "#252526", "toolbar": "#333333", "accent": "#007acc", "text": "#cccccc"}
+        
+        main = tk.Frame(self.root, bg=self.colors["bg"])
+        main.pack(fill=tk.BOTH, expand=True)
+
+        # 1. Sidebar
+        self.sidebar = tk.Frame(main, width=250, bg=self.colors["sidebar"])
+        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        self.sidebar.pack_propagate(False)
+        
+        tk.Label(self.sidebar, text="PROJETO / IMAGENS", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=10, pady=(10,5))
+        self.lista_arquivos = tk.Listbox(self.sidebar, bg=self.colors["sidebar"], fg=self.colors["text"], selectbackground="#37373d", selectforeground="white", bd=0, highlightthickness=0, font=("Segoe UI", 10), activestyle="none")
+        self.lista_arquivos.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.lista_arquivos.bind("<<ListboxSelect>>", self.trocar_aba_imagem)
+        
+        tk.Button(self.sidebar, text="+ ADICIONAR IMAGEM", command=self.add_imagem_btn, bg=self.colors["accent"], fg="white", relief="flat", font=("Segoe UI", 9, "bold")).pack(fill=tk.X, padx=10, pady=10)
+
+        # 2. Área Principal
+        content = tk.Frame(main, bg=self.colors["bg"])
+        content.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        # Toolbar
+        self.toolbar = tk.Frame(content, bg=self.colors["toolbar"], height=50)
+        self.toolbar.pack(fill=tk.X)
+        
+        self._setup_inputs_grid()
+        self._btn_toolbar("🎨 Cor", self.escolher_cor)
+        tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
+        
+        # Botões de Projeto
+        self.lbl_status_save = tk.Label(self.toolbar, text="", bg=self.colors["toolbar"], fg="#aaa", font=("Segoe UI", 8, "italic"))
+        self.lbl_status_save.pack(side=tk.RIGHT, padx=10)
+        
+        self._btn_toolbar("💾 Salvar Como...", self.salvar_projeto_como)
+        self._btn_toolbar("📂 Abrir Projeto", self.abrir_projeto)
+        self._btn_toolbar("✂️ Fatiar Seleção", self.salvar_selecionados, bg="#27ae60")
+
+        # Canvas
+        self.canvas_area = tk.Frame(content, bg="black")
+        self.canvas_area.pack(fill=tk.BOTH, expand=True)
+        self.canvas = tk.Canvas(self.canvas_area, bg="#111", highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        
+        self.status_bar = tk.Label(content, text="Pronto.", bg=self.colors["accent"], fg="white", anchor="w", font=("Segoe UI", 8))
+        self.status_bar.pack(fill=tk.X)
+
+        self._setup_binds()
+
+    def _setup_inputs_grid(self):
+        f = tk.Frame(self.toolbar, bg=self.colors["toolbar"])
+        f.pack(side=tk.LEFT, padx=10)
+        tk.Label(f, text="W:", bg=self.colors["toolbar"], fg="white").pack(side=tk.LEFT)
+        self.entry_w = tk.Entry(f, width=5, justify="center", bg="#444", fg="white", relief="flat")
+        self.entry_w.insert(0, "1000")
+        self.entry_w.pack(side=tk.LEFT, padx=2)
+        tk.Label(f, text="H:", bg=self.colors["toolbar"], fg="white").pack(side=tk.LEFT, padx=(5,0))
+        self.entry_h = tk.Entry(f, width=5, justify="center", bg="#444", fg="white", relief="flat")
+        self.entry_h.insert(0, "1000")
+        self.entry_h.pack(side=tk.LEFT, padx=2)
+        
+        self.entry_w.bind("<KeyRelease>", lambda e: self.trigger_modificacao())
+        self.entry_h.bind("<KeyRelease>", lambda e: self.trigger_modificacao())
+        self.entry_w.bind("<FocusOut>", lambda e: self.redesenhar()) # Sync forçado
+        self.entry_h.bind("<FocusOut>", lambda e: self.redesenhar())
+
+    def _btn_toolbar(self, txt, cmd, bg="#444"):
+        tk.Button(self.toolbar, text=txt, command=cmd, bg=bg, fg="white", relief="flat", padx=10).pack(side=tk.LEFT, padx=5, pady=8)
+
+    def _setup_binds(self):
+        c = self.canvas
+        c.bind("<ButtonPress-1>", self.on_pan_start)
+        c.bind("<B1-Motion>", self.on_pan_move)
+        c.bind("<Button-3>", self.on_right_click)
+        
+        # Scroll Zoom/Pan
+        c.bind("<MouseWheel>", self.on_scroll_win)
+        c.bind("<Shift-MouseWheel>", self.on_shift_scroll_win)
+        c.bind("<Control-MouseWheel>", self.on_zoom_win)
+        
+        c.bind("<Configure>", self.on_resize)
+        self.root.bind("<c>", self.limpar_selecao)
+
+    # --- LÓGICA DE AUTO-SAVE (CORAÇÃO DA MUDANÇA) ---
+    
+    def trigger_modificacao(self, event=None):
+        """Chamado sempre que algo importante muda (seleção, grid, cor, novas imagens)"""
+        if not self.caminho_projeto_atual:
+            self.lbl_status_save.config(text="* Não salvo")
+            return
+
+        self.lbl_status_save.config(text="Modificado...")
+        
+        if self.timer_autosave:
+            self.root.after_cancel(self.timer_autosave)
+        
+        self.timer_autosave = self.root.after(2000, self._executar_autosave)
+
+    def _executar_autosave(self):
+        """Grava no disco silenciosamente"""
+        if self.caminho_projeto_atual:
+            try:
+                self._gravar_arquivo(self.caminho_projeto_atual)
+                self.lbl_status_save.config(text="Salvo Automaticamente")
+            except Exception as e:
+                self.lbl_status_save.config(text="Erro no AutoSave")
+                print(f"Erro AutoSave: {e}")
+
+    def _gravar_arquivo(self, caminho):
+        """Reúne todos os dados e escreve o JSON"""
+        if self.sessao_atual:
+            try:
+                self.sessao_atual.grid_w = int(self.entry_w.get())
+                self.sessao_atual.grid_h = int(self.entry_h.get())
+            except: pass
+
+        dados_projeto = {
+            "versao": "2.0",
+            "indice_ativo": self.sessoes.index(self.sessao_atual) if self.sessao_atual in self.sessoes else 0,
+            "imagens": []
+        }
+
+        for sessao in self.sessoes:
+            dados_sessao = {
+                "caminho": sessao.caminho,
+                "grid_w": sessao.grid_w,
+                "grid_h": sessao.grid_h,
+                "grid_color": sessao.grid_color,
+                "zoom_level": sessao.zoom_level,
+                "camera_x": sessao.camera_x,
+                "camera_y": sessao.camera_y,
+                "selecao": list(sessao.selected_cells)
+            }
+            dados_projeto["imagens"].append(dados_sessao)
+
+        with open(caminho, 'w', encoding='utf-8') as f:
+            json.dump(dados_projeto, f, indent=4)
+
+
+    def salvar_projeto_como(self):
+        if not self.sessoes:
+            messagebox.showwarning("Aviso", "Nenhuma imagem para salvar.")
+            return
+            
+        f = filedialog.asksaveasfilename(defaultextension=".lab", filetypes=[("Projeto Lab", "*.lab")])
+        if f:
+            self.caminho_projeto_atual = f
+            self._gravar_arquivo(f)
+            self.root.title(f"Slicer Lab - {os.path.basename(f)}")
+            messagebox.showinfo("Sucesso", "Projeto salvo! O salvamento automático agora está ativo.")
+
+    def abrir_projeto(self):
+        f = filedialog.askopenfilename(filetypes=[("Projeto Lab", "*.lab")])
+        if not f: return
+        
+        try:
+            with open(f, 'r', encoding='utf-8') as arquivo:
+                dados = json.load(arquivo)
+
+            self.sessoes.clear()
+            self.lista_arquivos.delete(0, tk.END)
+            self.sessao_atual = None
+            self.canvas.delete("all")
+            
+            self.entry_w.delete(0, tk.END)
+            self.entry_h.delete(0, tk.END)
+
+            lista_imgs = dados.get("imagens", [])
+            if isinstance(dados, list): lista_imgs = dados
+
+            for img_data in lista_imgs:
+                path = img_data.get("caminho", img_data.get("path"))
+                
+                if path and os.path.exists(path):
+                    nova_sessao = SessaoImagem(path)
+                    
+                    nova_sessao.grid_w = img_data.get("grid_w", img_data.get("gw", 1000))
+                    nova_sessao.grid_h = img_data.get("grid_h", img_data.get("gh", 1000))
+                    nova_sessao.grid_color = img_data.get("grid_color", img_data.get("color", "#FFFF00"))
+                    nova_sessao.zoom_level = img_data.get("zoom_level", 1.0)
+                    nova_sessao.camera_x = img_data.get("camera_x", 0)
+                    nova_sessao.camera_y = img_data.get("camera_y", 0)
+                    
+                    sel_raw = img_data.get("selecao", img_data.get("sel", []))
+                    nova_sessao.selected_cells = set(tuple(x) for x in sel_raw)
+                    
+                    self.sessoes.append(nova_sessao)
+                    self.lista_arquivos.insert(tk.END, f" {nova_sessao.nome}")
+
+            idx_ativo = dados.get("indice_ativo", 0)
+            
+            if not self.sessoes:
+                messagebox.showwarning("Aviso", "O projeto não contem imagens válidas ou os caminhos mudaram.")
+                return
+
+            if idx_ativo >= len(self.sessoes):
+                idx_ativo = 0
+                
+            self.lista_arquivos.selection_clear(0, tk.END)
+            self.lista_arquivos.selection_set(idx_ativo)
+            
+            self._ativar_sessao(self.sessoes[idx_ativo])
+            
+            self.caminho_projeto_atual = f
+            self.root.title(f"Slicer Lab - {os.path.basename(f)}")
+            self.lbl_status_save.config(text="Projeto Carregado")
+            
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao abrir: {e}")
+            print(e)
+
+    # --- GERENCIAMENTO DE ABAS ---
+
+    def add_imagem_btn(self):
+        path = filedialog.askopenfilename(filetypes=[("Imagens", "*.jpg;*.png;*.tif;*.tiff;*.bmp")])
+        if path:
+            self._adicionar_sessao_logica(path)
+            self.trigger_modificacao()
+
+    def _adicionar_sessao_logica(self, path):
+        if self.sessao_atual:
+            try:
+                self.sessao_atual.grid_w = int(self.entry_w.get())
+                self.sessao_atual.grid_h = int(self.entry_h.get())
+            except: pass
+
+        try:
+            nova = SessaoImagem(path)
+            self.sessoes.append(nova)
+            self.lista_arquivos.insert(tk.END, f" {nova.nome}")
+            self.lista_arquivos.selection_clear(0, tk.END)
+            self.lista_arquivos.selection_set(tk.END)
+            self._ativar_sessao(nova)
         except Exception as e:
             messagebox.showerror("Erro", str(e))
 
-    def clique_iniciar(self, event):
-        self.last_mouse_x = event.x
-        self.last_mouse_y = event.y
+    def trocar_aba_imagem(self, event):
+        sel = self.lista_arquivos.curselection()
+        if not sel: return
+        idx = sel[0]
+        if 0 <= idx < len(self.sessoes):
+            if self.sessao_atual:
+                try:
+                    self.sessao_atual.grid_w = int(self.entry_w.get())
+                    self.sessao_atual.grid_h = int(self.entry_h.get())
+                except: pass
+            
+            self._ativar_sessao(self.sessoes[idx])
 
-    def clique_arrastar(self, event):
-        if not self.imagem_original: return
-        dx = event.x - self.last_mouse_x
-        dy = event.y - self.last_mouse_y
-        self.camera_x -= dx / self.zoom_level
-        self.camera_y -= dy / self.zoom_level
-        self.last_mouse_x = event.x
-        self.last_mouse_y = event.y
+    def _ativar_sessao(self, sessao):
+        self.sessao_atual = sessao
+        
+        self.entry_w.delete(0, tk.END)
+        self.entry_w.insert(0, str(sessao.grid_w))
+        self.entry_h.delete(0, tk.END)
+        self.entry_h.insert(0, str(sessao.grid_h))
+        
+        if sessao.zoom_level == 1.0 and sessao.camera_x == 0:
+            w_can = self.canvas.winfo_width()
+            if w_can > 10:
+                ratio = min(w_can/sessao.w_real, self.canvas.winfo_height()/sessao.h_real)
+                sessao.zoom_level = ratio * 0.9
+
+        self.status_bar.config(text=f"Imagem: {sessao.nome} | Dim: {sessao.w_real}x{sessao.h_real}")
         self.redesenhar()
 
-    def aplicar_zoom(self, fator, mouse_x, mouse_y):
-        if not self.imagem_original: return
-        novo_zoom = self.zoom_level * fator
-        if novo_zoom < 0.001: return 
-
-        world_x = self.camera_x + (mouse_x / self.zoom_level)
-        world_y = self.camera_y + (mouse_y / self.zoom_level)
-        self.zoom_level = novo_zoom
-        self.camera_x = world_x - (mouse_x / self.zoom_level)
-        self.camera_y = world_y - (mouse_y / self.zoom_level)
-        self.redesenhar()
-
-    def toggle_selecao(self, event):
-        if not self.imagem_original: return
-        real_x = self.camera_x + (event.x / self.zoom_level)
-        real_y = self.camera_y + (event.y / self.zoom_level)
-        w_block, h_block = self.get_dimensoes_grid()
-        col = int(real_x // w_block)
-        row = int(real_y // h_block)
-        w_img, h_img = self.imagem_original.size
-        if real_x < 0 or real_y < 0 or real_x > w_img or real_y > h_img: return
-
-        key = (col, row)
-        if key in self.selected_cells: self.selected_cells.remove(key)
-        else: self.selected_cells.add(key)
-        self.redesenhar()
-
-    def limpar_selecao(self, event=None):
-        self.selected_cells.clear()
-        self.redesenhar()
+    # --- RENDERIZAÇÃO ---
+    def on_resize(self, event):
+        if self.sessao_atual: self.redesenhar()
 
     def redesenhar(self):
-        if not self.imagem_original: return
-        w_canvas = self.canvas.winfo_width()
-        h_canvas = self.canvas.winfo_height()
-        left = self.camera_x
-        top = self.camera_y
-        right = left + (w_canvas / self.zoom_level)
-        bottom = top + (h_canvas / self.zoom_level)
+        s = self.sessao_atual
+        if not s: return
 
-        usar_preview = False
-        if self.zoom_level < 0.5 and self.preview_scale > 1.0: usar_preview = True
+        try:
+            s.grid_w = max(10, int(self.entry_w.get()))
+            s.grid_h = max(10, int(self.entry_h.get()))
+        except: pass
+
+        w_can = self.canvas.winfo_width()
+        h_can = self.canvas.winfo_height()
+        
+        l = s.camera_x
+        t = s.camera_y
+        r = l + (w_can / s.zoom_level)
+        b = t + (h_can / s.zoom_level)
+
+        self.canvas.delete("all")
+
+        use_preview = (s.zoom_level < 0.5 and s.preview_scale > 1.0)
         
         try:
-            self.canvas.delete("all")
-            if usar_preview:
-                p_left = int(left / self.preview_scale)
-                p_top = int(top / self.preview_scale)
-                p_right = int(right / self.preview_scale)
-                p_bottom = int(bottom / self.preview_scale)
-                region = self.imagem_preview.crop((p_left, p_top, p_right, p_bottom))
-                img_display = region.resize((w_canvas, h_canvas), Image.Resampling.NEAREST)
+            if use_preview:
+                pl = int(l / s.preview_scale)
+                pt = int(t / s.preview_scale)
+                pr = int(r / s.preview_scale)
+                pb = int(b / s.preview_scale)
+                img = s.imagem_preview.crop((pl, pt, pr, pb))
+                img = img.resize((w_can, h_can), Image.Resampling.NEAREST)
             else:
-                w_real, h_real = self.imagem_original.size
-                c_left = max(0, int(left))
-                c_top = max(0, int(top))
-                c_right = min(w_real, int(right))
-                c_bottom = min(h_real, int(bottom))
-                if c_right > c_left and c_bottom > c_top:
-                    region = self.imagem_original.crop((c_left, c_top, c_right, c_bottom))
-                    final_img = Image.new("RGB", (w_canvas, h_canvas), (17, 17, 17))
-                    paste_x = int((c_left - left) * self.zoom_level)
-                    paste_y = int((c_top - top) * self.zoom_level)
-                    paste_w = int((c_right - c_left) * self.zoom_level)
-                    paste_h = int((c_bottom - c_top) * self.zoom_level)
-                    if paste_w > 0 and paste_h > 0:
-                        region_resized = region.resize((paste_w, paste_h), Image.Resampling.NEAREST)
-                        final_img.paste(region_resized, (paste_x, paste_y))
-                        img_display = final_img
-                    else: img_display = final_img
-                else: img_display = Image.new("RGB", (w_canvas, h_canvas), (17, 17, 17))
+                cl = max(0, int(l))
+                ct = max(0, int(t))
+                cr = min(s.w_real, int(r))
+                cb = min(s.h_real, int(b))
+                if cr > cl and cb > ct:
+                    crop = s.imagem_original.crop((cl, ct, cr, cb))
+                    img = Image.new("RGB", (w_can, h_can), (20,20,20))
+                    px = int((cl - l) * s.zoom_level)
+                    py = int((ct - t) * s.zoom_level)
+                    pw = int((cr - cl) * s.zoom_level)
+                    ph = int((cb - ct) * s.zoom_level)
+                    if pw>0 and ph>0:
+                        crop = crop.resize((pw, ph), Image.Resampling.NEAREST)
+                        img.paste(crop, (px, py))
+                else: img = Image.new("RGB", (w_can, h_can), (20,20,20))
 
-            self.tk_image = ImageTk.PhotoImage(img_display)
+            self.tk_image = ImageTk.PhotoImage(img)
             self.canvas.create_image(0, 0, image=self.tk_image, anchor="nw")
-            self.desenhar_overlays(left, top, right, bottom, w_canvas, h_canvas)
-        except Exception as e: print(f"Erro render: {e}")
+            
+            if (r-l)/s.grid_w < 400: # Culling grid
+                sc, ec = int(l//s.grid_w), int(r//s.grid_w)+1
+                sr, er = int(t//s.grid_h), int(b//s.grid_h)+1
+                
+                for (c, ro) in s.selected_cells:
+                    if sc <= c <= ec and sr <= ro <= er:
+                        x1 = (c*s.grid_w - l)*s.zoom_level
+                        y1 = (ro*s.grid_h - t)*s.zoom_level
+                        x2 = x1 + (s.grid_w*s.zoom_level)
+                        y2 = y1 + (s.grid_h*s.zoom_level)
+                        self.canvas.create_rectangle(x1, y1, x2, y2, fill="cyan", outline=s.grid_color, stipple="gray25")
+                
+                cx = (sc * s.grid_w)
+                if cx < l: cx += s.grid_w
+                while cx < r:
+                    sx = (cx - l) * s.zoom_level
+                    self.canvas.create_line(sx, 0, sx, h_can, fill=s.grid_color, dash=(2, 4))
+                    cx += s.grid_w
+                cy = (sr * s.grid_h)
+                if cy < t: cy += s.grid_h
+                while cy < b:
+                    sy = (cy - t) * s.zoom_level
+                    self.canvas.create_line(0, sy, w_can, sy, fill=s.grid_color, dash=(2, 4))
+                    cy += s.grid_h
 
-    def desenhar_overlays(self, left, top, right, bottom, w_canvas, h_canvas):
-        w_block, h_block = self.get_dimensoes_grid()
-        start_col = int(left // w_block)
-        end_col = int(right // w_block) + 1
-        start_row = int(top // h_block)
-        end_row = int(bottom // h_block) + 1
+        except Exception as e: pass
 
-        for key in self.selected_cells:
-            col, row = key
-            if start_col <= col <= end_col and start_row <= row <= end_row:
-                x1_world = col * w_block
-                y1_world = row * h_block
-                x2_world = x1_world + w_block
-                y2_world = y1_world + h_block
-                x1_screen = (x1_world - left) * self.zoom_level
-                y1_screen = (y1_world - top) * self.zoom_level
-                x2_screen = (x2_world - left) * self.zoom_level
-                y2_screen = (y2_world - top) * self.zoom_level
-                self.canvas.create_rectangle(x1_screen, y1_screen, x2_screen, y2_screen,
-                                           fill="cyan", outline=self.grid_color, stipple="gray25", width=2)
-
-        if (right - left) / w_block > 300: return
-        start_x = (left // w_block) * w_block
-        if start_x < left: start_x += w_block
-        x = start_x
-        while x < right:
-            sx = (x - left) * self.zoom_level
-            self.canvas.create_line(sx, 0, sx, h_canvas, fill=self.grid_color, dash=(2, 4))
-            x += w_block
-        start_y = (top // h_block) * h_block
-        if start_y < top: start_y += h_block
-        y = start_y
-        while y < bottom:
-            sy = (y - top) * self.zoom_level
-            self.canvas.create_line(0, sy, w_canvas, sy, fill=self.grid_color, dash=(2, 4))
-            y += h_block
-
-    def escolher_cor(self):
-        cor = colorchooser.askcolor(title="Cor do Grid")[1]
-        if cor:
-            self.grid_color = cor
+    # --- INTERAÇÃO ---
+    def on_pan_start(self, e):
+        self.last_mouse_x = e.x
+        self.last_mouse_y = e.y
+    def on_pan_move(self, e):
+        if self.sessao_atual:
+            dx = e.x - self.last_mouse_x
+            dy = e.y - self.last_mouse_y
+            self.sessao_atual.camera_x -= dx / self.sessao_atual.zoom_level
+            self.sessao_atual.camera_y -= dy / self.sessao_atual.zoom_level
+            self.last_mouse_x = e.x
+            self.last_mouse_y = e.y
             self.redesenhar()
 
-    def fatiar_tudo(self):
-        if not self.imagem_original: return
-        w_block, h_block = self.get_dimensoes_grid()
-        w_total, h_total = self.imagem_original.size
-        total_files = math.ceil(w_total/w_block) * math.ceil(h_total/h_block)
-        if not messagebox.askyesno("Confirmar", f"Isso vai gerar {total_files} arquivos.\nDeseja continuar?"): return
-        self._processar_salvamento(todas=True)
+    def on_right_click(self, e):
+        s = self.sessao_atual
+        if not s: return
+        rx = s.camera_x + (e.x / s.zoom_level)
+        ry = s.camera_y + (e.y / s.zoom_level)
+        if 0 <= rx <= s.w_real and 0 <= ry <= s.h_real:
+            col = int(rx // s.grid_w)
+            row = int(ry // s.grid_h)
+            k = (col, row)
+            if k in s.selected_cells: s.selected_cells.remove(k)
+            else: s.selected_cells.add(k)
+            self.redesenhar()
+            self.trigger_modificacao() # AutoSave
+
+    def aplicar_zoom(self, f, mx, my):
+        s = self.sessao_atual
+        if not s: return
+        nz = s.zoom_level * f
+        if nz < 0.001: return
+        wx = s.camera_x + (mx / s.zoom_level)
+        wy = s.camera_y + (my / s.zoom_level)
+        s.zoom_level = nz
+        s.camera_x = wx - (mx / nz)
+        s.camera_y = wy - (my / nz)
+        self.redesenhar()
+
+    def on_scroll_win(self, e): 
+        if self.sessao_atual: 
+            self.sessao_atual.camera_y -= (e.delta/120)*30 / self.sessao_atual.zoom_level
+            self.redesenhar()
+    def on_shift_scroll_win(self, e):
+        if self.sessao_atual: 
+            self.sessao_atual.camera_x -= (e.delta/120)*30 / self.sessao_atual.zoom_level
+            self.redesenhar()
+    def on_zoom_win(self, e):
+        self.aplicar_zoom(1.2 if e.delta > 0 else 0.8, e.x, e.y)
+
+    def escolher_cor(self):
+        if self.sessao_atual:
+            c = colorchooser.askcolor()[1]
+            if c: 
+                self.sessao_atual.grid_color = c
+                self.redesenhar()
+                self.trigger_modificacao()
+
+    def limpar_selecao(self, e=None):
+        if self.sessao_atual:
+            self.sessao_atual.selected_cells.clear()
+            self.redesenhar()
+            self.trigger_modificacao()
 
     def salvar_selecionados(self):
-        if not self.imagem_original: return
-        if not self.selected_cells:
-            messagebox.showwarning("Atenção", "Nenhum quadrado selecionado.")
-            return
-        if not messagebox.askyesno("Confirmar", f"Salvar {len(self.selected_cells)} fatias selecionadas?"): return
-        self._processar_salvamento(todas=False)
-
-    def _processar_salvamento(self, todas=False):
-        output_dir = filedialog.askdirectory()
-        if not output_dir: return
-        w_block, h_block = self.get_dimensoes_grid()
-        w_total, h_total = self.imagem_original.size
-        count = 0
-        lista_tarefas = []
-        if todas:
-            for y in range(0, h_total, h_block):
-                for x in range(0, w_total, w_block):
-                    lista_tarefas.append((x, y))
-        else:
-            for (col, row) in self.selected_cells:
-                x = col * w_block
-                y = row * h_block
-                lista_tarefas.append((x, y))
-        progresso = tk.Toplevel(self.root)
-        progresso.title("Salvando...")
-        progresso.geometry("300x100")
-        lbl_prog = tk.Label(progresso, text="Iniciando...", font=("Arial", 12))
-        lbl_prog.pack(pady=20, expand=True)
-        self.root.update()
-        try:
-            for (x, y) in lista_tarefas:
-                x2 = min(x + w_block, w_total)
-                y2 = min(y + h_block, h_total)
-                if x >= w_total or y >= h_total: continue
-                tile = self.imagem_original.crop((x, y, x2, y2))
-                col_idx = x // w_block
-                row_idx = y // h_block
-                filename = f"fatia_lin{row_idx:03d}_col{col_idx:03d}.png"
-                tile.save(os.path.join(output_dir, filename))
+        s = self.sessao_atual
+        if not s or not s.selected_cells: return
+        if not messagebox.askyesno("Confirmar", f"Salvar {len(s.selected_cells)} fatias?"): return
+        out = filedialog.askdirectory()
+        if out:
+            count = 0
+            for (c, r) in s.selected_cells:
+                x1 = c * s.grid_w
+                y1 = r * s.grid_h
+                x2 = min(x1 + s.grid_w, s.w_real)
+                y2 = min(y1 + s.grid_h, s.h_real)
+                s.imagem_original.crop((x1, y1, x2, y2)).save(os.path.join(out, f"{s.nome}_L{r}_C{c}.png"))
                 count += 1
-                if count % 5 == 0:
-                    lbl_prog.config(text=f"Salvando {count}/{len(lista_tarefas)}...")
-                    progresso.update()
-            messagebox.showinfo("Sucesso", f"{count} fatias salvas!")
-        except Exception as e: messagebox.showerror("Erro", str(e))
-        finally: progresso.destroy()
+            messagebox.showinfo("Fim", f"{count} fatias salvas.")
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = AppVisualizadorPro(root)
+    app = AppScientificSlicer(root)
     root.mainloop()
