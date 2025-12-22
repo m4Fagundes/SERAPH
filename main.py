@@ -1,11 +1,25 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, colorchooser
+from tkinter import filedialog, messagebox, colorchooser, ttk
 from PIL import Image, ImageTk
 import os
 import json
 import platform
+import subprocess
 
 Image.MAX_IMAGE_PIXELS = None 
+
+def detectar_modo_escuro_mac():
+    """Detecta se o macOS está no modo escuro"""
+    if platform.system() != "Darwin":
+        return False
+    try:
+        result = subprocess.run(
+            ["defaults", "read", "-g", "AppleInterfaceStyle"],
+            capture_output=True, text=True
+        )
+        return result.stdout.strip().lower() == "dark"
+    except:
+        return False 
 
 # --- MODELO DE DADOS (SESSÃO) ---
 class SessaoImagem:
@@ -50,6 +64,7 @@ class AppScientificSlicer:
     def __init__(self, root):
         self.root = root
         self.is_mac = platform.system() == "Darwin" # Detecção do SO
+        self.is_dark_mode = detectar_modo_escuro_mac()
         
         self.root.title(f"Slicer Lab Pro - {'macOS Mode' if self.is_mac else 'Windows Mode'}")
         self.root.geometry("1400x900")
@@ -66,8 +81,55 @@ class AppScientificSlicer:
 
         self._setup_ui()
 
+    def _setup_ttk_styles(self):
+        """Configura estilos ttk que funcionam corretamente no macOS"""
+        style = ttk.Style()
+        
+        # Botão padrão (cinza)
+        style.configure("Dark.TButton",
+                        background="#444444",
+                        foreground="#ffffff",
+                        padding=(10, 5),
+                        font=("Segoe UI", 10))
+        style.map("Dark.TButton",
+                  background=[("active", "#555555"), ("pressed", "#333333")],
+                  foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
+        
+        # Botão accent (azul)
+        style.configure("Accent.TButton",
+                        background="#007acc",
+                        foreground="#ffffff",
+                        padding=(10, 5),
+                        font=("Segoe UI", 9, "bold"))
+        style.map("Accent.TButton",
+                  background=[("active", "#005a9e"), ("pressed", "#004080")],
+                  foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
+        
+        # Botão verde
+        style.configure("Green.TButton",
+                        background="#27ae60",
+                        foreground="#ffffff",
+                        padding=(10, 5),
+                        font=("Segoe UI", 10))
+        style.map("Green.TButton",
+                  background=[("active", "#2ecc71"), ("pressed", "#1e8449")],
+                  foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
+        
+        # Botão de zoom (menor)
+        style.configure("Zoom.TButton",
+                        background="#444444",
+                        foreground="#ffffff",
+                        padding=(5, 2),
+                        font=("Segoe UI", 12, "bold"))
+        style.map("Zoom.TButton",
+                  background=[("active", "#555555"), ("pressed", "#333333")],
+                  foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
+
     def _setup_ui(self):
         self.colors = {"bg": "#1e1e1e", "sidebar": "#252526", "toolbar": "#333333", "accent": "#007acc", "text": "#cccccc"}
+        
+        # Configurar estilos ttk para macOS
+        self._setup_ttk_styles()
         
         main = tk.Frame(self.root, bg=self.colors["bg"])
         main.pack(fill=tk.BOTH, expand=True)
@@ -81,7 +143,7 @@ class AppScientificSlicer:
         self.lista_arquivos.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.lista_arquivos.bind("<<ListboxSelect>>", self.trocar_aba_imagem)
         
-        tk.Button(self.sidebar, text="+ ADD IMAGE", command=self.add_imagem_btn, bg=self.colors["accent"], fg="white", relief="flat", font=("Segoe UI", 9, "bold")).pack(fill=tk.X, padx=10, pady=10)
+        ttk.Button(self.sidebar, text="+ ADD IMAGE", command=self.add_imagem_btn, style="Accent.TButton").pack(fill=tk.X, padx=10, pady=10)
 
         # 2. Main Area
         content = tk.Frame(main, bg=self.colors["bg"])
@@ -92,6 +154,10 @@ class AppScientificSlicer:
         
         self._setup_inputs_grid()
         self._btn_toolbar("🎨 Color", self.escolher_cor)
+        tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
+        
+        # Controles de Zoom Visual
+        self._setup_zoom_controls()
         tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
         
         # Botões de Projeto
@@ -130,8 +196,60 @@ class AppScientificSlicer:
         self.entry_w.bind("<FocusOut>", lambda e: self.redesenhar())
         self.entry_h.bind("<FocusOut>", lambda e: self.redesenhar())
 
-    def _btn_toolbar(self, txt, cmd, bg="#444"):
-        tk.Button(self.toolbar, text=txt, command=cmd, bg=bg, fg="white", relief="flat", padx=10).pack(side=tk.LEFT, padx=5, pady=8)
+    def _btn_toolbar(self, txt, cmd, bg=None):
+        if bg == "#27ae60":
+            style = "Green.TButton"
+        else:
+            style = "Dark.TButton"
+        ttk.Button(self.toolbar, text=txt, command=cmd, style=style).pack(side=tk.LEFT, padx=5, pady=8)
+
+    def _setup_zoom_controls(self):
+        """Cria controles visuais de zoom: botões + / - e label de porcentagem"""
+        f = tk.Frame(self.toolbar, bg=self.colors["toolbar"])
+        f.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(f, text="−", command=self.zoom_out_btn, style="Zoom.TButton", width=3).pack(side=tk.LEFT)
+        
+        self.lbl_zoom = tk.Label(f, text="100%", bg=self.colors["toolbar"], fg="white", 
+                                  font=("Segoe UI", 9), width=6)
+        self.lbl_zoom.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(f, text="+", command=self.zoom_in_btn, style="Zoom.TButton", width=3).pack(side=tk.LEFT)
+        
+        ttk.Button(f, text="⟲", command=self.zoom_reset_btn, style="Zoom.TButton", width=3).pack(side=tk.LEFT, padx=(5,0))
+
+    def zoom_in_btn(self):
+        """Zoom in pelo botão"""
+        if self.sessao_atual:
+            w_can = self.canvas.winfo_width()
+            h_can = self.canvas.winfo_height()
+            self.aplicar_zoom(1.25, w_can // 2, h_can // 2)
+
+    def zoom_out_btn(self):
+        """Zoom out pelo botão"""
+        if self.sessao_atual:
+            w_can = self.canvas.winfo_width()
+            h_can = self.canvas.winfo_height()
+            self.aplicar_zoom(0.8, w_can // 2, h_can // 2)
+
+    def zoom_reset_btn(self):
+        """Reset zoom para caber na tela"""
+        if self.sessao_atual:
+            s = self.sessao_atual
+            w_can = self.canvas.winfo_width()
+            h_can = self.canvas.winfo_height()
+            if w_can > 10 and h_can > 10:
+                ratio = min(w_can / s.w_real, h_can / s.h_real)
+                s.zoom_level = ratio * 0.9
+                s.camera_x = 0
+                s.camera_y = 0
+                self.redesenhar()
+
+    def _atualizar_label_zoom(self):
+        """Atualiza o label de porcentagem do zoom"""
+        if self.sessao_atual:
+            pct = int(self.sessao_atual.zoom_level * 100)
+            self.lbl_zoom.config(text=f"{pct}%")
 
     def _setup_binds(self):
         c = self.canvas
@@ -145,8 +263,14 @@ class AppScientificSlicer:
         
         c.bind("<MouseWheel>", self.on_scroll_win)
         c.bind("<Shift-MouseWheel>", self.on_shift_scroll_win)
-        c.bind("<Control-MouseWheel>", self.on_zoom_win)
         
+        # Zoom: Command no macOS, Control no Windows
+        if self.is_mac:
+            c.bind("<Command-MouseWheel>", self.on_zoom_win)
+            # Pinch-to-zoom no trackpad (gesture events)
+            c.bind("<Option-MouseWheel>", self.on_zoom_win)
+        else:
+            c.bind("<Control-MouseWheel>", self.on_zoom_win)
         
         c.bind("<Configure>", self.on_resize)
         self.root.bind("<c>", self.limpar_selecao)
@@ -336,6 +460,7 @@ class AppScientificSlicer:
 
         self.status_bar.config(text=f"Imagem: {sessao.nome} | Dim: {sessao.w_real}x{sessao.h_real}")
         self.redesenhar()
+        self._atualizar_label_zoom()
 
     def on_resize(self, event):
         if self.sessao_atual: self.redesenhar()
@@ -459,6 +584,7 @@ class AppScientificSlicer:
         s.camera_x = wx - (mx / nz)
         s.camera_y = wy - (my / nz)
         self.redesenhar()
+        self._atualizar_label_zoom()
 
     def on_scroll_win(self, e): 
         if self.sessao_atual: 
@@ -474,7 +600,14 @@ class AppScientificSlicer:
             self.redesenhar()
             
     def on_zoom_win(self, e):
-        fator = 1.2 if e.delta > 0 else 0.8
+        if self.is_mac:
+            # macOS: delta é menor e mais granular (trackpad)
+            if e.delta > 0:
+                fator = 1.05  # Zoom in mais suave
+            else:
+                fator = 0.95  # Zoom out mais suave
+        else:
+            fator = 1.2 if e.delta > 0 else 0.8
         self.aplicar_zoom(fator, e.x, e.y)
 
     def escolher_cor(self):
