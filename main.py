@@ -377,14 +377,11 @@ class SlicerLabApp:
             c.bind("<Button-2>", self.on_right_click)
             c.bind("<Control-Button-1>", self.on_right_click)
         
+        # Single scroll handler that checks for modifiers internally
         c.bind("<MouseWheel>", self.on_scroll)
-        c.bind("<Shift-MouseWheel>", self.on_shift_scroll)
         
-        # Zoom: Command on macOS, Control on Windows
-        if self.is_mac:
-            c.bind("<Command-MouseWheel>", self.on_zoom_scroll)
-            c.bind("<Option-MouseWheel>", self.on_zoom_scroll)
-        else:
+        # Control+scroll for zoom on Windows (works reliably)
+        if not self.is_mac:
             c.bind("<Control-MouseWheel>", self.on_zoom_scroll)
         
         c.bind("<Configure>", self.on_resize)
@@ -761,16 +758,42 @@ class SlicerLabApp:
         self._update_zoom_label()
 
     def on_scroll(self, e): 
-        if self.current_session: 
-            delta = self._get_scroll_delta(e)
-            self.current_session.camera_y -= delta / self.current_session.zoom_level
-            self.redraw()
+        if not self.current_session:
+            return
+        
+        # On macOS, check modifier keys from event.state
+        if self.is_mac:
+            # State flags for macOS:
+            # Shift = 0x1, Control = 0x4, Option/Alt = 0x10, Command = 0x8
+            shift_held = (e.state & 0x1) != 0
+            cmd_held = (e.state & 0x8) != 0
+            option_held = (e.state & 0x10) != 0
             
-    def on_shift_scroll(self, e):
-        if self.current_session: 
-            delta = self._get_scroll_delta(e)
-            self.current_session.camera_x -= delta / self.current_session.zoom_level
-            self.redraw()
+            if cmd_held or option_held:
+                # Zoom with Command or Option
+                factor = 1.05 if e.delta > 0 else 0.95
+                self.apply_zoom(factor, e.x, e.y)
+            elif shift_held:
+                # Horizontal pan with Shift
+                delta = self._get_scroll_delta(e)
+                self.current_session.camera_x -= delta / self.current_session.zoom_level
+                self.redraw()
+            else:
+                # Vertical pan (default)
+                delta = self._get_scroll_delta(e)
+                self.current_session.camera_y -= delta / self.current_session.zoom_level
+                self.redraw()
+        else:
+            # Windows: simple vertical pan, zoom handled by separate binding
+            shift_held = (e.state & 0x1) != 0
+            if shift_held:
+                delta = self._get_scroll_delta(e)
+                self.current_session.camera_x -= delta / self.current_session.zoom_level
+                self.redraw()
+            else:
+                delta = self._get_scroll_delta(e)
+                self.current_session.camera_y -= delta / self.current_session.zoom_level
+                self.redraw()
             
     def on_zoom_scroll(self, e):
         if self.is_mac:
