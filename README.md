@@ -1,129 +1,186 @@
 # 🔬 Slicer Lab Pro
 
-**Slicer Lab Pro** é uma ferramenta desktop de alta performance desenvolvida em **Python (Tkinter + Pillow)** para **visualização, anotação e fatiamento (slicing) de imagens de alta resolução**.
+**Slicer Lab Pro** is a high-performance desktop tool built with **Python (Tkinter + Pillow)** for **visualization, annotation, and slicing of high-resolution images**.
 
-Ideal para **datasets de Machine Learning**, **imagens científicas**, **mapas** ou qualquer projeto que exija dividir grandes imagens em **tiles (blocos)** específicos.
-
----
-
-## ✨ Funcionalidades Principais
-
-### 🚀 Performance e Visualização
-- **Suporte a Imagens Gigantes**  
-  Carregamento otimizado de imagens de alta resolução (satélite, microscopia, etc.) sem travar a interface.
-
-- **Sistema LOD (Level of Detail)**  
-  Implementação de cache visual que renderiza previews em baixa resolução durante o zoom-out para manter a navegação fluida.
-
-- **Navegação Intuitiva**  
-  Zoom e Pan similares a softwares de CAD ou mapas (ex: Google Maps).
+Ideal for **Machine Learning datasets**, **scientific imagery**, **maps**, or any project that requires splitting large images into specific **tiles**.
 
 ---
 
-### 🛠️ Edição e Fatiamento
-- **Grid Dinâmico**  
-  Ajuste a largura e altura (W x H) da grade de corte em tempo real.
+## ✨ Main Features
 
-- **Seleção de Células**  
-  Clique com o botão direito para selecionar/deselecionar áreas específicas para exportação.
+### 🚀 Performance & Visualization
+- **Giant Image Support**  
+  Optimized loading for high-resolution images (satellite, microscopy, etc.) without freezing the interface.
 
-- **Cores Personalizáveis**  
-  Altere a cor da grade para melhor contraste com a imagem de fundo.
+- **LOD System (Level of Detail)**  
+  Visual cache implementation that renders low-resolution previews during zoom-out to keep navigation smooth.
 
----
+- **Intuitive Navigation**  
+  Zoom and Pan similar to CAD software or maps (e.g., Google Maps).
 
-### 💾 Gerenciamento de Projetos
-- **Múltiplas Sessões**  
-  Trabalhe com várias imagens simultaneamente em abas laterais.
-
-- **Persistência de Dados (JSON)**  
-  Salve e carregue projetos inteiros (`.lab`).  
-  O sistema preserva:
-  - Grid  
-  - Zoom  
-  - Posição da câmera  
-  - Seleções de cada imagem individualmente
-
-- **Auto-Save Inteligente**  
-  O projeto salva automaticamente após alterações, prevenindo perda de dados.
-
-- **Exportação em Lote**  
-  Exporte apenas os "quadrados" selecionados como arquivos de imagem individuais (`.png`, `.jpg`, etc.).
+- **Cross-Platform**  
+  Full support for **macOS** (including Apple Silicon M1/M2/M3) and **Windows** with platform-specific optimizations.
 
 ---
 
-## 🎮 Atalhos e Controles
+### 🛠️ Editing & Slicing
+- **Dynamic Grid**  
+  Adjust width and height (W × H) of the cutting grid in real-time.
 
-| Ação | Comando / Mouse |
-|-----|----------------|
-| Mover Câmera (Pan) | Clique e arraste com Botão Esquerdo |
-| Zoom In / Out | `Ctrl + Scroll do Mouse` |
-| Pan Vertical | `Scroll do Mouse` |
-| Pan Horizontal | `Shift + Scroll do Mouse` |
-| Selecionar Célula | Clique com Botão Direito |
-| Limpar Seleção | Tecla `C` |
-| Confirmar Dimensões | `Enter` ou clique fora dos campos W/H |
+- **Cell Selection**  
+  Right-click to select/deselect specific areas for export. Selected cells display with a semi-transparent cyan overlay.
+
+- **Customizable Colors**  
+  Change grid color for better contrast with the background image.
+
+- **Multiple Export Formats**  
+  Choose your preferred format: **PNG**, **JPEG**, **TIFF**, **BMP**, or **WebP**.
+
+- **Slice All**  
+  Export the entire image divided into grid tiles with a single click.
 
 ---
 
-## 📦 Instalação e Execução
+### 💾 Project Management
+- **Multiple Sessions**  
+  Work with multiple images simultaneously via sidebar tabs.
 
-### Pré-requisitos
-- Python **3.8** ou superior  
-- Biblioteca **Pillow**
+- **Data Persistence (JSON)**  
+  Save and load entire projects (`.lab` files).  
+  The system preserves:
+  - Grid settings  
+  - Zoom level  
+  - Camera position  
+  - Selections for each image  
+  - Export format preference
 
-### Passo a Passo
+- **Smart Auto-Save**  
+  Project automatically saves after changes, preventing data loss.
 
-Clone o repositório:
+- **Project Menu**  
+  Quick access dropdown menu for New Project, Open, and Save operations.
+
+- **Batch Export**  
+  Export only selected cells or all grid tiles as individual image files.
+
+---
+
+## 🎮 Shortcuts & Controls
+
+### General Controls
+| Action | Command |
+|--------|---------|
+| Pan Camera | Left-click and drag |
+| Vertical Scroll | Mouse wheel |
+| Horizontal Scroll | `Shift` + Mouse wheel |
+| Select Cell | Right-click |
+| Clear Selection | `C` key |
+
+### Zoom Controls
+| Platform | Command |
+|----------|---------|
+| **macOS** | `⌘ Command` + Scroll or `⌥ Option` + Scroll |
+| **Windows** | `Ctrl` + Scroll |
+
+> **Tip:** Use the visual zoom buttons (−/+/⟲) in the toolbar if scroll zoom doesn't work on your system.
+
+### macOS-Specific
+- Right-click alternatives: `Button-2` (middle click) or `Ctrl` + Click
+
+---
+
+## 📦 Installation & Running
+
+### Prerequisites
+- Python **3.8** or higher  
+- **Pillow** library
+
+### Step by Step
+
+Clone the repository:
 ```bash
-   git clone https://seu-repositorio/slicer-lab-pro.git
-   cd slicer-lab-pro
+git clone https://github.com/your-repo/slicer-lab-pro.git
+cd slicer-lab-pro
 ```
 
-
-Instale as dependências:
+Install dependencies:
 ```bash
-   pip install Pillow
+pip install Pillow
 ```
 
-Execute a aplicação:
+Run the application:
 ```bash
-   python main.py
+python main.py
 ```
 
-## ⚙️ Detalhes Técnicos
+---
 
-### Arquitetura
+## ⚙️ Technical Details
 
-O projeto segue uma separação clara entre Lógica de Dados e Interface Gráfica, evitando bugs de estado:
+### Architecture
 
-- Backend (SessaoImagem)
-Classe responsável por manter o estado "puro" de cada imagem:
+The project follows a clear separation between **Data Logic** and **Graphical Interface**, avoiding state bugs:
 
-   - Dimensões reais
+#### Backend (`ImageSession`)
+Class responsible for maintaining the "pure" state of each image:
+- Real dimensions (`real_width`, `real_height`)
+- File paths
+- Grid settings (`grid_w`, `grid_h`, `grid_color`)
+- Selected cells list
+- Zoom level and camera position
 
-   - Caminhos
+Data remains in RAM, independent of rendering.
 
-   - Configurações de grid
+#### Frontend (`SlicerLabApp`)
+Tkinter interface that reads data from the active session and draws on the Canvas.
 
-   - Lista de células selecionadas
+### Image Optimization
 
-Os dados permanecem na RAM, independentes da renderização.
-
-- Frontend (AppScientificSlicer)
-Interface Tkinter que lê os dados da sessão ativa e desenha no Canvas.
-
-## Otimização de Imagem
-
-Para lidar com o erro DecompressionBombError em imagens grandes:
-
-```bash
-   Image.MAX_IMAGE_PIXELS = None
+To handle `DecompressionBombError` with large images:
+```python
+Image.MAX_IMAGE_PIXELS = None
 ```
 
+### Dynamic Crop & Resize
+- Only the visible portion of the image (Viewport) is processed
+- Significant reduction in memory and CPU usage
+- LOD system uses preview images for zoom levels < 50%
 
-### Utiliza Crop & Resize dinâmico:
+### Project File Format (`.lab`)
+JSON structure with:
+```json
+{
+  "version": "2.2",
+  "platform": "Darwin",
+  "active_index": 0,
+  "export_format": ".png",
+  "images": [...]
+}
+```
+Backward compatible with legacy field names.
 
-- Apenas a porção visível da imagem (Viewport) é processada
+---
 
-- Redução significativa de uso de memória e CPU
+## 🖥️ UI Layout
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ [📁 Project ▾] │ W:[____] H:[____] [🎨] │ [− 100% + ⟲] │ [PNG▾] │ [✂️ Slice] [🔲 All] │
+├──────────┬──────────────────────────────────────────────────────┤
+│ PROJECT  │                                                      │
+│ /IMAGES  │                                                      │
+│          │                    Canvas                            │
+│ ☐ img1   │                  (Viewport)                          │
+│ ☑ img2   │                                                      │
+│          │                                                      │
+│[+Add Img]│                                                      │
+├──────────┴──────────────────────────────────────────────────────┤
+│ Status: Image: example.png | Size: 4096×4096px                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📄 License
+
+MIT License - Feel free to use and modify.
