@@ -180,3 +180,15 @@ Backward compatible with legacy field names.
 ```
 
 ---
+
+
+# 📥 Downloads (Última Versão)
+
+Não quer rodar código Python? Baixe a versão pronta para o seu sistema:
+
+| Sistema Operacional | Download | Instruções Rápidas |
+| :--- | :--- | :--- |
+| **Windows 10/11** | [**SlicerLab_Windows.exe**](https://github.com/m4Fagundes/grid-image-analyzer/releases/latest) | Ao abrir, se aparecer "Windows protegee o PC", clique em **Mais informações** > **Executar mesmo assim**. |
+| **macOS** | [**SlicerLab_Mac.zip**](https://github.com/m4Fagundes/grid-image-analyzer/releases/latest) | Após baixar, arraste para a pasta Aplicativos. Se bloquear, rode no terminal: `xattr -cr /Applications/SlicerLab.app` |
+
+> **Nota:** Os links acima levam para a página de lançamentos. Procure pela seção **"Assets"** e clique no arquivo correspondente ao seu sistema.
