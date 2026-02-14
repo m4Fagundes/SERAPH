@@ -7,6 +7,7 @@ from app.domain.session import ImageSession
 from app.interface.gui.utils import detect_dark_mode_mac
 from app.interface.gui.components import UIComponents, setup_ttk_styles
 from app.application.services import ProjectService, ExportService
+from app.domain.selection import subtract_from_slice, rect_to_cells
 
 class SlicerLabApp:
     # Supported export formats
@@ -388,33 +389,25 @@ class SlicerLabApp:
     def on_resize(self, event):
         if self.current_session: self.redraw()
 
-    def _draw_selection_overlay(self, x1, y1, x2, y2):
+    def _draw_selection_fill(self, x1, y1, x2, y2):
+        """Draw hatching fill only (no border)."""
         line_spacing = 2
-        
         y = y1
         while y < y2:
             self.canvas.create_line(x1, y, x2, y, fill="#00FFFF", width=1)
             y += line_spacing * 2
-        
         x = x1
         while x < x2:
             self.canvas.create_line(x, y1, x, y2, fill="#00FFFF", width=1)
             x += line_spacing * 2
-        
-        self.canvas.create_rectangle(x1, y1, x2, y2, outline="#00FFFF", width=3)
-        self.canvas.create_rectangle(x1+2, y1+2, x2-2, y2-2, outline="#FFFFFF", width=1)
 
     def redraw(self):
         s = self.current_session
         if not s: return
 
         try:
-            new_w = max(10, int(self.entry_w.get()))
-            new_h = max(10, int(self.entry_h.get()))
-            if (new_w != s.grid_w or new_h != s.grid_h) and s.selected_cells:
-                s.remap_selections(s.grid_w, s.grid_h, new_w, new_h)
-            s.grid_w = new_w
-            s.grid_h = new_h
+            s.grid_w = max(10, int(self.entry_w.get()))
+            s.grid_h = max(10, int(self.entry_h.get()))
         except Exception:
             pass
 
@@ -462,14 +455,35 @@ class SlicerLabApp:
                 sc, ec = int(l//s.grid_w), int(r//s.grid_w)+1
                 sr, er = int(t//s.grid_h), int(b//s.grid_h)+1
                 
-                for (c, ro) in s.selected_cells:
-                    if sc <= c <= ec and sr <= ro <= er:
-                        x1 = (c*s.grid_w - l)*s.zoom_level
-                        y1 = (ro*s.grid_h - t)*s.zoom_level
-                        x2 = x1 + (s.grid_w*s.zoom_level)
-                        y2 = y1 + (s.grid_h*s.zoom_level)
-                        
-                        self._draw_selection_overlay(x1, y1, x2, y2)
+                for slice_rects in s.selected_cells:
+                    for (sx1, sy1, sx2, sy2) in slice_rects:
+                        if sx2 >= l and sx1 <= r and sy2 >= t and sy1 <= b:
+                            cx1 = (sx1 - l) * s.zoom_level
+                            cy1 = (sy1 - t) * s.zoom_level
+                            cx2 = (sx2 - l) * s.zoom_level
+                            cy2 = (sy2 - t) * s.zoom_level
+                            self._draw_selection_fill(cx1, cy1, cx2, cy2)
+
+                # Draw external outlines per slice group
+                for slice_rects in s.selected_cells:
+                    slice_cells = set()
+                    for rect in slice_rects:
+                        slice_cells |= rect_to_cells(rect, s.grid_w, s.grid_h)
+                    for (c, ro) in slice_cells:
+                        if c < sc or c > ec or ro < sr or ro > er:
+                            continue
+                        ex1 = (c * s.grid_w - l) * s.zoom_level
+                        ey1 = (ro * s.grid_h - t) * s.zoom_level
+                        ex2 = (min((c + 1) * s.grid_w, s.real_width) - l) * s.zoom_level
+                        ey2 = (min((ro + 1) * s.grid_h, s.real_height) - t) * s.zoom_level
+                        if (c - 1, ro) not in slice_cells:
+                            self.canvas.create_line(ex1, ey1, ex1, ey2, fill="#00FFFF", width=3)
+                        if (c + 1, ro) not in slice_cells:
+                            self.canvas.create_line(ex2, ey1, ex2, ey2, fill="#00FFFF", width=3)
+                        if (c, ro - 1) not in slice_cells:
+                            self.canvas.create_line(ex1, ey1, ex2, ey1, fill="#00FFFF", width=3)
+                        if (c, ro + 1) not in slice_cells:
+                            self.canvas.create_line(ex1, ey2, ex2, ey2, fill="#00FFFF", width=3)
                 
                 cx = (sc * s.grid_w)
                 if cx < l: cx += s.grid_w
@@ -508,9 +522,34 @@ class SlicerLabApp:
         if 0 <= rx <= s.real_width and 0 <= ry <= s.real_height:
             col = int(rx // s.grid_w)
             row = int(ry // s.grid_h)
-            k = (col, row)
-            if k in s.selected_cells: s.selected_cells.remove(k)
-            else: s.selected_cells.add(k)
+            x1 = col * s.grid_w
+            y1 = row * s.grid_h
+            x2 = min(x1 + s.grid_w, s.real_width)
+            y2 = min(y1 + s.grid_h, s.real_height)
+            cell_rect = (x1, y1, x2, y2)
+
+            # Find which slice group overlaps the click
+            found_idx = None
+            for i, slice_rects in enumerate(s.selected_cells):
+                for r in slice_rects:
+                    if r[0] < x2 and r[2] > x1 and r[1] < y2 and r[3] > y1:
+                        found_idx = i
+                        break
+                if found_idx is not None:
+                    break
+
+            if found_idx is not None:
+                # SUBTRACT from this slice group
+                old_slice = s.selected_cells.pop(found_idx)
+                new_slices = subtract_from_slice(
+                    old_slice, col, row,
+                    s.grid_w, s.grid_h, s.real_width, s.real_height)
+                for ns in new_slices:
+                    s.selected_cells.append(ns)
+            else:
+                # ADD as new independent slice
+                s.selected_cells.append({cell_rect})
+
             self.redraw()
             self.trigger_modification()
 
@@ -585,13 +624,14 @@ class SlicerLabApp:
             messagebox.showwarning("Warning", "No cells selected.")
             return
         
-        msg = f"Save {len(s.selected_cells)} slices as {self.export_format.upper()[1:]}?"
+        n = len(s.selected_cells)
+        msg = f"Save {n} slice(s) as {self.export_format.upper()[1:]}?"
         if not messagebox.askyesno("Confirm", msg): return
         
         out = filedialog.askdirectory(title="Select output folder")
         if out:
             count = self.export_service.save_selected_cells(s, out, self.export_format)
-            messagebox.showinfo("Done", f"{count} slices saved as {self.export_format.upper()[1:]}.")
+            messagebox.showinfo("Done", f"{count} slice(s) saved as {self.export_format.upper()[1:]}.")
 
     def slice_all(self):
         s = self.current_session
