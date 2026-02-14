@@ -23,11 +23,11 @@ class ProjectService:
             sel = item.get("selected_regions", item.get("selected_cells", []))
             if sel and isinstance(sel[0], (list, tuple)):
                 if sel[0] and isinstance(sel[0][0], (list, tuple)):
-                    # New format: list of list of rects
                     s.selected_cells = [set(tuple(r) for r in group) for group in sel]
                 else:
-                    # Old format: flat list of rects
                     s.selected_cells = [{tuple(r)} for r in sel if len(r) == 4]
+            s.slice_metadata = item.get("slice_metadata", [])
+            s.sync_metadata()
             sessions.append(s)
         return sessions
 
@@ -40,6 +40,7 @@ class ProjectService:
                 "grid_w": s.grid_w,
                 "grid_h": s.grid_h,
                 "selected_regions": [[list(r) for r in group] for group in s.selected_cells],
+                "slice_metadata": s.slice_metadata,
                 "zoom_level": s.zoom_level,
                 "camera_x": s.camera_x,
                 "camera_y": s.camera_y

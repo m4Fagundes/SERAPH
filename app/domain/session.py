@@ -21,6 +21,13 @@ class ImageSession:
         self.grid_h = 1000
         self.grid_color = "#FFFF00"
         self.selected_cells = []
+        self.slice_metadata = []  # parallel to selected_cells
+
+    def sync_metadata(self):
+        """Ensure slice_metadata stays aligned with selected_cells."""
+        while len(self.slice_metadata) < len(self.selected_cells):
+            self.slice_metadata.append({"description": "", "microns_per_pixel": ""})
+        self.slice_metadata = self.slice_metadata[:len(self.selected_cells)]
 
     def _generate_cache(self):
         try:

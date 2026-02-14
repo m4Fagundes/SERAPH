@@ -43,6 +43,10 @@ class SlicerLabApp:
         self.project_service = ProjectService()
         self.export_service = ExportService()
 
+        # Slice preview state
+        self._slice_thumbs = []  # keep refs to prevent GC
+        self._collapsed_sessions = set()  # session names that are collapsed
+
         self._setup_ui()
 
     def _setup_ui(self):
@@ -54,16 +58,53 @@ class SlicerLabApp:
         main.pack(fill=tk.BOTH, expand=True)
 
         # Sidebar
-        self.sidebar = tk.Frame(main, width=250, bg=self.colors["sidebar"])
+        self.sidebar = tk.Frame(main, width=260, bg=self.colors["sidebar"])
         self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
         self.sidebar.pack_propagate(False)
         
-        tk.Label(self.sidebar, text="PROJECT / IMAGES", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=10, pady=(10,5))
-        self.file_list = tk.Listbox(self.sidebar, bg=self.colors["sidebar"], fg=self.colors["text"], selectbackground="#37373d", selectforeground="white", bd=0, highlightthickness=0, font=("Segoe UI", 10), activestyle="none")
-        self.file_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # --- Top section: project images ---
+        top_section = tk.Frame(self.sidebar, bg=self.colors["sidebar"])
+        top_section.pack(fill=tk.X)
+
+        tk.Label(top_section, text="PROJECT / IMAGES", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(10,4))
+        self.file_list = tk.Listbox(top_section, bg="#2a2a2a", fg=self.colors["text"], selectbackground="#37373d", selectforeground="white", bd=0, highlightthickness=0, font=("Segoe UI", 10), activestyle="none", height=4, relief="flat")
+        self.file_list.pack(fill=tk.X, padx=8, pady=(0,6))
         self.file_list.bind("<<ListboxSelect>>", self.switch_image_tab)
         
-        self.ui.create_button(self.sidebar, "+ Add Image", self.add_image_btn, style_type="accent", padx=10, pady=10, fill=tk.X)
+        self.ui.create_button(top_section, "＋ Add Image", self.add_image_btn, style_type="accent", padx=8, pady=(0,8), fill=tk.X)
+
+        # --- Separator ---
+        tk.Frame(self.sidebar, height=1, bg="#3a3a3a").pack(fill=tk.X, padx=8)
+
+        # --- Bottom section: slice previews ---
+        self.slice_header = tk.Label(self.sidebar, text="SLICES (0)", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w")
+        self.slice_header.pack(fill=tk.X, padx=12, pady=(8,4))
+
+        # Scrollable container for slices
+        slice_container = tk.Frame(self.sidebar, bg=self.colors["sidebar"])
+        slice_container.pack(fill=tk.BOTH, expand=True)
+
+        self._slice_canvas = tk.Canvas(slice_container, bg=self.colors["sidebar"], highlightthickness=0, bd=0)
+        self._slice_scrollbar = tk.Scrollbar(slice_container, orient="vertical", command=self._slice_canvas.yview)
+        self._slice_inner = tk.Frame(self._slice_canvas, bg=self.colors["sidebar"])
+
+        self._slice_canvas_window = self._slice_canvas.create_window((0, 0), window=self._slice_inner, anchor="nw")
+        self._slice_canvas.configure(yscrollcommand=self._slice_scrollbar.set)
+
+        # Resize inner frame width to match canvas
+        def _on_slice_canvas_configure(e):
+            self._slice_canvas.itemconfig(self._slice_canvas_window, width=e.width)
+        self._slice_canvas.bind("<Configure>", _on_slice_canvas_configure)
+        self._slice_inner.bind("<Configure>", lambda e: self._slice_canvas.configure(scrollregion=self._slice_canvas.bbox("all")))
+
+        self._slice_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._slice_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Mouse wheel scrolling
+        def _on_slice_mousewheel(e):
+            self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units")
+        self._slice_canvas.bind("<MouseWheel>", _on_slice_mousewheel)
+        self._slice_inner.bind("<MouseWheel>", _on_slice_mousewheel)
 
         # Main Area
         content = tk.Frame(main, bg=self.colors["bg"])
@@ -106,6 +147,59 @@ class SlicerLabApp:
         self.status_bar.pack(fill=tk.X)
 
         self._setup_binds()
+        self._show_welcome_screen()
+
+    def _show_welcome_screen(self):
+        """Show a welcome overlay on the canvas area."""
+        self.welcome_frame = tk.Frame(self.canvas_area, bg="#1a1a2e")
+        self.welcome_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        # Center container
+        center = tk.Frame(self.welcome_frame, bg="#1a1a2e")
+        center.place(relx=0.5, rely=0.45, anchor="center")
+
+        # App icon/logo area
+        tk.Label(center, text="✂️", font=("Segoe UI", 48), bg="#1a1a2e", fg="white").pack(pady=(0, 5))
+
+        # Title
+        tk.Label(center, text="Slicer Lab Pro", font=("Segoe UI", 28, "bold"),
+                 bg="#1a1a2e", fg="#e0e0e0").pack(pady=(0, 5))
+
+        # Subtitle
+        tk.Label(center, text="Grid-based image slicing tool",
+                 font=("Segoe UI", 11), bg="#1a1a2e", fg="#888").pack(pady=(0, 30))
+
+        # Buttons container
+        btn_frame = tk.Frame(center, bg="#1a1a2e")
+        btn_frame.pack()
+
+        # New Project button
+        new_btn = tk.Button(btn_frame, text="📄  New Project",
+                           command=self.new_project,
+                           bg="#007acc", fg="white",
+                           activebackground="#005a9e", activeforeground="white",
+                           relief="flat", font=("Segoe UI", 13, "bold"),
+                           padx=30, pady=12, cursor="hand2", width=20)
+        new_btn.pack(pady=5)
+
+        # Open Project button
+        open_btn = tk.Button(btn_frame, text="📂  Open Project",
+                            command=self.open_project,
+                            bg="#333", fg="white",
+                            activebackground="#444", activeforeground="white",
+                            relief="flat", font=("Segoe UI", 13),
+                            padx=30, pady=12, cursor="hand2", width=20)
+        open_btn.pack(pady=5)
+
+        # Version / footer
+        tk.Label(self.welcome_frame, text="v1.0",
+                 font=("Segoe UI", 8), bg="#1a1a2e", fg="#555").place(relx=0.5, rely=0.95, anchor="center")
+
+    def _dismiss_welcome(self):
+        """Remove the welcome screen overlay."""
+        if hasattr(self, 'welcome_frame') and self.welcome_frame:
+            self.welcome_frame.destroy()
+            self.welcome_frame = None
 
     def _setup_grid_inputs(self):
         f = tk.Frame(self.toolbar, bg=self.colors["toolbar"])
@@ -275,6 +369,7 @@ class SlicerLabApp:
             if not messagebox.askyesno("New Project", "This will close the current project.\nUnsaved changes will be lost.\n\nContinue?"):
                 return
         
+        self._dismiss_welcome()
         self.sessions.clear()
         self.file_list.delete(0, tk.END)
         self.current_session = None
@@ -293,6 +388,7 @@ class SlicerLabApp:
         self.save_status_label.config(text="")
         self.status_bar.config(text="New project created. Add an image to start.")
         self.zoom_label.config(text="100%")
+        self._update_slice_previews()
 
     def save_project_as(self):
         if not self.sessions:
@@ -314,6 +410,7 @@ class SlicerLabApp:
             sessions = self.project_service.load_project(f)
             self.sessions = sessions
 
+            self._dismiss_welcome()
             self.file_list.delete(0, tk.END)
             self.current_session = None
             self.canvas.delete("all")
@@ -327,6 +424,7 @@ class SlicerLabApp:
             self.current_project_path = f
             self.root.title(f"Slicer Lab Pro - {os.path.basename(f)}")
             self.save_status_label.config(text="Project Loaded")
+            self._update_slice_previews()
             
         except Exception as e:
             messagebox.showerror("Error", f"Error opening project: {e}")
@@ -550,8 +648,271 @@ class SlicerLabApp:
                 # ADD as new independent slice
                 s.selected_cells.append({cell_rect})
 
+            s.sync_metadata()
             self.redraw()
+            self._update_slice_previews()
             self.trigger_modification()
+
+    def _toggle_session_collapse(self, session_name):
+        """Toggle collapsed state of a session group in slice previews."""
+        if session_name in self._collapsed_sessions:
+            self._collapsed_sessions.discard(session_name)
+        else:
+            self._collapsed_sessions.add(session_name)
+        self._update_slice_previews()
+
+    def _update_slice_previews(self):
+        """Rebuild the slice preview panel with full-width vertical thumbnail cards."""
+        # Clear existing
+        for w in self._slice_inner.winfo_children():
+            w.destroy()
+        self._slice_thumbs.clear()
+
+        total_slices = sum(len(s.selected_cells) for s in self.sessions)
+        self.slice_header.config(text=f"SLICES ({total_slices})")
+
+        if total_slices == 0:
+            empty = tk.Label(self._slice_inner, text="Right-click cells to\ncreate slices",
+                     bg=self.colors["sidebar"], fg="#555",
+                     font=("Segoe UI", 9, "italic"), justify="center")
+            empty.pack(pady=30)
+            empty.bind("<MouseWheel>", lambda e: self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+            return
+
+        thumb_max_w = 220  # Full width card thumbnail
+
+        for session in self.sessions:
+            if not session.selected_cells:
+                continue
+
+            n = len(session.selected_cells)
+            collapsed = session.name in self._collapsed_sessions
+            arrow = "▶" if collapsed else "▼"
+
+            # Session header (clickable to collapse)
+            header = tk.Frame(self._slice_inner, bg="#2d2d2d", cursor="hand2")
+            header.pack(fill=tk.X, pady=(6, 0), padx=4)
+            hdr_text = f" {arrow}  {session.name}  ({n})"
+            lbl = tk.Label(header, text=hdr_text,
+                          bg="#2d2d2d", fg="#ccc",
+                          font=("Segoe UI", 9, "bold"), anchor="w")
+            lbl.pack(fill=tk.X, padx=6, pady=4)
+            name = session.name
+            for widget in (lbl, header):
+                widget.bind("<Button-1>", lambda e, n=name: self._toggle_session_collapse(n))
+                widget.bind("<MouseWheel>", lambda e: self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+
+            if collapsed:
+                continue
+
+            # Vertical card list
+            for idx, slice_rects in enumerate(session.selected_cells):
+                try:
+                    # Bounding box
+                    bx1 = min(r[0] for r in slice_rects)
+                    by1 = min(r[1] for r in slice_rects)
+                    bx2 = max(r[2] for r in slice_rects)
+                    by2 = max(r[3] for r in slice_rects)
+                    orig_w, orig_h = bx2 - bx1, by2 - by1
+
+                    # Crop from preview cache for speed
+                    src = session.preview_image if hasattr(session, 'preview_image') and session.preview_image else session.original_image
+                    scale = session.preview_scale if hasattr(session, 'preview_scale') else 1.0
+
+                    crop = src.crop((int(bx1/scale), int(by1/scale), int(bx2/scale), int(by2/scale)))
+
+                    # Scale to fill card width while preserving aspect ratio
+                    ratio = min(thumb_max_w / crop.width, 120 / crop.height)
+                    new_w = max(1, int(crop.width * ratio))
+                    new_h = max(1, int(crop.height * ratio))
+                    crop = crop.resize((new_w, new_h), Image.Resampling.NEAREST)
+
+                    tk_thumb = ImageTk.PhotoImage(crop)
+                    self._slice_thumbs.append(tk_thumb)
+
+                    # Card frame
+                    card = tk.Frame(self._slice_inner, bg="#2a2a2a", padx=0, pady=0)
+                    card.pack(fill=tk.X, padx=8, pady=3)
+
+                    # Image
+                    img_lbl = tk.Label(card, image=tk_thumb, bg="#222", anchor="center")
+                    img_lbl.pack(fill=tk.X, padx=4, pady=(4, 0))
+
+                    # Info row
+                    info = tk.Label(card, text=f"  Slice {idx+1}   •   {orig_w}×{orig_h}px",
+                                   bg="#2a2a2a", fg="#999", anchor="w",
+                                   font=("Segoe UI", 8))
+                    info.pack(fill=tk.X, padx=4, pady=(2, 4))
+
+                    # Propagate mousewheel from all card children
+                    for w in (card, img_lbl, info):
+                        w.bind("<MouseWheel>", lambda e: self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+
+                    # Click to open inspector
+                    sess_ref = session
+                    slice_idx = idx
+                    for w in (card, img_lbl, info):
+                        w.configure(cursor="hand2")
+                        w.bind("<Button-1>", lambda e, sr=sess_ref, si=slice_idx: self._open_slice_inspector(sr, si))
+
+                except Exception:
+                    pass
+
+    def _open_slice_inspector(self, session, slice_idx):
+        """Open a detail inspector for a specific slice."""
+        session.sync_metadata()
+        meta = session.slice_metadata[slice_idx]
+        slice_rects = session.selected_cells[slice_idx]
+
+        # Bounding box
+        bx1 = min(r[0] for r in slice_rects)
+        by1 = min(r[1] for r in slice_rects)
+        bx2 = max(r[2] for r in slice_rects)
+        by2 = max(r[3] for r in slice_rects)
+        orig_w, orig_h = bx2 - bx1, by2 - by1
+
+        # Hide canvas, show inspector
+        self.canvas.pack_forget()
+
+        self._inspector_frame = tk.Frame(self.canvas_area, bg="#1e1e1e")
+        self._inspector_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Scrollable container
+        insp_canvas = tk.Canvas(self._inspector_frame, bg="#1e1e1e", highlightthickness=0)
+        insp_scroll = tk.Scrollbar(self._inspector_frame, orient="vertical", command=insp_canvas.yview)
+        insp_inner = tk.Frame(insp_canvas, bg="#1e1e1e")
+
+        insp_canvas_win = insp_canvas.create_window((0, 0), window=insp_inner, anchor="nw")
+        insp_canvas.configure(yscrollcommand=insp_scroll.set)
+
+        def _on_insp_configure(e):
+            insp_canvas.itemconfig(insp_canvas_win, width=e.width)
+        insp_canvas.bind("<Configure>", _on_insp_configure)
+        insp_inner.bind("<Configure>", lambda e: insp_canvas.configure(scrollregion=insp_canvas.bbox("all")))
+        insp_canvas.bind("<MouseWheel>", lambda e: insp_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+
+        insp_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        insp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # --- Header bar ---
+        header = tk.Frame(insp_inner, bg="#2d2d2d")
+        header.pack(fill=tk.X, padx=20, pady=(20, 10))
+
+        back_btn = tk.Button(header, text="← Back to Grid",
+                            command=lambda: self._close_slice_inspector(session, slice_idx),
+                            bg="#444", fg="white", relief="flat",
+                            font=("Segoe UI", 10), padx=12, pady=6,
+                            activebackground="#555", activeforeground="white",
+                            cursor="hand2")
+        back_btn.pack(side=tk.LEFT, padx=10, pady=8)
+
+        tk.Label(header, text=f"Slice {slice_idx+1}  —  {session.name}",
+                 bg="#2d2d2d", fg="#ccc", font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT, padx=10, pady=8)
+
+        # --- Large preview ---
+        try:
+            src = session.preview_image if session.preview_image else session.original_image
+            scale = session.preview_scale if session.preview_scale else 1.0
+            crop = src.crop((int(bx1/scale), int(by1/scale), int(bx2/scale), int(by2/scale)))
+
+            max_preview = 500
+            ratio = min(max_preview / crop.width, max_preview / crop.height, 1.0)
+            if ratio < 1.0:
+                crop = crop.resize((int(crop.width * ratio), int(crop.height * ratio)), Image.Resampling.LANCZOS)
+
+            self._inspector_img = ImageTk.PhotoImage(crop)
+            preview_frame = tk.Frame(insp_inner, bg="#111")
+            preview_frame.pack(padx=20, pady=10)
+            tk.Label(preview_frame, image=self._inspector_img, bg="#111").pack(padx=4, pady=4)
+            preview_frame.bind("<MouseWheel>", lambda e: insp_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+        except Exception:
+            self._inspector_img = None
+
+        # --- Properties section ---
+        props = tk.Frame(insp_inner, bg="#252526")
+        props.pack(fill=tk.X, padx=20, pady=10)
+
+        tk.Label(props, text="PROPERTIES", bg="#252526", fg="#888",
+                 font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(10, 8))
+
+        # Field builder helper
+        def add_field(parent, label, value, editable=False, key=None):
+            row = tk.Frame(parent, bg="#252526")
+            row.pack(fill=tk.X, padx=12, pady=3)
+            tk.Label(row, text=label, bg="#252526", fg="#999",
+                     font=("Segoe UI", 9), width=16, anchor="w").pack(side=tk.LEFT)
+            if editable:
+                entry = tk.Entry(row, bg="#333", fg="white", relief="flat",
+                                font=("Segoe UI", 10), insertbackground="white")
+                entry.insert(0, str(value) if value else "")
+                entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+                return entry
+            else:
+                tk.Label(row, text=str(value), bg="#252526", fg="#ddd",
+                         font=("Segoe UI", 10), anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+                return None
+
+        # Read-only fields
+        add_field(props, "Resolution", f"{orig_w} × {orig_h} px")
+        add_field(props, "Rects", f"{len(slice_rects)} rectangle(s)")
+        add_field(props, "Source", session.name)
+
+        # Editable: microns per pixel
+        self._insp_microns = add_field(props, "Microns / pixel", meta.get("microns_per_pixel", ""), editable=True)
+
+        # Auto-calculated physical size
+        self._insp_phys_label = tk.Label(props, text="", bg="#252526", fg="#7cb342",
+                                          font=("Segoe UI", 9, "italic"), anchor="w")
+        self._insp_phys_label.pack(fill=tk.X, padx=12, pady=(0, 6))
+
+        def _update_phys_size(*args):
+            try:
+                mpp = float(self._insp_microns.get())
+                phys_w = orig_w * mpp
+                phys_h = orig_h * mpp
+                if phys_w >= 1000:
+                    self._insp_phys_label.config(text=f"  Physical size: {phys_w/1000:.2f} × {phys_h/1000:.2f} mm")
+                else:
+                    self._insp_phys_label.config(text=f"  Physical size: {phys_w:.1f} × {phys_h:.1f} µm")
+            except (ValueError, TypeError):
+                self._insp_phys_label.config(text="")
+
+        self._insp_microns.bind("<KeyRelease>", _update_phys_size)
+        _update_phys_size()  # initial calc
+
+        # Separator
+        tk.Frame(props, height=1, bg="#3a3a3a").pack(fill=tk.X, padx=12, pady=8)
+
+        # Editable: description
+        tk.Label(props, text="DESCRIPTION", bg="#252526", fg="#888",
+                 font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(4, 4))
+
+        self._insp_desc = tk.Text(props, bg="#333", fg="white", relief="flat",
+                                  font=("Segoe UI", 10), height=4,
+                                  insertbackground="white", wrap="word")
+        self._insp_desc.insert("1.0", meta.get("description", ""))
+        self._insp_desc.pack(fill=tk.X, padx=12, pady=(0, 12))
+
+        # Store refs for saving
+        self._insp_session = session
+        self._insp_slice_idx = slice_idx
+
+    def _close_slice_inspector(self, session, slice_idx):
+        """Close inspector, save metadata, return to grid."""
+        # Save metadata
+        session.sync_metadata()
+        if slice_idx < len(session.slice_metadata):
+            session.slice_metadata[slice_idx]["microns_per_pixel"] = self._insp_microns.get().strip()
+            session.slice_metadata[slice_idx]["description"] = self._insp_desc.get("1.0", "end-1c").strip()
+
+        # Destroy inspector, restore canvas
+        self._inspector_frame.destroy()
+        self._inspector_frame = None
+        self._inspector_img = None
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.redraw()
+        self._update_slice_previews()
+        self.trigger_modification()
 
     def apply_zoom(self, factor, mx, my):
         s = self.current_session
