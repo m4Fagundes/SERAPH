@@ -409,9 +409,14 @@ class SlicerLabApp:
         if not s: return
 
         try:
-            s.grid_w = max(10, int(self.entry_w.get()))
-            s.grid_h = max(10, int(self.entry_h.get()))
-        except: pass
+            new_w = max(10, int(self.entry_w.get()))
+            new_h = max(10, int(self.entry_h.get()))
+            if (new_w != s.grid_w or new_h != s.grid_h) and s.selected_cells:
+                s.remap_selections(s.grid_w, s.grid_h, new_w, new_h)
+            s.grid_w = new_w
+            s.grid_h = new_h
+        except Exception:
+            pass
 
         w_can = self.canvas.winfo_width()
         h_can = self.canvas.winfo_height()
