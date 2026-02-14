@@ -652,6 +652,7 @@ class SlicerLabApp:
             self.redraw()
             self._update_slice_previews()
             self.trigger_modification()
+            self._auto_reexport(s)
 
     def _toggle_session_collapse(self, session_name):
         """Toggle collapsed state of a session group in slice previews."""
@@ -759,7 +760,13 @@ class SlicerLabApp:
                     pass
 
     def _open_slice_inspector(self, session, slice_idx):
-        """Open a detail inspector for a specific slice."""
+        """Open a detail inspector for a specific slice with full-res navigation."""
+        # Close existing inspector first (one at a time)
+        if hasattr(self, '_inspector_frame') and self._inspector_frame:
+            self._save_inspector_metadata()
+            self._inspector_frame.destroy()
+            self._inspector_frame = None
+
         session.sync_metadata()
         meta = session.slice_metadata[slice_idx]
         slice_rects = session.selected_cells[slice_idx]
@@ -771,97 +778,110 @@ class SlicerLabApp:
         by2 = max(r[3] for r in slice_rects)
         orig_w, orig_h = bx2 - bx1, by2 - by1
 
-        # Hide canvas, show inspector
+        # Crop full-resolution slice from original image
+        self._insp_slice_img = session.original_image.crop((bx1, by1, bx2, by2))
+        self._insp_zoom = 1.0
+        self._insp_cam_x = 0.0
+        self._insp_cam_y = 0.0
+
+        # Hide main canvas, show inspector
         self.canvas.pack_forget()
 
         self._inspector_frame = tk.Frame(self.canvas_area, bg="#1e1e1e")
         self._inspector_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Scrollable container
-        insp_canvas = tk.Canvas(self._inspector_frame, bg="#1e1e1e", highlightthickness=0)
-        insp_scroll = tk.Scrollbar(self._inspector_frame, orient="vertical", command=insp_canvas.yview)
-        insp_inner = tk.Frame(insp_canvas, bg="#1e1e1e")
+        # --- Top header bar ---
+        header = tk.Frame(self._inspector_frame, bg="#2d2d2d")
+        header.pack(fill=tk.X)
 
-        insp_canvas_win = insp_canvas.create_window((0, 0), window=insp_inner, anchor="nw")
-        insp_canvas.configure(yscrollcommand=insp_scroll.set)
-
-        def _on_insp_configure(e):
-            insp_canvas.itemconfig(insp_canvas_win, width=e.width)
-        insp_canvas.bind("<Configure>", _on_insp_configure)
-        insp_inner.bind("<Configure>", lambda e: insp_canvas.configure(scrollregion=insp_canvas.bbox("all")))
-        insp_canvas.bind("<MouseWheel>", lambda e: insp_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
-
-        insp_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        insp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # --- Header bar ---
-        header = tk.Frame(insp_inner, bg="#2d2d2d")
-        header.pack(fill=tk.X, padx=20, pady=(20, 10))
-
-        back_btn = tk.Button(header, text="← Back to Grid",
-                            command=lambda: self._close_slice_inspector(session, slice_idx),
+        back_btn = tk.Button(header, text="\u2190 Back to Grid",
+                            command=lambda: self._close_slice_inspector(),
                             bg="#444", fg="white", relief="flat",
-                            font=("Segoe UI", 10), padx=12, pady=6,
+                            font=("Segoe UI", 10), padx=12, pady=4,
                             activebackground="#555", activeforeground="white",
                             cursor="hand2")
-        back_btn.pack(side=tk.LEFT, padx=10, pady=8)
+        back_btn.pack(side=tk.LEFT, padx=10, pady=6)
 
-        tk.Label(header, text=f"Slice {slice_idx+1}  —  {session.name}",
-                 bg="#2d2d2d", fg="#ccc", font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT, padx=10, pady=8)
+        tk.Label(header, text=f"Slice {slice_idx+1}  \u2014  {session.name}",
+                 bg="#2d2d2d", fg="#ccc", font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT, padx=8, pady=6)
 
-        # --- Large preview ---
-        try:
-            src = session.preview_image if session.preview_image else session.original_image
-            scale = session.preview_scale if session.preview_scale else 1.0
-            crop = src.crop((int(bx1/scale), int(by1/scale), int(bx2/scale), int(by2/scale)))
+        self._insp_zoom_label = tk.Label(header, text="100%", bg="#2d2d2d", fg="#888",
+                                          font=("Segoe UI", 9))
+        self._insp_zoom_label.pack(side=tk.RIGHT, padx=10, pady=6)
 
-            max_preview = 500
-            ratio = min(max_preview / crop.width, max_preview / crop.height, 1.0)
-            if ratio < 1.0:
-                crop = crop.resize((int(crop.width * ratio), int(crop.height * ratio)), Image.Resampling.LANCZOS)
+        tk.Label(header, text=f"{orig_w}\u00d7{orig_h} px", bg="#2d2d2d", fg="#888",
+                 font=("Segoe UI", 9)).pack(side=tk.RIGHT, padx=5, pady=6)
 
-            self._inspector_img = ImageTk.PhotoImage(crop)
-            preview_frame = tk.Frame(insp_inner, bg="#111")
-            preview_frame.pack(padx=20, pady=10)
-            tk.Label(preview_frame, image=self._inspector_img, bg="#111").pack(padx=4, pady=4)
-            preview_frame.bind("<MouseWheel>", lambda e: insp_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
-        except Exception:
-            self._inspector_img = None
+        # --- Content: Canvas (left) + Properties (right) ---
+        content = tk.Frame(self._inspector_frame, bg="#1e1e1e")
+        content.pack(fill=tk.BOTH, expand=True)
 
-        # --- Properties section ---
-        props = tk.Frame(insp_inner, bg="#252526")
-        props.pack(fill=tk.X, padx=20, pady=10)
+        # Full-res navigable canvas
+        self._insp_canvas = tk.Canvas(content, bg="#111", highlightthickness=0)
+        self._insp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        tk.Label(props, text="PROPERTIES", bg="#252526", fg="#888",
-                 font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(10, 8))
+        # Binds for pan + zoom on inspector canvas
+        self._insp_canvas.bind("<ButtonPress-1>", self._insp_pan_start)
+        self._insp_canvas.bind("<B1-Motion>", self._insp_pan_move)
+        self._insp_canvas.bind("<MouseWheel>", self._insp_on_scroll)
+        self._insp_canvas.bind("<Configure>", lambda e: self._insp_redraw())
 
-        # Field builder helper
-        def add_field(parent, label, value, editable=False, key=None):
+        # --- Right properties panel ---
+        props_panel = tk.Frame(content, width=280, bg="#252526")
+        props_panel.pack(side=tk.RIGHT, fill=tk.Y)
+        props_panel.pack_propagate(False)
+
+        # Scrollable properties
+        props_canvas = tk.Canvas(props_panel, bg="#252526", highlightthickness=0, bd=0)
+        props_scroll = tk.Scrollbar(props_panel, orient="vertical", command=props_canvas.yview)
+        props_inner = tk.Frame(props_canvas, bg="#252526")
+
+        props_win = props_canvas.create_window((0, 0), window=props_inner, anchor="nw")
+        props_canvas.configure(yscrollcommand=props_scroll.set)
+
+        def _on_props_configure(e):
+            props_canvas.itemconfig(props_win, width=e.width)
+        props_canvas.bind("<Configure>", _on_props_configure)
+        props_inner.bind("<Configure>", lambda e: props_canvas.configure(scrollregion=props_canvas.bbox("all")))
+        props_canvas.bind("<MouseWheel>", lambda e: props_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+
+        props_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        props_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Properties header
+        tk.Label(props_inner, text="PROPERTIES", bg="#252526", fg="#888",
+                 font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(12, 8))
+
+        # Field builder
+        def add_field(parent, label, value, editable=False):
             row = tk.Frame(parent, bg="#252526")
             row.pack(fill=tk.X, padx=12, pady=3)
             tk.Label(row, text=label, bg="#252526", fg="#999",
-                     font=("Segoe UI", 9), width=16, anchor="w").pack(side=tk.LEFT)
+                     font=("Segoe UI", 9), anchor="w").pack(fill=tk.X)
             if editable:
                 entry = tk.Entry(row, bg="#333", fg="white", relief="flat",
                                 font=("Segoe UI", 10), insertbackground="white")
                 entry.insert(0, str(value) if value else "")
-                entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+                entry.pack(fill=tk.X, pady=(2, 0))
                 return entry
             else:
                 tk.Label(row, text=str(value), bg="#252526", fg="#ddd",
-                         font=("Segoe UI", 10), anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+                         font=("Segoe UI", 10), anchor="w").pack(fill=tk.X)
                 return None
 
         # Read-only fields
-        add_field(props, "Resolution", f"{orig_w} × {orig_h} px")
-        add_field(props, "Rects", f"{len(slice_rects)} rectangle(s)")
-        add_field(props, "Source", session.name)
+        add_field(props_inner, "Resolution", f"{orig_w} \u00d7 {orig_h} px")
+        add_field(props_inner, "Rectangles", f"{len(slice_rects)} rect(s)")
+        add_field(props_inner, "Source", session.name)
 
-        # Editable: microns per pixel
-        self._insp_microns = add_field(props, "Microns / pixel", meta.get("microns_per_pixel", ""), editable=True)
+        # Separator
+        tk.Frame(props_inner, height=1, bg="#3a3a3a").pack(fill=tk.X, padx=12, pady=8)
+
+        # Microns per pixel
+        self._insp_microns = add_field(props_inner, "Microns / pixel", meta.get("microns_per_pixel", ""), editable=True)
 
         # Auto-calculated physical size
-        self._insp_phys_label = tk.Label(props, text="", bg="#252526", fg="#7cb342",
+        self._insp_phys_label = tk.Label(props_inner, text="", bg="#252526", fg="#7cb342",
                                           font=("Segoe UI", 9, "italic"), anchor="w")
         self._insp_phys_label.pack(fill=tk.X, padx=12, pady=(0, 6))
 
@@ -871,24 +891,24 @@ class SlicerLabApp:
                 phys_w = orig_w * mpp
                 phys_h = orig_h * mpp
                 if phys_w >= 1000:
-                    self._insp_phys_label.config(text=f"  Physical size: {phys_w/1000:.2f} × {phys_h/1000:.2f} mm")
+                    self._insp_phys_label.config(text=f"{phys_w/1000:.2f} \u00d7 {phys_h/1000:.2f} mm")
                 else:
-                    self._insp_phys_label.config(text=f"  Physical size: {phys_w:.1f} × {phys_h:.1f} µm")
+                    self._insp_phys_label.config(text=f"{phys_w:.1f} \u00d7 {phys_h:.1f} \u00b5m")
             except (ValueError, TypeError):
                 self._insp_phys_label.config(text="")
 
         self._insp_microns.bind("<KeyRelease>", _update_phys_size)
-        _update_phys_size()  # initial calc
+        _update_phys_size()
 
         # Separator
-        tk.Frame(props, height=1, bg="#3a3a3a").pack(fill=tk.X, padx=12, pady=8)
+        tk.Frame(props_inner, height=1, bg="#3a3a3a").pack(fill=tk.X, padx=12, pady=8)
 
-        # Editable: description
-        tk.Label(props, text="DESCRIPTION", bg="#252526", fg="#888",
-                 font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(4, 4))
+        # Description
+        tk.Label(props_inner, text="DESCRIPTION", bg="#252526", fg="#888",
+                 font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(0, 4))
 
-        self._insp_desc = tk.Text(props, bg="#333", fg="white", relief="flat",
-                                  font=("Segoe UI", 10), height=4,
+        self._insp_desc = tk.Text(props_inner, bg="#333", fg="white", relief="flat",
+                                  font=("Segoe UI", 10), height=6,
                                   insertbackground="white", wrap="word")
         self._insp_desc.insert("1.0", meta.get("description", ""))
         self._insp_desc.pack(fill=tk.X, padx=12, pady=(0, 12))
@@ -896,19 +916,114 @@ class SlicerLabApp:
         # Store refs for saving
         self._insp_session = session
         self._insp_slice_idx = slice_idx
+        self._insp_tk_img = None
 
-    def _close_slice_inspector(self, session, slice_idx):
+        # Initial fit-to-view
+        self._inspector_frame.update_idletasks()
+        cw = self._insp_canvas.winfo_width()
+        ch = self._insp_canvas.winfo_height()
+        if cw > 10 and ch > 10:
+            self._insp_zoom = min(cw / orig_w, ch / orig_h) * 0.9
+        self._insp_redraw()
+
+    def _insp_redraw(self):
+        """Redraw the inspector canvas with the full-res slice."""
+        if not hasattr(self, '_insp_canvas') or not self._insp_slice_img:
+            return
+        c = self._insp_canvas
+        c.delete("all")
+
+        cw = c.winfo_width()
+        ch = c.winfo_height()
+        if cw < 2 or ch < 2:
+            return
+
+        img = self._insp_slice_img
+        z = self._insp_zoom
+        cx, cy = self._insp_cam_x, self._insp_cam_y
+
+        # Visible region in image coords
+        vl = cx
+        vt = cy
+        vr = cx + cw / z
+        vb = cy + ch / z
+
+        # Clamp to image bounds
+        cl = max(0, int(vl))
+        ct = max(0, int(vt))
+        cr = min(img.width, int(vr) + 1)
+        cb = min(img.height, int(vb) + 1)
+
+        if cr <= cl or cb <= ct:
+            return
+
+        crop = img.crop((cl, ct, cr, cb))
+        new_w = max(1, int((cr - cl) * z))
+        new_h = max(1, int((cb - ct) * z))
+        crop = crop.resize((new_w, new_h), Image.Resampling.NEAREST if z > 2 else Image.Resampling.LANCZOS)
+
+        self._insp_tk_img = ImageTk.PhotoImage(crop)
+        sx = (cl - cx) * z
+        sy = (ct - cy) * z
+        c.create_image(sx, sy, anchor="nw", image=self._insp_tk_img)
+
+        # Update zoom label
+        if hasattr(self, '_insp_zoom_label'):
+            self._insp_zoom_label.config(text=f"{int(z * 100)}%")
+
+    def _insp_pan_start(self, e):
+        self._insp_last_x = e.x
+        self._insp_last_y = e.y
+
+    def _insp_pan_move(self, e):
+        dx = e.x - self._insp_last_x
+        dy = e.y - self._insp_last_y
+        self._insp_cam_x -= dx / self._insp_zoom
+        self._insp_cam_y -= dy / self._insp_zoom
+        self._insp_last_x = e.x
+        self._insp_last_y = e.y
+        self._insp_redraw()
+
+    def _insp_on_scroll(self, e):
+        ctrl = (e.state & 0x4) != 0
+        if ctrl or True:  # always zoom on scroll in inspector
+            factor = 1.25 if e.delta > 0 else 0.8
+            new_zoom = self._insp_zoom * factor
+            if new_zoom < 0.01:
+                return
+            # Zoom centered on mouse
+            wx = self._insp_cam_x + (e.x / self._insp_zoom)
+            wy = self._insp_cam_y + (e.y / self._insp_zoom)
+            self._insp_zoom = new_zoom
+            self._insp_cam_x = wx - (e.x / new_zoom)
+            self._insp_cam_y = wy - (e.y / new_zoom)
+            self._insp_redraw()
+
+    def _save_inspector_metadata(self):
+        """Save current inspector field values to metadata."""
+        if hasattr(self, '_insp_session') and self._insp_session:
+            session = self._insp_session
+            idx = self._insp_slice_idx
+            session.sync_metadata()
+            if idx < len(session.slice_metadata):
+                try:
+                    session.slice_metadata[idx]["microns_per_pixel"] = self._insp_microns.get().strip()
+                    session.slice_metadata[idx]["description"] = self._insp_desc.get("1.0", "end-1c").strip()
+                except Exception:
+                    pass
+
+    def _close_slice_inspector(self):
         """Close inspector, save metadata, return to grid."""
-        # Save metadata
-        session.sync_metadata()
-        if slice_idx < len(session.slice_metadata):
-            session.slice_metadata[slice_idx]["microns_per_pixel"] = self._insp_microns.get().strip()
-            session.slice_metadata[slice_idx]["description"] = self._insp_desc.get("1.0", "end-1c").strip()
+        self._save_inspector_metadata()
 
-        # Destroy inspector, restore canvas
-        self._inspector_frame.destroy()
+        # Cleanup
+        if hasattr(self, '_inspector_frame') and self._inspector_frame:
+            self._inspector_frame.destroy()
         self._inspector_frame = None
-        self._inspector_img = None
+        self._insp_slice_img = None
+        self._insp_tk_img = None
+        self._insp_session = None
+
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.redraw()
         self._update_slice_previews()
@@ -992,7 +1107,22 @@ class SlicerLabApp:
         out = filedialog.askdirectory(title="Select output folder")
         if out:
             count = self.export_service.save_selected_cells(s, out, self.export_format)
+            # Track export path for auto-reexport
+            s.export_dir = out
+            s.export_format = self.export_format
+            self.trigger_modification()
             messagebox.showinfo("Done", f"{count} slice(s) saved as {self.export_format.upper()[1:]}.")
+
+    def _auto_reexport(self, session):
+        """Re-export slices if session was previously exported."""
+        if session.export_dir and session.export_format and session.selected_cells:
+            try:
+                if os.path.isdir(session.export_dir):
+                    self.export_service.save_selected_cells(
+                        session, session.export_dir, session.export_format)
+                    self.status_bar.config(text=f"Auto-exported {len(session.selected_cells)} slice(s)")
+            except Exception as e:
+                print(f"Auto-reexport error: {e}")
 
     def slice_all(self):
         s = self.current_session

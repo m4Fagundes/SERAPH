@@ -22,6 +22,8 @@ class ImageSession:
         self.grid_color = "#FFFF00"
         self.selected_cells = []
         self.slice_metadata = []  # parallel to selected_cells
+        self.export_dir = None    # last export directory
+        self.export_format = None # last export format
 
     def sync_metadata(self):
         """Ensure slice_metadata stays aligned with selected_cells."""

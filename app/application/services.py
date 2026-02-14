@@ -28,6 +28,8 @@ class ProjectService:
                     s.selected_cells = [{tuple(r)} for r in sel if len(r) == 4]
             s.slice_metadata = item.get("slice_metadata", [])
             s.sync_metadata()
+            s.export_dir = item.get("export_dir", None)
+            s.export_format = item.get("export_format", None)
             sessions.append(s)
         return sessions
 
@@ -41,6 +43,8 @@ class ProjectService:
                 "grid_h": s.grid_h,
                 "selected_regions": [[list(r) for r in group] for group in s.selected_cells],
                 "slice_metadata": s.slice_metadata,
+                "export_dir": s.export_dir,
+                "export_format": s.export_format,
                 "zoom_level": s.zoom_level,
                 "camera_x": s.camera_x,
                 "camera_y": s.camera_y
