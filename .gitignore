@@ -3,4 +3,10 @@
 .gemini
 .gsd
 
+<<<<<<< HEAD
 __pycache__
+=======
+__pycache__/
+*.pyc
+__init__.py
+>>>>>>> d3248c1bb3cf5f6b811358853e49f492b92a1a24
