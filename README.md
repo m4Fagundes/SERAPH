@@ -41,6 +41,24 @@ Ideal for **Machine Learning datasets**, **scientific imagery**, **maps**, or an
 
 ---
 
+### 🔍 Slice Inspector
+- **Interactive Thumbnails**  
+  Click on any grid cell to open a detailed inspection view without exporting.
+
+- **High-Res Preview**  
+  Examine full-resolution details of specific tiles instantly.
+
+- **Physical Measurements**  
+  Define **Microns per Pixel (µm/px)** to automatically calculate real-world dimensions for each slice.
+
+- **Metadata Annotation**  
+  Add custom descriptions to specific tiles/slices, useful for dataset labeling or scientific notes.
+
+- **Data Persistence**  
+  All inspector data (descriptions, resolution settings) is saved directly within the `.lab` project file.
+
+---
+
 ### 💾 Project Management
 - **Multiple Sessions**  
   Work with multiple images simultaneously via sidebar tabs.
