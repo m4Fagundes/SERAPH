@@ -28,6 +28,7 @@ class ProjectService:
                     s.selected_cells = [{tuple(r)} for r in sel if len(r) == 4]
             s.slice_metadata = item.get("slice_metadata", [])
             s.sync_metadata()
+            s.grid_color = item.get("grid_color", "#FFFF00")
             s.export_dir = item.get("export_dir", None)
             s.export_format = item.get("export_format", None)
             sessions.append(s)
@@ -43,6 +44,7 @@ class ProjectService:
                 "grid_h": s.grid_h,
                 "selected_regions": [[list(r) for r in group] for group in s.selected_cells],
                 "slice_metadata": s.slice_metadata,
+                "grid_color": s.grid_color,
                 "export_dir": s.export_dir,
                 "export_format": s.export_format,
                 "zoom_level": s.zoom_level,
@@ -76,7 +78,8 @@ class ExportService:
                 out_img = Image.new("RGB", (w, h), (255, 255, 255))
 
             for (rx1, ry1, rx2, ry2) in slice_rects:
-                crop = session.original_image.crop((rx1, ry1, rx2, ry2))
+                # Use pyramid for streaming full-res crop (no full image in RAM)
+                crop = session.pyramid.get_region_fullres(rx1, ry1, rx2 - rx1, ry2 - ry1)
                 if out_img.mode == "RGBA" and crop.mode != "RGBA":
                     crop = crop.convert("RGBA")
                 out_img.paste(crop, (rx1 - bx1, ry1 - by1))
@@ -105,7 +108,8 @@ class ExportService:
                 filename = self._get_export_filename(session.name, row, col, format_ext)
                 full_path = os.path.join(output_dir, filename)
                 
-                tile = session.original_image.crop((x1, y1, x2, y2))
+                # Use pyramid for streaming full-res crop (no full image in RAM)
+                tile = session.pyramid.get_region_fullres(x1, y1, x2 - x1, y2 - y1)
                 if save_image_tile(tile, full_path, format_ext):
                     count += 1
         return count

@@ -3,6 +3,7 @@ from tkinter import filedialog, messagebox, colorchooser, ttk
 from PIL import Image, ImageTk
 import os
 import platform
+import threading
 from app.domain.session import ImageSession
 from app.interface.gui.utils import detect_dark_mode_mac
 from app.interface.gui.components import UIComponents, setup_ttk_styles
@@ -24,7 +25,7 @@ class SlicerLabApp:
         self.is_mac = platform.system() == "Darwin"
         self.is_dark_mode = detect_dark_mode_mac()
         
-        self.root.title(f"Slicer Lab Pro - {'macOS' if self.is_mac else 'Windows'}")
+        self.root.title(f"Tiles Grid Analyzer - {'macOS' if self.is_mac else 'Windows'}")
         self.root.geometry("1400x900")
         self.root.configure(bg="#1e1e1e")
 
@@ -418,6 +419,7 @@ class SlicerLabApp:
             for s in self.sessions:
                 self.file_list.insert(tk.END, f" {s.name}")
 
+            # All sessions are immediately ready (on-demand)
             if self.sessions:
                 self._activate_session(self.sessions[0])
             
@@ -431,7 +433,7 @@ class SlicerLabApp:
             print(e)
 
     def add_image_btn(self):
-        path = filedialog.askopenfilename(filetypes=[("Images", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp")])
+        path = filedialog.askopenfilename(filetypes=[("All Supported", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp;*.ndpi;*.svs;*.mrxs;*.scn;*.vms;*.vmu;*.bif"), ("Images", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp"), ("Whole-Slide Images", "*.ndpi;*.svs;*.mrxs;*.scn;*.vms;*.vmu;*.bif")])
         if path:
             self._add_session(path)
             self.trigger_modification()
@@ -450,6 +452,7 @@ class SlicerLabApp:
             self.file_list.selection_clear(0, tk.END)
             self.file_list.selection_set(tk.END)
             self._activate_session(new_session)
+            self.status_bar.config(text=f"Loaded: {new_session.name} | {new_session.real_width:,}×{new_session.real_height:,} px")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -501,7 +504,7 @@ class SlicerLabApp:
 
     def redraw(self):
         s = self.current_session
-        if not s: return
+        if not s or not s.pyramid_ready: return
 
         try:
             s.grid_w = max(10, int(self.entry_w.get()))
@@ -511,6 +514,8 @@ class SlicerLabApp:
 
         w_can = self.canvas.winfo_width()
         h_can = self.canvas.winfo_height()
+        if w_can < 2 or h_can < 2:
+            return
         
         l = s.camera_x
         t = s.camera_y
@@ -519,32 +524,9 @@ class SlicerLabApp:
 
         self.canvas.delete("all")
 
-        use_preview = (s.zoom_level < 0.5 and s.preview_scale > 1.0)
-        
         try:
-            if use_preview:
-                pl = int(l / s.preview_scale)
-                pt = int(t / s.preview_scale)
-                pr = int(r / s.preview_scale)
-                pb = int(b / s.preview_scale)
-                img = s.preview_image.crop((pl, pt, pr, pb))
-                img = img.resize((w_can, h_can), Image.Resampling.NEAREST)
-            else:
-                cl = max(0, int(l))
-                ct = max(0, int(t))
-                cr = min(s.real_width, int(r))
-                cb = min(s.real_height, int(b))
-                if cr > cl and cb > ct:
-                    crop = s.original_image.crop((cl, ct, cr, cb))
-                    img = Image.new("RGB", (w_can, h_can), (20,20,20))
-                    px = int((cl - l) * s.zoom_level)
-                    py = int((ct - t) * s.zoom_level)
-                    pw = int((cr - cl) * s.zoom_level)
-                    ph = int((cb - ct) * s.zoom_level)
-                    if pw>0 and ph>0:
-                        crop = crop.resize((pw, ph), Image.Resampling.NEAREST)
-                        img.paste(crop, (px, py))
-                else: img = Image.new("RGB", (w_can, h_can), (20,20,20))
+            # Use pyramid tile-based viewport compositing
+            img = s.pyramid.get_viewport(l, t, w_can, h_can, s.zoom_level)
 
             self.tk_image = ImageTk.PhotoImage(img)
             self.canvas.create_image(0, 0, image=self.tk_image, anchor="nw")
@@ -596,7 +578,9 @@ class SlicerLabApp:
                     self.canvas.create_line(0, sy, w_can, sy, fill=s.grid_color, dash=(2, 4))
                     cy += s.grid_h
 
-        except Exception as e: pass
+        except Exception as e:
+            print(f"Redraw error: {e}")
+            import traceback; traceback.print_exc()
 
     def on_pan_start(self, e):
         self.last_mouse_x = e.x
@@ -716,17 +700,14 @@ class SlicerLabApp:
                     by2 = max(r[3] for r in slice_rects)
                     orig_w, orig_h = bx2 - bx1, by2 - by1
 
-                    # Crop from preview cache for speed
-                    src = session.preview_image if hasattr(session, 'preview_image') and session.preview_image else session.original_image
-                    scale = session.preview_scale if hasattr(session, 'preview_scale') else 1.0
-
-                    crop = src.crop((int(bx1/scale), int(by1/scale), int(bx2/scale), int(by2/scale)))
-
-                    # Scale to fill card width while preserving aspect ratio
-                    ratio = min(thumb_max_w / crop.width, 120 / crop.height)
-                    new_w = max(1, int(crop.width * ratio))
-                    new_h = max(1, int(crop.height * ratio))
-                    crop = crop.resize((new_w, new_h), Image.Resampling.NEAREST)
+                    # Use pyramid viewport to generate thumbnail (no RAM image)
+                    if session.pyramid_ready and orig_w > 0 and orig_h > 0:
+                        ratio = min(thumb_max_w / orig_w, 120 / orig_h)
+                        tw = max(1, int(orig_w * ratio))
+                        th = max(1, int(orig_h * ratio))
+                        crop = session.pyramid.get_viewport(bx1, by1, tw, th, ratio)
+                    else:
+                        crop = Image.new("RGB", (thumb_max_w, 60), (40, 40, 40))
 
                     tk_thumb = ImageTk.PhotoImage(crop)
                     self._slice_thumbs.append(tk_thumb)
@@ -756,11 +737,12 @@ class SlicerLabApp:
                         w.configure(cursor="hand2")
                         w.bind("<Button-1>", lambda e, sr=sess_ref, si=slice_idx: self._open_slice_inspector(sr, si))
 
-                except Exception:
-                    pass
+                except Exception as ex:
+                    print(f"Slice preview error: {ex}")
 
     def _open_slice_inspector(self, session, slice_idx):
         """Open a detail inspector for a specific slice with full-res navigation."""
+        print(f"Opening inspector: session={session.name}, slice_idx={slice_idx}")
         # Close existing inspector first (one at a time)
         if hasattr(self, '_inspector_frame') and self._inspector_frame:
             self._save_inspector_metadata()
@@ -778,8 +760,10 @@ class SlicerLabApp:
         by2 = max(r[3] for r in slice_rects)
         orig_w, orig_h = bx2 - bx1, by2 - by1
 
-        # Crop full-resolution slice from original image
-        self._insp_slice_img = session.original_image.crop((bx1, by1, bx2, by2))
+        # Store bounding box instead of cropping full image into RAM
+        self._insp_slice_bbox = (bx1, by1, bx2, by2)
+        self._insp_slice_w = orig_w
+        self._insp_slice_h = orig_h
         self._insp_zoom = 1.0
         self._insp_cam_x = 0.0
         self._insp_cam_y = 0.0
@@ -927,8 +911,10 @@ class SlicerLabApp:
         self._insp_redraw()
 
     def _insp_redraw(self):
-        """Redraw the inspector canvas with the full-res slice."""
-        if not hasattr(self, '_insp_canvas') or not self._insp_slice_img:
+        """Redraw the inspector canvas using pyramid tile-based rendering."""
+        if not hasattr(self, '_insp_canvas') or not hasattr(self, '_insp_slice_bbox'):
+            return
+        if self._insp_slice_bbox is None:
             return
         c = self._insp_canvas
         c.delete("all")
@@ -938,34 +924,23 @@ class SlicerLabApp:
         if cw < 2 or ch < 2:
             return
 
-        img = self._insp_slice_img
+        bx1, by1, bx2, by2 = self._insp_slice_bbox
         z = self._insp_zoom
         cx, cy = self._insp_cam_x, self._insp_cam_y
 
-        # Visible region in image coords
-        vl = cx
-        vt = cy
-        vr = cx + cw / z
-        vb = cy + ch / z
+        # Inspector camera is in slice-local coords; convert to image coords
+        img_cam_x = bx1 + cx
+        img_cam_y = by1 + cy
 
-        # Clamp to image bounds
-        cl = max(0, int(vl))
-        ct = max(0, int(vt))
-        cr = min(img.width, int(vr) + 1)
-        cb = min(img.height, int(vb) + 1)
+        # Use pyramid viewport for rendering
+        session = self._insp_session
+        if session and session.pyramid_ready:
+            img = session.pyramid.get_viewport(img_cam_x, img_cam_y, cw, ch, z)
+        else:
+            img = Image.new("RGB", (cw, ch), (20, 20, 20))
 
-        if cr <= cl or cb <= ct:
-            return
-
-        crop = img.crop((cl, ct, cr, cb))
-        new_w = max(1, int((cr - cl) * z))
-        new_h = max(1, int((cb - ct) * z))
-        crop = crop.resize((new_w, new_h), Image.Resampling.NEAREST if z > 2 else Image.Resampling.LANCZOS)
-
-        self._insp_tk_img = ImageTk.PhotoImage(crop)
-        sx = (cl - cx) * z
-        sy = (ct - cy) * z
-        c.create_image(sx, sy, anchor="nw", image=self._insp_tk_img)
+        self._insp_tk_img = ImageTk.PhotoImage(img)
+        c.create_image(0, 0, anchor="nw", image=self._insp_tk_img)
 
         # Update zoom label
         if hasattr(self, '_insp_zoom_label'):
@@ -1020,7 +995,7 @@ class SlicerLabApp:
         if hasattr(self, '_inspector_frame') and self._inspector_frame:
             self._inspector_frame.destroy()
         self._inspector_frame = None
-        self._insp_slice_img = None
+        self._insp_slice_bbox = None
         self._insp_tk_img = None
         self._insp_session = None
 
