@@ -910,8 +910,22 @@ class SlicerLabApp:
             self._insp_zoom = min(cw / orig_w, ch / orig_h) * 0.9
         self._insp_redraw()
 
+    def _insp_clamp_camera(self):
+        """Clamp inspector camera so the tile never fully leaves the viewport."""
+        if not hasattr(self, '_insp_canvas') or not hasattr(self, '_insp_slice_w'):
+            return
+        cw = self._insp_canvas.winfo_width()
+        ch = self._insp_canvas.winfo_height()
+        z  = self._insp_zoom
+        # Keep at least 50 screen-px of the tile visible on each axis
+        margin = 50 / z
+        self._insp_cam_x = max(-cw / z + margin,
+                               min(self._insp_cam_x, self._insp_slice_w - margin))
+        self._insp_cam_y = max(-ch / z + margin,
+                               min(self._insp_cam_y, self._insp_slice_h - margin))
+
     def _insp_redraw(self):
-        """Redraw the inspector canvas using pyramid tile-based rendering."""
+        """Redraw the inspector canvas — renders only the selected tile region."""
         if not hasattr(self, '_insp_canvas') or not hasattr(self, '_insp_slice_bbox'):
             return
         if self._insp_slice_bbox is None:
@@ -924,11 +938,14 @@ class SlicerLabApp:
         if cw < 2 or ch < 2:
             return
 
+        # Clamp camera before rendering so we never show pixels outside the tile
+        self._insp_clamp_camera()
+
         bx1, by1, bx2, by2 = self._insp_slice_bbox
         z = self._insp_zoom
         cx, cy = self._insp_cam_x, self._insp_cam_y
 
-        # Inspector camera is in slice-local coords; convert to image coords
+        # Inspector camera is in slice-local coords; convert to full-image coords
         img_cam_x = bx1 + cx
         img_cam_y = by1 + cy
 
@@ -941,6 +958,14 @@ class SlicerLabApp:
 
         self._insp_tk_img = ImageTk.PhotoImage(img)
         c.create_image(0, 0, anchor="nw", image=self._insp_tk_img)
+
+        # Draw tile boundary border (shows where the tile ends)
+        tile_left   = (0    - cx) * z
+        tile_top    = (0    - cy) * z
+        tile_right  = (self._insp_slice_w - cx) * z
+        tile_bottom = (self._insp_slice_h - cy) * z
+        c.create_rectangle(tile_left, tile_top, tile_right, tile_bottom,
+                           outline="#00AAFF", width=2, dash=(6, 4))
 
         # Update zoom label
         if hasattr(self, '_insp_zoom_label'):
@@ -957,6 +982,7 @@ class SlicerLabApp:
         self._insp_cam_y -= dy / self._insp_zoom
         self._insp_last_x = e.x
         self._insp_last_y = e.y
+        self._insp_clamp_camera()
         self._insp_redraw()
 
     def _insp_on_scroll(self, e):
@@ -972,6 +998,7 @@ class SlicerLabApp:
             self._insp_zoom = new_zoom
             self._insp_cam_x = wx - (e.x / new_zoom)
             self._insp_cam_y = wy - (e.y / new_zoom)
+            self._insp_clamp_camera()
             self._insp_redraw()
 
     def _save_inspector_metadata(self):

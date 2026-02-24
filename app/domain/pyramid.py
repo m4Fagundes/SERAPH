@@ -19,7 +19,7 @@ Image.MAX_IMAGE_PIXELS = None
 
 try:
     import pyvips
-except ImportError:
+except Exception:
     pyvips = None
 
 try:
@@ -53,10 +53,7 @@ class ImagePyramid:
 
     def __init__(self, image_path: str):
         """Open an image lazily — no pixel data loaded into RAM."""
-        if pyvips is None:
-            raise ImportError(
-                "pyvips is required. Install with: pip install pyvips"
-            )
+        self._pil_image_fallback = None
 
         self.image_path = os.path.abspath(image_path)
         ext = os.path.splitext(self.image_path)[1].lower()
@@ -92,12 +89,18 @@ class ImagePyramid:
             except Exception:
                 pass
         else:
-            self._vips_image = pyvips.Image.new_from_file(
-                self.image_path, access="random"
-            )
-            self.image_width = self._vips_image.width
-            self.image_height = self._vips_image.height
-            self.bands = self._vips_image.bands
+            if pyvips is not None:
+                self._vips_image = pyvips.Image.new_from_file(
+                    self.image_path, access="random"
+                )
+                self.image_width = self._vips_image.width
+                self.image_height = self._vips_image.height
+                self.bands = self._vips_image.bands
+            else:
+                self._pil_image_fallback = Image.open(self.image_path)
+                self.image_width = self._pil_image_fallback.width
+                self.image_height = self._pil_image_fallback.height
+                self.bands = len(self._pil_image_fallback.getbands())
 
         # Always ready — no build step needed
         self.is_ready = True
@@ -148,6 +151,10 @@ class ImagePyramid:
                 max_size, height=max_size, size="down"
             )
             return self._vips_to_pil(thumb)
+        elif self._pil_image_fallback is not None:
+            thumb = self._pil_image_fallback.copy()
+            thumb.thumbnail((max_size, max_size))
+            return thumb.convert("RGB")
         return Image.new("RGB", (max_size, max_size), (20, 20, 20))
 
     # ------------------------------------------------------------------
@@ -214,6 +221,11 @@ class ImagePyramid:
                     sw / cw, vscale=sh / ch, kernel="lanczos3"
                 )
             crop = self._vips_to_pil(region)
+        elif self._pil_image_fallback is not None:
+            region = self._pil_image_fallback.crop((cl, ct, cl + cw, ct + ch))
+            if sw < cw or sh < ch:
+                region = region.resize((sw, sh), Image.Resampling.LANCZOS)
+            crop = region.convert("RGB")
         else:
             crop = Image.new("RGB", (sw, sh), (20, 20, 20))
 
@@ -240,7 +252,7 @@ class ImagePyramid:
                 cam_x, cam_y, vp_w, vp_h, zoom, vr, vb, result
             )
         else:
-            return self._viewport_lossy_vips(
+            return self._viewport_lossy_fallback(
                 cam_x, cam_y, vp_w, vp_h, zoom, vr, vb, result
             )
 
@@ -285,14 +297,9 @@ class ImagePyramid:
                             int(round((ct - cam_y) * zoom))))
         return result
 
-    def _viewport_lossy_vips(self, cam_x, cam_y, vp_w, vp_h,
+    def _viewport_lossy_fallback(self, cam_x, cam_y, vp_w, vp_h,
                               zoom, vr, vb, result):
-        """Use pyvips reduce for lower zoom levels.
-
-        Strategy: reduce the ENTIRE image first (fast — uses SIMD skip),
-        then crop the small viewport region from the reduced image.
-        This is much faster than crop→shrink for extreme zoom-outs.
-        """
+        """Use pyvips or PIL for lower zoom levels."""
         cl = max(0, int(cam_x))
         ct = max(0, int(cam_y))
         cr = min(self.image_width, int(math.ceil(vr)))
@@ -304,35 +311,37 @@ class ImagePyramid:
         sw = max(1, int(round(cw * zoom)))
         sh = max(1, int(round(ch * zoom)))
 
-        # Compute the integer shrink factor
-        factor = max(1, int(1.0 / zoom))
+        if self._vips_image is not None:
+            factor = max(1, int(1.0 / zoom))
+            if factor > 1:
+                reduced = self._vips_image.reduce(factor, factor)
+            else:
+                reduced = self._vips_image
 
-        # Reduce the full image (very fast — skips pixels, ~no I/O)
-        if factor > 1:
-            reduced = self._vips_image.reduce(factor, factor)
+            rl = max(0, int(cl / factor))
+            rt = max(0, int(ct / factor))
+            rr = min(reduced.width, int(math.ceil(cr / factor)))
+            rb = min(reduced.height, int(math.ceil(cb / factor)))
+
+            if rr <= rl or rb <= rt:
+                return result
+
+            region = reduced.crop(rl, rt, rr - rl, rb - rt)
+            if region.width != sw or region.height != sh:
+                region = region.resize(
+                    sw / region.width,
+                    vscale=sh / region.height,
+                    kernel="lanczos3"
+                )
+            crop = self._vips_to_pil(region)
+        elif getattr(self, '_pil_image_fallback', None) is not None:
+            region = self._pil_image_fallback.crop((cl, ct, cr, cb))
+            if region.width != sw or region.height != sh:
+                region = region.resize((sw, sh), Image.Resampling.LANCZOS)
+            crop = region.convert("RGB")
         else:
-            reduced = self._vips_image
-
-        # Now crop the tiny viewport region from the reduced image
-        rl = max(0, int(cl / factor))
-        rt = max(0, int(ct / factor))
-        rr = min(reduced.width, int(math.ceil(cr / factor)))
-        rb = min(reduced.height, int(math.ceil(cb / factor)))
-
-        if rr <= rl or rb <= rt:
             return result
 
-        region = reduced.crop(rl, rt, rr - rl, rb - rt)
-
-        # Fine-tune to exact screen size
-        if region.width != sw or region.height != sh:
-            region = region.resize(
-                sw / region.width,
-                vscale=sh / region.height,
-                kernel="lanczos3"
-            )
-
-        crop = self._vips_to_pil(region)
         result.paste(crop, (int(round((cl - cam_x) * zoom)),
                             int(round((ct - cam_y) * zoom))))
         return result
@@ -354,6 +363,9 @@ class ImagePyramid:
         elif self._vips_image is not None:
             region = self._vips_image.crop(x, y, w, h)
             return self._vips_to_pil(region)
+        elif getattr(self, '_pil_image_fallback', None) is not None:
+            region = self._pil_image_fallback.crop((x, y, x + w, y + h))
+            return region.convert("RGB")
         return Image.new("RGB", (w, h))
 
     @staticmethod
