@@ -1,5 +1,5 @@
 import os
-from PIL import Image
+from PIL import Image, ImageDraw
 from app.domain.session import ImageSession
 from app.domain.selection import rect_to_cells
 from app.infrastructure.io import load_project_file, save_project_file, save_image_tile
@@ -27,6 +27,12 @@ class ProjectService:
                 else:
                     s.selected_cells = [{tuple(r)} for r in sel if len(r) == 4]
             s.slice_metadata = item.get("slice_metadata", [])
+            # Load polygon data (brush-drawn slices)
+            raw_polys = item.get("selected_polygons", [])
+            s.selected_polygons = [
+                [tuple(pt) for pt in poly] if poly else None
+                for poly in raw_polys
+            ]
             s.sync_metadata()
             s.grid_color = item.get("grid_color", "#FFFF00")
             s.export_dir = item.get("export_dir", None)
@@ -43,6 +49,10 @@ class ProjectService:
                 "grid_w": s.grid_w,
                 "grid_h": s.grid_h,
                 "selected_regions": [[list(r) for r in group] for group in s.selected_cells],
+                "selected_polygons": [
+                    [list(pt) for pt in poly] if poly else None
+                    for poly in s.selected_polygons
+                ],
                 "slice_metadata": s.slice_metadata,
                 "grid_color": s.grid_color,
                 "export_dir": s.export_dir,
@@ -72,17 +82,29 @@ class ExportService:
             by2 = max(r[3] for r in slice_rects)
 
             w, h = bx2 - bx1, by2 - by1
-            if format_ext in ('.png', '.webp'):
-                out_img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            else:
-                out_img = Image.new("RGB", (w, h), (255, 255, 255))
+            # Always use RGBA internally so we can apply polygon mask
+            out_img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
 
             for (rx1, ry1, rx2, ry2) in slice_rects:
-                # Use pyramid for streaming full-res crop (no full image in RAM)
                 crop = session.pyramid.get_region_fullres(rx1, ry1, rx2 - rx1, ry2 - ry1)
-                if out_img.mode == "RGBA" and crop.mode != "RGBA":
-                    crop = crop.convert("RGBA")
+                crop = crop.convert("RGBA")
                 out_img.paste(crop, (rx1 - bx1, ry1 - by1))
+
+            # Apply freehand polygon mask if this is a brush slice
+            poly = session.selected_polygons[i] if i < len(session.selected_polygons) else None
+            if poly and len(poly) >= 3:
+                mask = Image.new("L", (w, h), 0)
+                draw = ImageDraw.Draw(mask)
+                local_pts = [(x - bx1, y - by1) for (x, y) in poly]
+                draw.polygon(local_pts, fill=255)
+                out_img.putalpha(mask)
+
+            # Flatten to white for non-transparent output formats
+            if format_ext not in ('.png', '.webp'):
+                bg = Image.new("RGB", (w, h), (255, 255, 255))
+                alpha = out_img.split()[3]
+                bg.paste(out_img.convert("RGB"), mask=alpha)
+                out_img = bg
 
             filename = f"{base}_slice{i + 1}{format_ext}"
             full_path = os.path.join(output_dir, filename)

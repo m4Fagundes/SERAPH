@@ -23,6 +23,7 @@ class ImageSession:
         self.grid_h = 1000
         self.grid_color = "#FFFF00"
         self.selected_cells = []
+        self.selected_polygons = []   # parallel to selected_cells: None (grid) or list of (x,y) (brush)
         self.slice_metadata = []
         self.export_dir = None
         self.export_format = None
@@ -34,7 +35,11 @@ class ImageSession:
         return self._thumbnail
 
     def sync_metadata(self):
-        """Ensure slice_metadata stays aligned with selected_cells."""
-        while len(self.slice_metadata) < len(self.selected_cells):
+        """Ensure slice_metadata and selected_polygons stay aligned with selected_cells."""
+        n = len(self.selected_cells)
+        while len(self.slice_metadata) < n:
             self.slice_metadata.append({"description": "", "microns_per_pixel": ""})
-        self.slice_metadata = self.slice_metadata[:len(self.selected_cells)]
+        self.slice_metadata = self.slice_metadata[:n]
+        while len(self.selected_polygons) < n:
+            self.selected_polygons.append(None)
+        self.selected_polygons = self.selected_polygons[:n]

@@ -38,6 +38,11 @@ class SlicerLabApp:
         self.tk_image = None
         self.last_mouse_x = 0
         self.last_mouse_y = 0
+
+        # Tool mode: "grid" (default) or "brush"
+        self.active_tool = "grid"
+        self._brush_points = []   # list of (img_x, img_y) while drawing
+        self._brush_btn = None    # reference to toolbar brush button
         
         # Services & Components
         self.ui = UIComponents()
@@ -120,6 +125,18 @@ class SlicerLabApp:
         
         self._setup_grid_inputs()
         self._add_toolbar_btn("🎨", self.choose_color, tooltip="Grid Color")
+
+        # Brush tool toggle button
+        self._brush_btn = tk.Button(
+            self.toolbar, text="🖌️ Pincel",
+            command=lambda: self._activate_tool("brush" if self.active_tool == "grid" else "grid"),
+            bg="#444", fg="white", relief="flat",
+            font=("Segoe UI", 10), padx=8, pady=4,
+            activebackground="#555", activeforeground="white",
+            cursor="hand2"
+        )
+        self._brush_btn.pack(side=tk.LEFT, padx=2, pady=4)
+
         tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
         
         # Zoom Controls
@@ -315,21 +332,106 @@ class SlicerLabApp:
 
     def _setup_binds(self):
         c = self.canvas
-        c.bind("<ButtonPress-1>", self.on_pan_start)
-        c.bind("<B1-Motion>", self.on_pan_move)
-        
-        c.bind("<Button-3>", self.on_right_click) 
-        if self.is_mac:
-            c.bind("<Button-2>", self.on_right_click)
-            c.bind("<Control-Button-1>", self.on_right_click)
-        
         c.bind("<MouseWheel>", self.on_scroll)
-        
         if not self.is_mac:
             c.bind("<Control-MouseWheel>", self.on_zoom_scroll)
-        
         c.bind("<Configure>", self.on_resize)
         self.root.bind("<c>", self.clear_selection)
+        self._rebind_canvas()
+
+    def _activate_tool(self, tool):
+        """Switch active tool between 'grid' and 'brush'."""
+        self.active_tool = tool
+        if self._brush_btn:
+            if tool == "brush":
+                self._brush_btn.config(bg="#007acc", relief="sunken")
+                self.canvas.config(cursor="crosshair")
+                self.status_bar.config(text="Modo Pincel: arraste para desenhar uma área de seleção")
+            else:
+                self._brush_btn.config(bg="#444", relief="flat")
+                self.canvas.config(cursor="")
+                if self.current_session:
+                    self.status_bar.config(text=f"Image: {self.current_session.name}")
+        self._rebind_canvas()
+        self.redraw()
+
+    def _rebind_canvas(self):
+        """Reapply canvas event bindings based on the active tool."""
+        c = self.canvas
+        # Clear all left-button bindings first
+        c.unbind("<ButtonPress-1>")
+        c.unbind("<B1-Motion>")
+        c.unbind("<ButtonRelease-1>")
+        c.unbind("<Button-3>")
+        c.unbind("<Button-2>")
+        c.unbind("<Control-Button-1>")
+
+        if self.active_tool == "brush":
+            c.bind("<ButtonPress-1>", self._brush_start)
+            c.bind("<B1-Motion>", self._brush_move)
+            c.bind("<ButtonRelease-1>", self._brush_end)
+        else:
+            c.bind("<ButtonPress-1>", self.on_pan_start)
+            c.bind("<B1-Motion>", self.on_pan_move)
+            c.bind("<Button-3>", self.on_right_click)
+            if self.is_mac:
+                c.bind("<Button-2>", self.on_right_click)
+                c.bind("<Control-Button-1>", self.on_right_click)
+
+    def _brush_start(self, e):
+        """Start a freehand brush stroke."""
+        s = self.current_session
+        if not s:
+            return
+        self._brush_points = []
+        # Convert canvas coords to image coords
+        ix = s.camera_x + e.x / s.zoom_level
+        iy = s.camera_y + e.y / s.zoom_level
+        self._brush_points.append((ix, iy))
+        self._brush_last_canvas = (e.x, e.y)
+
+    def _brush_move(self, e):
+        """Continue freehand stroke — record point and draw preview line."""
+        s = self.current_session
+        if not s or not self._brush_points:
+            return
+        ix = s.camera_x + e.x / s.zoom_level
+        iy = s.camera_y + e.y / s.zoom_level
+        self._brush_points.append((ix, iy))
+        lx, ly = self._brush_last_canvas
+        self.canvas.create_line(lx, ly, e.x, e.y,
+                                fill="#FF6600", width=2, tags="brush_preview")
+        self._brush_last_canvas = (e.x, e.y)
+
+    def _brush_end(self, e):
+        """Finish stroke — store exact polygon and create a bounding-box slice entry."""
+        s = self.current_session
+        if not s or len(self._brush_points) < 3:
+            self._brush_points = []
+            self.canvas.delete("brush_preview")
+            return
+
+        polygon = list(self._brush_points)  # keep a copy
+        xs = [p[0] for p in polygon]
+        ys = [p[1] for p in polygon]
+        x1 = max(0, int(min(xs)))
+        y1 = max(0, int(min(ys)))
+        x2 = min(s.real_width,  int(max(xs)) + 1)
+        y2 = min(s.real_height, int(max(ys)) + 1)
+
+        self._brush_points = []
+        self.canvas.delete("brush_preview")
+
+        if x2 <= x1 or y2 <= y1:
+            return
+
+        s.selected_cells.append({(x1, y1, x2, y2)})
+        s.selected_polygons.append(polygon)   # exact freehand shape
+        s.sync_metadata()
+        self.redraw()
+        self._update_slice_previews()
+        self.trigger_modification()
+        self._auto_reexport(s)
 
     def _get_scroll_delta(self, event):
         if self.is_mac:
@@ -531,52 +633,77 @@ class SlicerLabApp:
             self.tk_image = ImageTk.PhotoImage(img)
             self.canvas.create_image(0, 0, image=self.tk_image, anchor="nw")
             
-            if (r-l)/s.grid_w < 400: 
-                sc, ec = int(l//s.grid_w), int(r//s.grid_w)+1
-                sr, er = int(t//s.grid_h), int(b//s.grid_h)+1
-                
-                for slice_rects in s.selected_cells:
-                    for (sx1, sy1, sx2, sy2) in slice_rects:
-                        if sx2 >= l and sx1 <= r and sy2 >= t and sy1 <= b:
-                            cx1 = (sx1 - l) * s.zoom_level
-                            cy1 = (sy1 - t) * s.zoom_level
-                            cx2 = (sx2 - l) * s.zoom_level
-                            cy2 = (sy2 - t) * s.zoom_level
-                            self._draw_selection_fill(cx1, cy1, cx2, cy2)
+            # Draw slice fill (skip for polygon-based brush slices)
+            for i, slice_rects in enumerate(s.selected_cells):
+                poly = s.selected_polygons[i] if i < len(s.selected_polygons) else None
+                if poly:
+                    continue  # polygon slices: outline only, no fill hatching
+                for (sx1, sy1, sx2, sy2) in slice_rects:
+                    if sx2 >= l and sx1 <= r and sy2 >= t and sy1 <= b:
+                        cx1 = (sx1 - l) * s.zoom_level
+                        cy1 = (sy1 - t) * s.zoom_level
+                        cx2 = (sx2 - l) * s.zoom_level
+                        cy2 = (sy2 - t) * s.zoom_level
+                        self._draw_selection_fill(cx1, cy1, cx2, cy2)
 
-                # Draw external outlines per slice group
-                for slice_rects in s.selected_cells:
-                    slice_cells = set()
-                    for rect in slice_rects:
-                        slice_cells |= rect_to_cells(rect, s.grid_w, s.grid_h)
-                    for (c, ro) in slice_cells:
-                        if c < sc or c > ec or ro < sr or ro > er:
-                            continue
-                        ex1 = (c * s.grid_w - l) * s.zoom_level
-                        ey1 = (ro * s.grid_h - t) * s.zoom_level
-                        ex2 = (min((c + 1) * s.grid_w, s.real_width) - l) * s.zoom_level
-                        ey2 = (min((ro + 1) * s.grid_h, s.real_height) - t) * s.zoom_level
-                        if (c - 1, ro) not in slice_cells:
-                            self.canvas.create_line(ex1, ey1, ex1, ey2, fill="#00FFFF", width=3)
-                        if (c + 1, ro) not in slice_cells:
-                            self.canvas.create_line(ex2, ey1, ex2, ey2, fill="#00FFFF", width=3)
-                        if (c, ro - 1) not in slice_cells:
-                            self.canvas.create_line(ex1, ey1, ex2, ey1, fill="#00FFFF", width=3)
-                        if (c, ro + 1) not in slice_cells:
-                            self.canvas.create_line(ex1, ey2, ex2, ey2, fill="#00FFFF", width=3)
-                
-                cx = (sc * s.grid_w)
-                if cx < l: cx += s.grid_w
-                while cx < r:
-                    sx = (cx - l) * s.zoom_level
-                    self.canvas.create_line(sx, 0, sx, h_can, fill=s.grid_color, dash=(2, 4))
-                    cx += s.grid_w
-                cy = (sr * s.grid_h)
-                if cy < t: cy += s.grid_h
-                while cy < b:
-                    sy = (cy - t) * s.zoom_level
-                    self.canvas.create_line(0, sy, w_can, sy, fill=s.grid_color, dash=(2, 4))
-                    cy += s.grid_h
+            # Draw slice outlines — polygon outline for brush slices, cell-edge logic for grid
+            if self.active_tool == "brush":
+                for i, slice_rects in enumerate(s.selected_cells):
+                    poly = s.selected_polygons[i] if i < len(s.selected_polygons) else None
+                    if poly and len(poly) >= 2:
+                        # Draw exact polygon shape
+                        canvas_pts = [((x - l) * s.zoom_level, (y - t) * s.zoom_level)
+                                      for (x, y) in poly]
+                        flat = [coord for pt in canvas_pts for coord in pt]
+                        if len(flat) >= 4:
+                            self.canvas.create_polygon(flat, outline="#00FFFF",
+                                                       fill="", width=2)
+                    else:
+                        for (sx1, sy1, sx2, sy2) in slice_rects:
+                            ex1 = (sx1 - l) * s.zoom_level
+                            ey1 = (sy1 - t) * s.zoom_level
+                            ex2 = (sx2 - l) * s.zoom_level
+                            ey2 = (sy2 - t) * s.zoom_level
+                            self.canvas.create_rectangle(ex1, ey1, ex2, ey2,
+                                                         outline="#00FFFF", width=2)
+            else:
+                if (r - l) / s.grid_w < 400:
+                    sc, ec = int(l // s.grid_w), int(r // s.grid_w) + 1
+                    sr, er = int(t // s.grid_h), int(b // s.grid_h) + 1
+
+                    for slice_rects in s.selected_cells:
+                        slice_cells = set()
+                        for rect in slice_rects:
+                            slice_cells |= rect_to_cells(rect, s.grid_w, s.grid_h)
+                        for (c, ro) in slice_cells:
+                            if c < sc or c > ec or ro < sr or ro > er:
+                                continue
+                            ex1 = (c * s.grid_w - l) * s.zoom_level
+                            ey1 = (ro * s.grid_h - t) * s.zoom_level
+                            ex2 = (min((c + 1) * s.grid_w, s.real_width) - l) * s.zoom_level
+                            ey2 = (min((ro + 1) * s.grid_h, s.real_height) - t) * s.zoom_level
+                            if (c - 1, ro) not in slice_cells:
+                                self.canvas.create_line(ex1, ey1, ex1, ey2, fill="#00FFFF", width=3)
+                            if (c + 1, ro) not in slice_cells:
+                                self.canvas.create_line(ex2, ey1, ex2, ey2, fill="#00FFFF", width=3)
+                            if (c, ro - 1) not in slice_cells:
+                                self.canvas.create_line(ex1, ey1, ex2, ey1, fill="#00FFFF", width=3)
+                            if (c, ro + 1) not in slice_cells:
+                                self.canvas.create_line(ex1, ey2, ex2, ey2, fill="#00FFFF", width=3)
+
+                    # Grid lines (only in grid mode)
+                    cx = sc * s.grid_w
+                    if cx < l: cx += s.grid_w
+                    while cx < r:
+                        sx = (cx - l) * s.zoom_level
+                        self.canvas.create_line(sx, 0, sx, h_can, fill=s.grid_color, dash=(2, 4))
+                        cx += s.grid_w
+                    cy = sr * s.grid_h
+                    if cy < t: cy += s.grid_h
+                    while cy < b:
+                        sy = (cy - t) * s.zoom_level
+                        self.canvas.create_line(0, sy, w_can, sy, fill=s.grid_color, dash=(2, 4))
+                        cy += s.grid_h
 
         except Exception as e:
             print(f"Redraw error: {e}")
@@ -708,6 +835,18 @@ class SlicerLabApp:
                         crop = session.pyramid.get_viewport(bx1, by1, tw, th, ratio)
                     else:
                         crop = Image.new("RGB", (thumb_max_w, 60), (40, 40, 40))
+
+                    # Apply polygon mask for brush-drawn slices
+                    poly = session.selected_polygons[idx] \
+                           if idx < len(session.selected_polygons) else None
+                    if poly and len(poly) >= 3:
+                        from PIL import ImageDraw as _ImageDraw
+                        mask = Image.new("L", crop.size, 0)
+                        draw = _ImageDraw.Draw(mask)
+                        local_pts = [((x - bx1) * ratio, (y - by1) * ratio) for (x, y) in poly]
+                        draw.polygon(local_pts, fill=255)
+                        crop = crop.convert("RGBA")
+                        crop.putalpha(mask)
 
                     tk_thumb = ImageTk.PhotoImage(crop)
                     self._slice_thumbs.append(tk_thumb)
@@ -955,6 +1094,20 @@ class SlicerLabApp:
             img = session.pyramid.get_viewport(img_cam_x, img_cam_y, cw, ch, z)
         else:
             img = Image.new("RGB", (cw, ch), (20, 20, 20))
+
+        # Apply polygon mask for brush-drawn slices
+        idx = getattr(self, '_insp_slice_idx', None)
+        poly = None
+        if session and idx is not None and idx < len(session.selected_polygons):
+            poly = session.selected_polygons[idx]
+        if poly and len(poly) >= 3:
+            from PIL import ImageDraw as _ImageDraw
+            mask = Image.new("L", img.size, 0)
+            draw = _ImageDraw.Draw(mask)
+            screen_pts = [((x - img_cam_x) * z, (y - img_cam_y) * z) for (x, y) in poly]
+            draw.polygon(screen_pts, fill=255)
+            img = img.convert("RGBA")
+            img.putalpha(mask)
 
         self._insp_tk_img = ImageTk.PhotoImage(img)
         c.create_image(0, 0, anchor="nw", image=self._insp_tk_img)
