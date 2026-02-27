@@ -773,6 +773,50 @@ class SlicerLabApp:
             self._collapsed_sessions.add(session_name)
         self._update_slice_previews()
 
+    def _delete_slice(self, session, slice_idx):
+        """Delete a single slice from a session."""
+        if slice_idx < 0 or slice_idx >= len(session.selected_cells):
+            return
+        session.selected_cells.pop(slice_idx)
+        if slice_idx < len(session.selected_polygons):
+            session.selected_polygons.pop(slice_idx)
+        if slice_idx < len(session.slice_metadata):
+            session.slice_metadata.pop(slice_idx)
+        session.sync_metadata()
+
+        # Close inspector if it was showing this slice
+        if (hasattr(self, '_insp_session') and self._insp_session is session
+                and hasattr(self, '_insp_slice_idx') and self._insp_slice_idx == slice_idx):
+            self._close_slice_inspector()
+            return  # _close_slice_inspector already redraws
+
+        self.redraw()
+        self._update_slice_previews()
+        self.trigger_modification()
+        self._auto_reexport(session)
+
+    def _delete_all_slices(self, session):
+        """Delete all slices from a session (with confirmation)."""
+        n = len(session.selected_cells)
+        if n == 0:
+            return
+        if not messagebox.askyesno("Confirm", f"Delete all {n} slice(s) from {session.name}?"):
+            return
+        session.selected_cells.clear()
+        session.selected_polygons.clear()
+        session.slice_metadata.clear()
+        session.sync_metadata()
+
+        # Close inspector if showing a slice of this session
+        if hasattr(self, '_insp_session') and self._insp_session is session:
+            self._close_slice_inspector()
+            return
+
+        self.redraw()
+        self._update_slice_previews()
+        self.trigger_modification()
+        self._auto_reexport(session)
+
     def _update_slice_previews(self):
         """Rebuild the slice preview panel with full-width vertical thumbnail cards."""
         # Clear existing
@@ -808,11 +852,20 @@ class SlicerLabApp:
             lbl = tk.Label(header, text=hdr_text,
                           bg="#2d2d2d", fg="#ccc",
                           font=("Segoe UI", 9, "bold"), anchor="w")
-            lbl.pack(fill=tk.X, padx=6, pady=4)
+            lbl.pack(fill=tk.X, padx=6, pady=4, side=tk.LEFT, expand=True)
             name = session.name
             for widget in (lbl, header):
                 widget.bind("<Button-1>", lambda e, n=name: self._toggle_session_collapse(n))
                 widget.bind("<MouseWheel>", lambda e: self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+
+            # Delete All button in session header
+            del_all_btn = tk.Button(header, text="🗑️",
+                                    command=lambda sr=session: self._delete_all_slices(sr),
+                                    bg="#c0392b", fg="white", relief="flat",
+                                    font=("Segoe UI", 8), padx=4, pady=1,
+                                    activebackground="#e74c3c", activeforeground="white",
+                                    cursor="hand2")
+            del_all_btn.pack(side=tk.RIGHT, padx=(0, 6), pady=4)
 
             if collapsed:
                 continue
@@ -859,14 +912,25 @@ class SlicerLabApp:
                     img_lbl = tk.Label(card, image=tk_thumb, bg="#222", anchor="center")
                     img_lbl.pack(fill=tk.X, padx=4, pady=(4, 0))
 
-                    # Info row
-                    info = tk.Label(card, text=f"  Slice {idx+1}   •   {orig_w}×{orig_h}px",
+                    # Info row with delete button
+                    info_row = tk.Frame(card, bg="#2a2a2a")
+                    info_row.pack(fill=tk.X, padx=4, pady=(2, 4))
+
+                    info = tk.Label(info_row, text=f"  Slice {idx+1}   •   {orig_w}×{orig_h}px",
                                    bg="#2a2a2a", fg="#999", anchor="w",
                                    font=("Segoe UI", 8))
-                    info.pack(fill=tk.X, padx=4, pady=(2, 4))
+                    info.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+                    del_btn = tk.Button(info_row, text="🗑️",
+                                        command=lambda sr=session, si=idx: self._delete_slice(sr, si),
+                                        bg="#c0392b", fg="white", relief="flat",
+                                        font=("Segoe UI", 8), padx=4, pady=0,
+                                        activebackground="#e74c3c", activeforeground="white",
+                                        cursor="hand2")
+                    del_btn.pack(side=tk.RIGHT, padx=(2, 2))
 
                     # Propagate mousewheel from all card children
-                    for w in (card, img_lbl, info):
+                    for w in (card, img_lbl, info, info_row):
                         w.bind("<MouseWheel>", lambda e: self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
 
                     # Click to open inspector

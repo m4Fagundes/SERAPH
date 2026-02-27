@@ -16,6 +16,8 @@ class UIComponents:
                 style = "Green.TButton"
             elif style_type == "zoom":
                 style = "Zoom.TButton"
+            elif style_type == "danger":
+                style = "Danger.TButton"
             else:
                 style = "Dark.TButton"
             
@@ -36,6 +38,10 @@ class UIComponents:
                 bg = "#444444"
                 active_bg = "#555555"
                 font = ("Segoe UI", 12, "bold")
+            elif style_type == "danger":
+                bg = "#c0392b"
+                active_bg = "#e74c3c"
+                font = ("Segoe UI", 9)
             else:
                 bg = "#444444"
                 active_bg = "#555555"
@@ -98,4 +104,14 @@ def setup_ttk_styles():
                     font=("Segoe UI", 12, "bold"))
     style.map("Zoom.TButton",
               background=[("active", "#555555"), ("pressed", "#333333")],
+              foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
+    
+    # Danger button (red)
+    style.configure("Danger.TButton",
+                    background="#c0392b",
+                    foreground="#ffffff",
+                    padding=(6, 3),
+                    font=("Segoe UI", 9))
+    style.map("Danger.TButton",
+              background=[("active", "#e74c3c"), ("pressed", "#a93226")],
               foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
