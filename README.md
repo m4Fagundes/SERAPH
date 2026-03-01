@@ -173,7 +173,6 @@ Click on any tile thumbnail in the sidebar to open a **full-screen detail view**
 | Vertical Scroll | Mouse wheel |
 | Horizontal Scroll | `Shift` + Mouse wheel |
 | Select Cell / Rubber-band Select | Right-click (click or drag) |
-| Clear All Selections | `C` key |
 | Undo | `Ctrl+Z` |
 | Redo | `Ctrl+Y` |
 | Save Project | `Ctrl+S` |
