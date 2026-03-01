@@ -5,6 +5,7 @@ import os
 import platform
 import threading
 from app.domain.session import ImageSession
+from app.domain.history import UndoManager
 from app.interface.gui.utils import detect_dark_mode_mac
 from app.interface.gui.components import UIComponents, setup_ttk_styles
 from app.application.services import ProjectService, ExportService
@@ -48,6 +49,7 @@ class SlicerLabApp:
         self.ui = UIComponents()
         self.project_service = ProjectService()
         self.export_service = ExportService()
+        self.undo_manager = UndoManager()
 
         # Slice preview state
         self._slice_thumbs = []  # keep refs to prevent GC
@@ -83,7 +85,7 @@ class SlicerLabApp:
         tk.Frame(self.sidebar, height=1, bg="#3a3a3a").pack(fill=tk.X, padx=8)
 
         # --- Bottom section: slice previews ---
-        self.slice_header = tk.Label(self.sidebar, text="SLICES (0)", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w")
+        self.slice_header = tk.Label(self.sidebar, text="TILES (0)", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w")
         self.slice_header.pack(fill=tk.X, padx=12, pady=(8,4))
 
         # Scrollable container for slices
@@ -128,7 +130,7 @@ class SlicerLabApp:
 
         # Brush tool toggle button
         self._brush_btn = tk.Button(
-            self.toolbar, text="🖌️ Pincel",
+            self.toolbar, text="🖌️ Brush",
             command=lambda: self._activate_tool("brush" if self.active_tool == "grid" else "grid"),
             bg="#444", fg="white", relief="flat",
             font=("Segoe UI", 10), padx=8, pady=4,
@@ -147,9 +149,9 @@ class SlicerLabApp:
         self._setup_format_selector()
         tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
         
-        # Slice Buttons
-        self._add_toolbar_btn("✂️ Slice", self.save_selected_cells, bg="#27ae60", tooltip="Slice Selected Cells")
-        self._add_toolbar_btn("🔲 All", self.slice_all, bg="#27ae60", tooltip="Slice All Grid")
+        # Tile Buttons
+        self._add_toolbar_btn("✂️ Tile", self.save_selected_cells, bg="#27ae60", tooltip="Export Selected Tiles")
+        self._add_toolbar_btn("🔲 All", self.slice_all, bg="#27ae60", tooltip="Export All Grid Tiles")
         
         # Status label
         self.save_status_label = tk.Label(self.toolbar, text="", bg=self.colors["toolbar"], fg="#aaa", font=("Segoe UI", 8, "italic"))
@@ -168,8 +170,8 @@ class SlicerLabApp:
         self._show_welcome_screen()
 
     def _show_welcome_screen(self):
-        """Show a welcome overlay on the canvas area."""
-        self.welcome_frame = tk.Frame(self.canvas_area, bg="#1a1a2e")
+        """Show a full-window welcome overlay that blocks all interaction."""
+        self.welcome_frame = tk.Frame(self.root, bg="#1a1a2e")
         self.welcome_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         # Center container
@@ -180,11 +182,11 @@ class SlicerLabApp:
         tk.Label(center, text="✂️", font=("Segoe UI", 48), bg="#1a1a2e", fg="white").pack(pady=(0, 5))
 
         # Title
-        tk.Label(center, text="Slicer Lab Pro", font=("Segoe UI", 28, "bold"),
+        tk.Label(center, text="Tiles Grid Analyzer", font=("Segoe UI", 28, "bold"),
                  bg="#1a1a2e", fg="#e0e0e0").pack(pady=(0, 5))
 
         # Subtitle
-        tk.Label(center, text="Grid-based image slicing tool",
+        tk.Label(center, text="Grid-based image tiling tool",
                  font=("Segoe UI", 11), bg="#1a1a2e", fg="#888").pack(pady=(0, 30))
 
         # Buttons container
@@ -337,6 +339,13 @@ class SlicerLabApp:
             c.bind("<Control-MouseWheel>", self.on_zoom_scroll)
         c.bind("<Configure>", self.on_resize)
         self.root.bind("<c>", self.clear_selection)
+        # Keyboard shortcuts
+        self.root.bind("<Control-z>", lambda e: self._undo())
+        self.root.bind("<Control-y>", lambda e: self._redo())
+        self.root.bind("<Control-s>", lambda e: self._save_shortcut())
+        self.root.bind("<Control-o>", lambda e: self.open_project())
+        self.root.bind("<Control-n>", lambda e: self.new_project())
+        self.root.bind("<Delete>", lambda e: self._delete_current_tile())
         self._rebind_canvas()
 
     def _activate_tool(self, tool):
@@ -346,7 +355,7 @@ class SlicerLabApp:
             if tool == "brush":
                 self._brush_btn.config(bg="#007acc", relief="sunken")
                 self.canvas.config(cursor="crosshair")
-                self.status_bar.config(text="Modo Pincel: arraste para desenhar uma área de seleção")
+                self.status_bar.config(text="Brush Mode: drag to draw a selection area")
             else:
                 self._brush_btn.config(bg="#444", relief="flat")
                 self.canvas.config(cursor="")
@@ -373,10 +382,12 @@ class SlicerLabApp:
         else:
             c.bind("<ButtonPress-1>", self.on_pan_start)
             c.bind("<B1-Motion>", self.on_pan_move)
-            c.bind("<Button-3>", self.on_right_click)
+            c.bind("<Button-3>", self._rect_select_start)
+            c.bind("<B3-Motion>", self._rect_select_move)
+            c.bind("<ButtonRelease-3>", self._rect_select_end)
             if self.is_mac:
-                c.bind("<Button-2>", self.on_right_click)
-                c.bind("<Control-Button-1>", self.on_right_click)
+                c.bind("<Button-2>", self._rect_select_start)
+                c.bind("<Control-Button-1>", self._rect_select_start)
 
     def _brush_start(self, e):
         """Start a freehand brush stroke."""
@@ -425,6 +436,7 @@ class SlicerLabApp:
         if x2 <= x1 or y2 <= y1:
             return
 
+        self.undo_manager.push(s, "brush_tile")
         s.selected_cells.append({(x1, y1, x2, y2)})
         s.selected_polygons.append(polygon)   # exact freehand shape
         s.sync_metadata()
@@ -478,6 +490,7 @@ class SlicerLabApp:
         self.current_session = None
         self.current_project_path = None
         self.canvas.delete("all")
+        self.undo_manager.clear()
         
         self.entry_w.delete(0, tk.END)
         self.entry_w.insert(0, "1000")
@@ -487,7 +500,7 @@ class SlicerLabApp:
         self.format_var.set("PNG")
         self.export_format = ".png"
         
-        self.root.title("Slicer Lab Pro - New Project")
+        self.root.title("Tiles Grid Analyzer - New Project")
         self.save_status_label.config(text="")
         self.status_bar.config(text="New project created. Add an image to start.")
         self.zoom_label.config(text="100%")
@@ -502,7 +515,7 @@ class SlicerLabApp:
         if f:
             self.current_project_path = f
             self._write_project_file(f)
-            self.root.title(f"Slicer Lab Pro - {os.path.basename(f)}")
+            self.root.title(f"Tiles Grid Analyzer - {os.path.basename(f)}")
             messagebox.showinfo("Success", "Project saved! AutoSave enabled.")
 
     def open_project(self):
@@ -510,13 +523,57 @@ class SlicerLabApp:
         if not f: return
         
         try:
-            sessions = self.project_service.load_project(f)
+            sessions, missing = self.project_service.load_project(f)
+
+            # Re-link missing images
+            if missing:
+                for entry in missing:
+                    name = os.path.basename(entry["rel_path"])
+                    answer = messagebox.askyesno(
+                        "Image Not Found",
+                        f"Image not found:\n  {entry['rel_path']}\n\n"
+                        f"Would you like to locate \"{name}\" manually?")
+                    if answer:
+                        new_path = filedialog.askopenfilename(
+                            title=f"Locate: {name}",
+                            filetypes=[("All Supported", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp;*.ndpi;*.svs;*.mrxs;*.scn;*.vms;*.vmu;*.bif")])
+                        if new_path and os.path.exists(new_path):
+                            # Build session from the item data with the new path
+                            item = entry["item"]
+                            try:
+                                s = ImageSession(new_path)
+                                s.grid_w = item.get("grid_w", 1000)
+                                s.grid_h = item.get("grid_h", 1000)
+                                s.zoom_level = item.get("zoom_level", 1.0)
+                                s.camera_x = item.get("camera_x", 0)
+                                s.camera_y = item.get("camera_y", 0)
+                                sel = item.get("selected_regions", item.get("selected_cells", []))
+                                if sel and isinstance(sel[0], (list, tuple)):
+                                    if sel[0] and isinstance(sel[0][0], (list, tuple)):
+                                        s.selected_cells = [set(tuple(r) for r in group) for group in sel]
+                                    else:
+                                        s.selected_cells = [{tuple(r)} for r in sel if len(r) == 4]
+                                s.slice_metadata = item.get("slice_metadata", [])
+                                raw_polys = item.get("selected_polygons", [])
+                                s.selected_polygons = [
+                                    [tuple(pt) for pt in poly] if poly else None
+                                    for poly in raw_polys
+                                ]
+                                s.sync_metadata()
+                                s.grid_color = item.get("grid_color", "#FFFF00")
+                                s.export_dir = item.get("export_dir", None)
+                                s.export_format = item.get("export_format", None)
+                                sessions.append(s)
+                            except Exception as ex:
+                                messagebox.showwarning("Warning", f"Could not load image:\n{ex}")
+
             self.sessions = sessions
 
             self._dismiss_welcome()
             self.file_list.delete(0, tk.END)
             self.current_session = None
             self.canvas.delete("all")
+            self.undo_manager.clear()
             
             for s in self.sessions:
                 self.file_list.insert(tk.END, f" {s.name}")
@@ -526,7 +583,7 @@ class SlicerLabApp:
                 self._activate_session(self.sessions[0])
             
             self.current_project_path = f
-            self.root.title(f"Slicer Lab Pro - {os.path.basename(f)}")
+            self.root.title(f"Tiles Grid Analyzer - {os.path.basename(f)}")
             self.save_status_label.config(text="Project Loaded")
             self._update_slice_previews()
             
@@ -592,16 +649,16 @@ class SlicerLabApp:
     def on_resize(self, event):
         if self.current_session: self.redraw()
 
-    def _draw_selection_fill(self, x1, y1, x2, y2):
+    def _draw_selection_fill(self, x1, y1, x2, y2, color="#00FFFF"):
         """Draw hatching fill only (no border)."""
         line_spacing = 2
         y = y1
         while y < y2:
-            self.canvas.create_line(x1, y, x2, y, fill="#00FFFF", width=1)
+            self.canvas.create_line(x1, y, x2, y, fill=color, width=1)
             y += line_spacing * 2
         x = x1
         while x < x2:
-            self.canvas.create_line(x, y1, x, y2, fill="#00FFFF", width=1)
+            self.canvas.create_line(x, y1, x, y2, fill=color, width=1)
             x += line_spacing * 2
 
     def redraw(self):
@@ -635,6 +692,7 @@ class SlicerLabApp:
             
             # Draw slice fill (skip for polygon-based brush slices)
             for i, slice_rects in enumerate(s.selected_cells):
+                tile_color = s.tile_colors[i] if i < len(s.tile_colors) else "#00FFFF"
                 poly = s.selected_polygons[i] if i < len(s.selected_polygons) else None
                 if poly:
                     continue  # polygon slices: outline only, no fill hatching
@@ -644,11 +702,12 @@ class SlicerLabApp:
                         cy1 = (sy1 - t) * s.zoom_level
                         cx2 = (sx2 - l) * s.zoom_level
                         cy2 = (sy2 - t) * s.zoom_level
-                        self._draw_selection_fill(cx1, cy1, cx2, cy2)
+                        self._draw_selection_fill(cx1, cy1, cx2, cy2, tile_color)
 
             # Draw slice outlines — polygon outline for brush slices, cell-edge logic for grid
             if self.active_tool == "brush":
                 for i, slice_rects in enumerate(s.selected_cells):
+                    tile_color = s.tile_colors[i] if i < len(s.tile_colors) else "#00FFFF"
                     poly = s.selected_polygons[i] if i < len(s.selected_polygons) else None
                     if poly and len(poly) >= 2:
                         # Draw exact polygon shape
@@ -656,7 +715,7 @@ class SlicerLabApp:
                                       for (x, y) in poly]
                         flat = [coord for pt in canvas_pts for coord in pt]
                         if len(flat) >= 4:
-                            self.canvas.create_polygon(flat, outline="#00FFFF",
+                            self.canvas.create_polygon(flat, outline=tile_color,
                                                        fill="", width=2)
                     else:
                         for (sx1, sy1, sx2, sy2) in slice_rects:
@@ -665,13 +724,14 @@ class SlicerLabApp:
                             ex2 = (sx2 - l) * s.zoom_level
                             ey2 = (sy2 - t) * s.zoom_level
                             self.canvas.create_rectangle(ex1, ey1, ex2, ey2,
-                                                         outline="#00FFFF", width=2)
+                                                         outline=tile_color, width=2)
             else:
                 if (r - l) / s.grid_w < 400:
                     sc, ec = int(l // s.grid_w), int(r // s.grid_w) + 1
                     sr, er = int(t // s.grid_h), int(b // s.grid_h) + 1
 
-                    for slice_rects in s.selected_cells:
+                    for i, slice_rects in enumerate(s.selected_cells):
+                        tile_color = s.tile_colors[i] if i < len(s.tile_colors) else "#00FFFF"
                         slice_cells = set()
                         for rect in slice_rects:
                             slice_cells |= rect_to_cells(rect, s.grid_w, s.grid_h)
@@ -683,13 +743,13 @@ class SlicerLabApp:
                             ex2 = (min((c + 1) * s.grid_w, s.real_width) - l) * s.zoom_level
                             ey2 = (min((ro + 1) * s.grid_h, s.real_height) - t) * s.zoom_level
                             if (c - 1, ro) not in slice_cells:
-                                self.canvas.create_line(ex1, ey1, ex1, ey2, fill="#00FFFF", width=3)
+                                self.canvas.create_line(ex1, ey1, ex1, ey2, fill=tile_color, width=3)
                             if (c + 1, ro) not in slice_cells:
-                                self.canvas.create_line(ex2, ey1, ex2, ey2, fill="#00FFFF", width=3)
+                                self.canvas.create_line(ex2, ey1, ex2, ey2, fill=tile_color, width=3)
                             if (c, ro - 1) not in slice_cells:
-                                self.canvas.create_line(ex1, ey1, ex2, ey1, fill="#00FFFF", width=3)
+                                self.canvas.create_line(ex1, ey1, ex2, ey1, fill=tile_color, width=3)
                             if (c, ro + 1) not in slice_cells:
-                                self.canvas.create_line(ex1, ey2, ex2, ey2, fill="#00FFFF", width=3)
+                                self.canvas.create_line(ex1, ey2, ex2, ey2, fill=tile_color, width=3)
 
                     # Grid lines (only in grid mode)
                     cx = sc * s.grid_w
@@ -708,6 +768,76 @@ class SlicerLabApp:
         except Exception as e:
             print(f"Redraw error: {e}")
             import traceback; traceback.print_exc()
+
+        # Scale bar overlay (only when microns_per_pixel is set)
+        self._draw_scale_bar()
+
+    def _draw_scale_bar(self):
+        """Draw a scale bar in the bottom-right corner of the canvas."""
+        s = self.current_session
+        if not s:
+            return
+
+        # Find microns_per_pixel from any tile's metadata
+        mpp = None
+        for meta in s.slice_metadata:
+            try:
+                val = meta.get("microns_per_pixel", "")
+                if val:
+                    mpp = float(val)
+                    break
+            except (ValueError, TypeError):
+                continue
+        if not mpp:
+            return
+
+        w_can = self.canvas.winfo_width()
+        h_can = self.canvas.winfo_height()
+
+        # Calculate a nice bar length: aim for ~100-200 px on screen
+        # pixels_per_micron at current zoom
+        ppm = s.zoom_level / mpp  # screen pixels per micron
+
+        # Choose a nice round value in microns
+        target_px = 150
+        target_um = target_px / ppm
+        nice_values = [1, 2, 5, 10, 20, 50, 100, 200, 500,
+                       1000, 2000, 5000, 10000, 20000, 50000]
+        bar_um = nice_values[0]
+        for v in nice_values:
+            if v >= target_um:
+                bar_um = v
+                break
+        else:
+            bar_um = nice_values[-1]
+
+        bar_px = int(bar_um * ppm)
+        if bar_px < 20 or bar_px > w_can - 20:
+            return
+
+        # Label
+        if bar_um >= 1000:
+            label = f"{bar_um / 1000:.0f} mm"
+        else:
+            label = f"{bar_um:.0f} µm"
+
+        # Position: bottom-right corner
+        margin = 20
+        x2 = w_can - margin
+        x1 = x2 - bar_px
+        y = h_can - margin
+
+        # Draw background for readability
+        self.canvas.create_rectangle(x1 - 5, y - 20, x2 + 5, y + 8,
+                                     fill="#000000", stipple="gray50", outline="")
+        # Bar line
+        self.canvas.create_line(x1, y, x2, y, fill="white", width=3)
+        # End caps
+        self.canvas.create_line(x1, y - 6, x1, y + 6, fill="white", width=2)
+        self.canvas.create_line(x2, y - 6, x2, y + 6, fill="white", width=2)
+        # Label
+        self.canvas.create_text((x1 + x2) / 2, y - 10, text=label,
+                                fill="white", font=("Segoe UI", 9, "bold"))
 
     def on_pan_start(self, e):
         self.last_mouse_x = e.x
@@ -737,6 +867,8 @@ class SlicerLabApp:
             y2 = min(y1 + s.grid_h, s.real_height)
             cell_rect = (x1, y1, x2, y2)
 
+            self.undo_manager.push(s, "grid_click")
+
             # Find which slice group overlaps the click
             found_idx = None
             for i, slice_rects in enumerate(s.selected_cells):
@@ -765,6 +897,81 @@ class SlicerLabApp:
             self.trigger_modification()
             self._auto_reexport(s)
 
+    def _rect_select_start(self, e):
+        """Start rubber-band selection (right-click drag in grid mode)."""
+        self._rect_start_x = e.x
+        self._rect_start_y = e.y
+        self._rect_dragging = False
+
+    def _rect_select_move(self, e):
+        """Draw rubber-band preview rectangle while dragging."""
+        if not hasattr(self, '_rect_start_x'):
+            return
+        # Check if moved enough to call it a drag
+        dx = abs(e.x - self._rect_start_x)
+        dy = abs(e.y - self._rect_start_y)
+        if dx > 5 or dy > 5:
+            self._rect_dragging = True
+        if self._rect_dragging:
+            self.canvas.delete("rect_preview")
+            self.canvas.create_rectangle(
+                self._rect_start_x, self._rect_start_y, e.x, e.y,
+                outline="#FF6600", width=2, dash=(4, 4), tags="rect_preview")
+
+    def _rect_select_end(self, e):
+        """Finish rubber-band: if dragged, select all grid cells in the rectangle."""
+        self.canvas.delete("rect_preview")
+        if not hasattr(self, '_rect_start_x'):
+            return
+
+        if not self._rect_dragging:
+            # Single right-click — fall back to original behavior
+            self.on_right_click(e)
+            return
+
+        s = self.current_session
+        if not s:
+            return
+
+        # Convert canvas coords to image coords
+        ix1 = s.camera_x + self._rect_start_x / s.zoom_level
+        iy1 = s.camera_y + self._rect_start_y / s.zoom_level
+        ix2 = s.camera_x + e.x / s.zoom_level
+        iy2 = s.camera_y + e.y / s.zoom_level
+
+        # Normalize
+        rx1 = max(0, min(ix1, ix2))
+        ry1 = max(0, min(iy1, iy2))
+        rx2 = min(s.real_width, max(ix1, ix2))
+        ry2 = min(s.real_height, max(iy1, iy2))
+
+        if rx2 <= rx1 or ry2 <= ry1:
+            return
+
+        # Find all grid cells inside the rectangle
+        col_start = int(rx1 // s.grid_w)
+        row_start = int(ry1 // s.grid_h)
+        col_end = int((rx2 - 1) // s.grid_w)
+        row_end = int((ry2 - 1) // s.grid_h)
+
+        rects = set()
+        for c in range(col_start, col_end + 1):
+            for r in range(row_start, row_end + 1):
+                x1 = c * s.grid_w
+                y1 = r * s.grid_h
+                x2 = min(x1 + s.grid_w, s.real_width)
+                y2 = min(y1 + s.grid_h, s.real_height)
+                rects.add((x1, y1, x2, y2))
+
+        if rects:
+            self.undo_manager.push(s, "rect_select")
+            s.selected_cells.append(rects)
+            s.sync_metadata()
+            self.redraw()
+            self._update_slice_previews()
+            self.trigger_modification()
+            self._auto_reexport(s)
+
     def _toggle_session_collapse(self, session_name):
         """Toggle collapsed state of a session group in slice previews."""
         if session_name in self._collapsed_sessions:
@@ -777,6 +984,7 @@ class SlicerLabApp:
         """Delete a single slice from a session."""
         if slice_idx < 0 or slice_idx >= len(session.selected_cells):
             return
+        self.undo_manager.push(session, "delete_tile")
         session.selected_cells.pop(slice_idx)
         if slice_idx < len(session.selected_polygons):
             session.selected_polygons.pop(slice_idx)
@@ -800,8 +1008,9 @@ class SlicerLabApp:
         n = len(session.selected_cells)
         if n == 0:
             return
-        if not messagebox.askyesno("Confirm", f"Delete all {n} slice(s) from {session.name}?"):
+        if not messagebox.askyesno("Confirm", f"Delete all {n} tile(s) from {session.name}?"):
             return
+        self.undo_manager.push(session, "delete_all")
         session.selected_cells.clear()
         session.selected_polygons.clear()
         session.slice_metadata.clear()
@@ -825,10 +1034,10 @@ class SlicerLabApp:
         self._slice_thumbs.clear()
 
         total_slices = sum(len(s.selected_cells) for s in self.sessions)
-        self.slice_header.config(text=f"SLICES ({total_slices})")
+        self.slice_header.config(text=f"TILES ({total_slices})")
 
         if total_slices == 0:
-            empty = tk.Label(self._slice_inner, text="Right-click cells to\ncreate slices",
+            empty = tk.Label(self._slice_inner, text="Right-click cells to\ncreate tiles",
                      bg=self.colors["sidebar"], fg="#555",
                      font=("Segoe UI", 9, "italic"), justify="center")
             empty.pack(pady=30)
@@ -916,7 +1125,16 @@ class SlicerLabApp:
                     info_row = tk.Frame(card, bg="#2a2a2a")
                     info_row.pack(fill=tk.X, padx=4, pady=(2, 4))
 
-                    info = tk.Label(info_row, text=f"  Slice {idx+1}   •   {orig_w}×{orig_h}px",
+                    # Color dot indicator
+                    tile_color = session.tile_colors[idx] if idx < len(session.tile_colors) else "#00FFFF"
+                    dot = tk.Canvas(info_row, width=10, height=10, bg="#2a2a2a",
+                                   highlightthickness=0)
+                    dot.create_oval(1, 1, 9, 9, fill=tile_color, outline="")
+                    dot.pack(side=tk.LEFT, padx=(4, 0))
+
+                    tile_name = session.slice_metadata[idx].get("name", "") if idx < len(session.slice_metadata) else ""
+                    label_text = tile_name if tile_name else f"Tile {idx+1}"
+                    info = tk.Label(info_row, text=f"  {label_text}   •   {orig_w}×{orig_h}px",
                                    bg="#2a2a2a", fg="#999", anchor="w",
                                    font=("Segoe UI", 8))
                     info.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -989,7 +1207,9 @@ class SlicerLabApp:
                             cursor="hand2")
         back_btn.pack(side=tk.LEFT, padx=10, pady=6)
 
-        tk.Label(header, text=f"Slice {slice_idx+1}  \u2014  {session.name}",
+        tile_name = meta.get("name", "") if meta else ""
+        header_label = tile_name if tile_name else f"Tile {slice_idx+1}"
+        tk.Label(header, text=f"{header_label}  \u2014  {session.name}",
                  bg="#2d2d2d", fg="#ccc", font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT, padx=8, pady=6)
 
         self._insp_zoom_label = tk.Label(header, text="100%", bg="#2d2d2d", fg="#888",
@@ -1055,6 +1275,12 @@ class SlicerLabApp:
                 tk.Label(row, text=str(value), bg="#252526", fg="#ddd",
                          font=("Segoe UI", 10), anchor="w").pack(fill=tk.X)
                 return None
+
+        # Editable tile name
+        self._insp_name = add_field(props_inner, "Tile Name", meta.get("name", ""), editable=True)
+
+        # Separator
+        tk.Frame(props_inner, height=1, bg="#3a3a3a").pack(fill=tk.X, padx=12, pady=8)
 
         # Read-only fields
         add_field(props_inner, "Resolution", f"{orig_w} \u00d7 {orig_h} px")
@@ -1226,6 +1452,7 @@ class SlicerLabApp:
             session.sync_metadata()
             if idx < len(session.slice_metadata):
                 try:
+                    session.slice_metadata[idx]["name"] = self._insp_name.get().strip()
                     session.slice_metadata[idx]["microns_per_pixel"] = self._insp_microns.get().strip()
                     session.slice_metadata[idx]["description"] = self._insp_desc.get("1.0", "end-1c").strip()
                 except Exception:
@@ -1309,9 +1536,43 @@ class SlicerLabApp:
 
     def clear_selection(self, e=None):
         if self.current_session:
+            self.undo_manager.push(self.current_session, "clear")
             self.current_session.selected_cells.clear()
             self.redraw()
+            self._update_slice_previews()
             self.trigger_modification()
+
+    def _undo(self):
+        """Undo the last tile action."""
+        session = self.undo_manager.undo()
+        if session:
+            self.redraw()
+            self._update_slice_previews()
+            self.trigger_modification()
+            self.status_bar.config(text="Undo")
+
+    def _redo(self):
+        """Redo the last undone action."""
+        session = self.undo_manager.redo()
+        if session:
+            self.redraw()
+            self._update_slice_previews()
+            self.trigger_modification()
+            self.status_bar.config(text="Redo")
+
+    def _save_shortcut(self):
+        """Ctrl+S: save to current path or prompt Save As."""
+        if self.current_project_path:
+            self._write_project_file(self.current_project_path)
+            self.save_status_label.config(text="Saved")
+        else:
+            self.save_project_as()
+
+    def _delete_current_tile(self):
+        """Delete key: delete tile if inspector is open."""
+        if (hasattr(self, '_insp_session') and self._insp_session
+                and hasattr(self, '_insp_slice_idx')):
+            self._delete_slice(self._insp_session, self._insp_slice_idx)
 
     def save_selected_cells(self):
         s = self.current_session
@@ -1320,17 +1581,75 @@ class SlicerLabApp:
             return
         
         n = len(s.selected_cells)
-        msg = f"Save {n} slice(s) as {self.export_format.upper()[1:]}?"
+        msg = f"Save {n} tile(s) as {self.export_format.upper()[1:]}?"
         if not messagebox.askyesno("Confirm", msg): return
         
         out = filedialog.askdirectory(title="Select output folder")
-        if out:
-            count = self.export_service.save_selected_cells(s, out, self.export_format)
-            # Track export path for auto-reexport
-            s.export_dir = out
-            s.export_format = self.export_format
+        if not out:
+            return
+
+        self._run_export_with_progress(
+            f"Exporting {n} tile(s)...",
+            lambda cb: self.export_service.save_selected_cells(s, out, self.export_format, progress_callback=cb),
+            lambda count: self._on_export_done(s, out, count, is_tile=True)
+        )
+
+    def _on_export_done(self, session, out, count, is_tile=False):
+        """Called after export completes."""
+        if is_tile:
+            self.export_service.export_metadata(session, out)
+            session.export_dir = out
+            session.export_format = self.export_format
             self.trigger_modification()
-            messagebox.showinfo("Done", f"{count} slice(s) saved as {self.export_format.upper()[1:]}.")
+            messagebox.showinfo("Done", f"{count} tile(s) saved as {self.export_format.upper()[1:]}.\nMetadata exported (CSV + JSON).")
+        else:
+            messagebox.showinfo("Done", f"{count} tiles saved to:\n{out}")
+
+    def _run_export_with_progress(self, title, export_fn, on_done):
+        """Run an export in a background thread with a modal progress dialog."""
+        # Progress dialog
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.geometry("350x100")
+        dlg.resizable(False, False)
+        dlg.configure(bg="#2d2d2d")
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        lbl = tk.Label(dlg, text="Preparing...", bg="#2d2d2d", fg="#ccc",
+                       font=("Segoe UI", 10))
+        lbl.pack(pady=(15, 5))
+
+        bar = ttk.Progressbar(dlg, length=300, mode="determinate")
+        bar.pack(pady=5)
+
+        progress_data = {"current": 0, "total": 1, "result": None, "done": False}
+
+        def progress_cb(current, total):
+            progress_data["current"] = current
+            progress_data["total"] = total
+
+        def run():
+            result = export_fn(progress_cb)
+            progress_data["result"] = result
+            progress_data["done"] = True
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+
+        def poll():
+            cur = progress_data["current"]
+            tot = max(progress_data["total"], 1)
+            pct = int(cur / tot * 100)
+            bar["value"] = pct
+            lbl.config(text=f"{cur} / {tot}  ({pct}%)")
+            if progress_data["done"]:
+                dlg.destroy()
+                on_done(progress_data["result"])
+            else:
+                self.root.after(100, poll)
+
+        self.root.after(100, poll)
 
     def _auto_reexport(self, session):
         """Re-export slices if session was previously exported."""
@@ -1339,7 +1658,7 @@ class SlicerLabApp:
                 if os.path.isdir(session.export_dir):
                     self.export_service.save_selected_cells(
                         session, session.export_dir, session.export_format)
-                    self.status_bar.config(text=f"Auto-exported {len(session.selected_cells)} slice(s)")
+                    self.status_bar.config(text=f"Auto-exported {len(session.selected_cells)} tile(s)")
             except Exception as e:
                 print(f"Auto-reexport error: {e}")
 
@@ -1358,12 +1677,15 @@ class SlicerLabApp:
         msg += f"Image: {s.real_width}x{s.real_height}px\n"
         msg += f"Format: {self.export_format.upper()[1:]}"
         
-        if not messagebox.askyesno("Confirm Slice All", msg): 
+        if not messagebox.askyesno("Confirm Tile All", msg): 
             return
         
         out = filedialog.askdirectory(title="Select output folder")
         if not out:
             return
-            
-        count = self.export_service.slice_all(s, out, self.export_format)
-        messagebox.showinfo("Done", f"{count} tiles saved to:\n{out}")
+
+        self._run_export_with_progress(
+            f"Exporting {total} tiles...",
+            lambda cb: self.export_service.slice_all(s, out, self.export_format, progress_callback=cb),
+            lambda count: self._on_export_done(s, out, count, is_tile=False)
+        )
