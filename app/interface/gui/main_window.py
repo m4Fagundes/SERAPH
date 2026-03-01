@@ -338,7 +338,6 @@ class SlicerLabApp:
         if not self.is_mac:
             c.bind("<Control-MouseWheel>", self.on_zoom_scroll)
         c.bind("<Configure>", self.on_resize)
-        self.root.bind("<c>", self.clear_selection)
         # Keyboard shortcuts
         self.root.bind("<Control-z>", lambda e: self._undo())
         self.root.bind("<Control-y>", lambda e: self._redo())
