@@ -244,16 +244,6 @@ python main.py
 #### macOS
 ```bash
 python3 main.py
-```
-
-### Run tests
-```bash
-python tests/test_selection.py
-python tests/test_history.py
-python tests/test_services.py
-```
-
----
 
 ## ⚙️ Architecture
 
@@ -275,10 +265,6 @@ app/
         ├── main_window.py  # SlicerLabApp: full Tkinter interface
         ├── components.py   # UIComponents: cross-platform button factory + ttk styles
         └── utils.py        # Platform detection (macOS dark mode)
-tests/
-├── test_selection.py  # Unit tests for selection math
-├── test_history.py    # Unit tests for undo/redo
-└── test_services.py   # Integration tests for project save/load
 ```
 
 ### Key Design Decisions
