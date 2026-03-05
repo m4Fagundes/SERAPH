@@ -1,7 +1,7 @@
 import os
 from PIL import Image, ImageDraw
 from app.domain.session import ImageSession
-from app.domain.selection import rect_to_cells
+from app.domain.selection import rect_to_cells, draw_exclusion_rects
 from app.infrastructure.io import load_project_file, save_project_file, save_image_tile
 
 class ProjectService:
@@ -53,6 +53,13 @@ class ProjectService:
             s.selected_polygons = [
                 [tuple(pt) for pt in poly] if poly else None
                 for poly in raw_polys
+            ]
+            s.sync_metadata()
+            # Restore exclusion rects
+            raw_excls = item.get("slice_exclusions", [])
+            s.slice_exclusions = [
+                [tuple(r) for r in tile_excls] if tile_excls else []
+                for tile_excls in raw_excls
             ]
             s.sync_metadata()
             # Restore tile colors if saved
@@ -107,6 +114,10 @@ class ProjectService:
                     for poly in s.selected_polygons
                 ],
                 "slice_metadata": s.slice_metadata,
+                "slice_exclusions": [
+                    [list(r) for r in excl] if excl else []
+                    for excl in s.slice_exclusions
+                ],
                 "tile_colors": s.tile_colors,
                 "grid_color": s.grid_color,
                 "export_dir": rel_export_dir,
@@ -152,6 +163,9 @@ class ExportService:
                 draw = ImageDraw.Draw(mask)
                 local_pts = [(x - bx1, y - by1) for (x, y) in poly]
                 draw.polygon(local_pts, fill=255)
+                # Apply exclusion strokes (eraser brush holes)
+                exclusions = session.slice_exclusions[i] if i < len(session.slice_exclusions) else []
+                draw_exclusion_rects(draw, exclusions, bx1, by1, 1.0)
                 out_img.putalpha(mask)
 
             # Flatten to white for non-transparent output formats

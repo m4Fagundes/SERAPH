@@ -9,6 +9,25 @@ and merging to support smart add/subtract operations.
 from collections import deque
 
 
+def draw_exclusion_rects(draw, exclusions, offset_x, offset_y, scale):
+    """Draw exclusion rectangles onto a PIL mask (fill=0).
+
+    Each exclusion is an (x1, y1, x2, y2) tuple in image coordinates.
+    """
+    for rect in exclusions:
+        if not rect or len(rect) != 4:
+            continue
+        try:
+            x1, y1, x2, y2 = float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])
+        except (TypeError, ValueError):
+            continue  # skip old stroke-format data
+        sx1 = (x1 - offset_x) * scale
+        sy1 = (y1 - offset_y) * scale
+        sx2 = (x2 - offset_x) * scale
+        sy2 = (y2 - offset_y) * scale
+        draw.rectangle([sx1, sy1, sx2, sy2], fill=0)
+
+
 def rect_to_cells(rect, grid_w, grid_h):
     """Decompose a pixel rect into a set of (col, row) grid cells."""
     x1, y1, x2, y2 = rect

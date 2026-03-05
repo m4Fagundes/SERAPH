@@ -40,6 +40,7 @@ class ImageSession:
         self.selected_cells = []
         self.selected_polygons = []   # parallel to selected_cells: None (grid) or list of (x,y) (brush)
         self.slice_metadata = []
+        self.slice_exclusions = []    # parallel to selected_cells: list of (x1,y1,x2,y2) rects to exclude
         self.tile_colors = []         # parallel to selected_cells: hex color string
         self.export_dir = None
         self.export_format = None
@@ -59,6 +60,9 @@ class ImageSession:
         while len(self.selected_polygons) < n:
             self.selected_polygons.append(None)
         self.selected_polygons = self.selected_polygons[:n]
+        while len(self.slice_exclusions) < n:
+            self.slice_exclusions.append([])
+        self.slice_exclusions = self.slice_exclusions[:n]
         while len(self.tile_colors) < n:
             self.tile_colors.append(TILE_COLORS[len(self.tile_colors) % len(TILE_COLORS)])
         self.tile_colors = self.tile_colors[:n]
