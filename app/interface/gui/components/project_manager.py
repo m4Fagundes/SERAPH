@@ -117,7 +117,7 @@ class ProjectManagerMixin:
                     if answer:
                         new_path = filedialog.askopenfilename(
                             title=f"Locate: {name}",
-                            filetypes=[("All Supported", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp;*.ndpi;*.svs;*.mrxs;*.scn;*.vms;*.vmu;*.bif")])
+                            filetypes=[("All Supported", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp;*.ndpi;*.svs;*.mrxs;*.scn;*.vms;*.vmu;*.bif;*.JPG;*.JPEG;*.PNG;*.TIF;*.TIFF;*.BMP;*.WEBP;*.NDPI;*.SVS;*.MRXS;*.SCN;*.VMS;*.VMU;*.BIF")])
                         if new_path and os.path.exists(new_path):
                             # Build session from the item data with the new path
                             item = entry["item"]
@@ -173,7 +173,11 @@ class ProjectManagerMixin:
             print(e)
 
     def add_image_btn(self):
-        path = filedialog.askopenfilename(filetypes=[("All Supported", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp;*.ndpi;*.svs;*.mrxs;*.scn;*.vms;*.vmu;*.bif"), ("Images", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp"), ("Whole-Slide Images", "*.ndpi;*.svs;*.mrxs;*.scn;*.vms;*.vmu;*.bif")])
+        path = filedialog.askopenfilename(filetypes=[
+            ("All Supported", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp;*.ndpi;*.svs;*.mrxs;*.scn;*.vms;*.vmu;*.bif;*.JPG;*.JPEG;*.PNG;*.TIF;*.TIFF;*.BMP;*.WEBP;*.NDPI;*.SVS;*.MRXS;*.SCN;*.VMS;*.VMU;*.BIF"),
+            ("Images", "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.webp;*.JPG;*.JPEG;*.PNG;*.TIF;*.TIFF;*.BMP;*.WEBP"),
+            ("Whole-Slide Images", "*.ndpi;*.svs;*.mrxs;*.scn;*.vms;*.vmu;*.bif;*.NDPI;*.SVS;*.MRXS;*.SCN;*.VMS;*.VMU;*.BIF")
+        ])
         if path:
             self._add_session(path)
             self.trigger_modification()
