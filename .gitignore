@@ -2,6 +2,7 @@
 .agent
 .gemini
 .gsd
+.skills
 
 __pycache__/
-*.pyc
+*.pyc

@@ -31,6 +31,10 @@ class SlicePreviews(QWidget):
                 padding: 8px; 
                 border-bottom: 1px solid #333333; 
             }
+            QListWidget::item:hover { 
+                background-color: #3e3e42; 
+                cursor: pointer; 
+            }
             QListWidget::item:selected { 
                 background-color: #37373d; 
             }

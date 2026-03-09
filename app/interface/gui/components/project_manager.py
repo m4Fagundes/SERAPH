@@ -96,8 +96,8 @@ class ProjectManager:
             except Exception as e:
                 QMessageBox.warning(self.mw, "Load Error", str(e))
 
-    def switch_image_tab(self):
-        # Triggered when QListWidget row changes
+    def switch_image_tab(self, *args):
+        # Triggered when QListWidget row changes or receives click
         row = self.mw.file_list.currentRow()
         if 0 <= row < len(self.mw.sessions):
             self._activate_session(self.mw.sessions[row])
@@ -117,7 +117,17 @@ class ProjectManager:
             view_h = self.mw.canvas_renderer.height()
             if view_w > 10:
                 ratio = min(view_w / session.real_width, view_h / session.real_height)
-                session.zoom_level = ratio * 0.9
+                # Auto-fit zoom ensuring it's not overly huge
+                session.zoom_level = min(ratio * 0.95, 2.0)
+                # Center the camera coordinates in real pixel space
+                session.camera_x = session.real_width // 2
+                session.camera_y = session.real_height // 2
+
+        # Sync zoom into renderer
+        self.mw.canvas_renderer.viewport_zoom = session.zoom_level
+        
+        # Move camera to center of scene
+        self.mw.canvas_renderer.centerOn(session.camera_x, session.camera_y)
 
         self.mw.statusBar().showMessage(f"Image: {session.name} | {session.real_width}x{session.real_height}px")
         self.mw.canvas_renderer.redraw()

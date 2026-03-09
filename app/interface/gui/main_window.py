@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QToolBar, QDockWidget, QListWidget, QPushButton, 
                              QLabel, QFrame, QScrollArea, QSplitter)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtGui import QIcon, QAction, QActionGroup
 
 from app.domain.history import UndoManager
 from app.application.services import ProjectService, ExportService
@@ -57,6 +57,25 @@ class SlicerLabApp(QMainWindow):
         # Setup Toolbar Actions
         self.project_manager.setup_toolbar(self.toolbar)
         self.toolbar.addSeparator()
+
+        # Tool selection mode (Exclusive Group)
+        self.tool_group = QActionGroup(self)
+        self.tool_group.setExclusive(True)
+
+        self.action_grid = QAction("🟥 Grid Tool", self)
+        self.action_grid.setCheckable(True)
+        self.action_grid.setChecked(True)
+        self.action_grid.triggered.connect(lambda: self._activate_tool("grid"))
+        self.tool_group.addAction(self.action_grid)
+        self.toolbar.addAction(self.action_grid)
+
+        self.action_brush = QAction("🖌️ Brush Tool", self)
+        self.action_brush.setCheckable(True)
+        self.action_brush.triggered.connect(lambda: self._activate_tool("brush"))
+        self.tool_group.addAction(self.action_brush)
+        self.toolbar.addAction(self.action_brush)
+
+        self.toolbar.addSeparator()
         
         # Grid Size Inputs (Moved to ProjectManager or Toolbar)
         self.project_manager.setup_grid_inputs(self.toolbar)
@@ -88,9 +107,10 @@ class SlicerLabApp(QMainWindow):
         self.file_list.setStyleSheet("""
             QListWidget { background-color: #2a2a2a; border: none; outline: none; }
             QListWidget::item { padding: 8px; border-bottom: 1px solid #333333; }
+            QListWidget::item:hover { background-color: #3e3e42; cursor: pointer; }
             QListWidget::item:selected { background-color: #37373d; }
         """)
-        self.file_list.itemSelectionChanged.connect(self.project_manager.switch_image_tab)
+        self.file_list.itemClicked.connect(self.project_manager.switch_image_tab)
         
         add_btn = QPushButton("＋ Add Image")
         add_btn.setStyleSheet("background-color: #007acc; color: white; padding: 6px; font-weight: bold; border-radius: 3px;")

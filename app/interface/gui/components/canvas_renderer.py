@@ -1,8 +1,9 @@
 import logging
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-from PyQt6.QtGui import QPainter, QPixmap, QImage, QWheelEvent, QMouseEvent, QPen, QColor, QBrush
+from PyQt6.QtGui import QPainter, QPixmap, QImage, QWheelEvent, QMouseEvent, QPen, QColor, QBrush, QPolygonF
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QObject, QRunnable, QThreadPool
+import io
 from app.domain.selection import subtract_from_slice
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ class CanvasRenderer(QGraphicsView):
         
         self.setViewport(QOpenGLWidget())
         self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         
         # Default Tool: Pan
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
@@ -52,6 +53,10 @@ class CanvasRenderer(QGraphicsView):
         
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        # Connect pan dragging events to the tile loader pipeline
+        self.verticalScrollBar().valueChanged.connect(lambda _: self.redraw())
+        self.horizontalScrollBar().valueChanged.connect(lambda _: self.redraw())
         
         self.threadpool = QThreadPool()
         self.threadpool.setMaxThreadCount(4)
@@ -89,10 +94,39 @@ class CanvasRenderer(QGraphicsView):
         if not s or not s.pyramid_ready: return
         
         zoom = self.viewport_zoom
+        
+        # Stop requesting tiny micro-tiles when zoomed way past 1.0. 
+        # Qt's hardware camera will gracefully scale the actual 1.0 tiles for us.
+        tile_zoom = min(zoom, 1.0)
+        
         self.scene.setSceneRect(0, 0, s.real_width, s.real_height)
         
         self.resetTransform()
         self.scale(zoom, zoom)
+        
+        # Instantiate Base Layer Thumbnail for black-flash protection
+        if not hasattr(s, "base_layer_item"):
+            # Load large 2k thumbnail
+            thumb_pil = Image.open(io.BytesIO(s.get_thumbnail(2048))) if isinstance(s.get_thumbnail(2048), bytes) else s.get_thumbnail(2048)
+            
+            # Use PIL for guaranteed RGB byte parity
+            if thumb_pil.mode != "RGB":
+                thumb_pil = thumb_pil.convert("RGB")
+                
+            data = thumb_pil.tobytes("raw", "RGB")
+            qim = QImage(data, thumb_pil.width, thumb_pil.height, thumb_pil.width * 3, QImage.Format.Format_RGB888)
+            pix = QPixmap.fromImage(qim)
+            
+            base_item = QGraphicsPixmapItem(pix)
+            # Scale the low-res thumb to cover the entire full-res scene
+            base_item.setScale(s.real_width / thumb_pil.width)
+            # Push it behind all other pyvips tiles
+            base_item.setZValue(-1)
+            
+            self.scene.addItem(base_item)
+            s.base_layer_item = base_item
+        elif s.base_layer_item.scene() != self.scene:
+            self.scene.addItem(s.base_layer_item)
         
         # Calculate true visible scene rectangle (Full Res Coords)
         visible_rect = self.mapToScene(self.viewport().rect()).boundingRect()
@@ -103,8 +137,8 @@ class CanvasRenderer(QGraphicsView):
         vis_right = min(s.real_width, visible_rect.right())
         vis_bottom = min(s.real_height, visible_rect.bottom())
         
-        # Size of a LOD tile in Full Res Coords is TILE_SIZE / zoom
-        lod_tile_w = self.TILE_SIZE / zoom
+        # Size of a LOD tile in Full Res Coords is TILE_SIZE / tile_zoom
+        lod_tile_w = self.TILE_SIZE / tile_zoom
         
         start_col = int(vis_left // lod_tile_w)
         end_col = int(vis_right // lod_tile_w)
@@ -136,9 +170,9 @@ class CanvasRenderer(QGraphicsView):
                     if not overlap:
                         continue
                         
-                lod_key = (col, row, zoom)
+                lod_key = (col, row, tile_zoom)
                 if lod_key not in self.tile_items:
-                    worker = TileWorker(s, col, row, zoom, self.TILE_SIZE)
+                    worker = TileWorker(s, col, row, tile_zoom, self.TILE_SIZE)
                     worker.signals.result.connect(self._on_tile_loaded)
                     self.threadpool.start(worker)
                     self.tile_items[lod_key] = "fetching"
@@ -147,7 +181,7 @@ class CanvasRenderer(QGraphicsView):
         if len(self.tile_items) > 300:
             to_remove = []
             for k, item in self.tile_items.items():
-                if k[2] != zoom: # delete all old layers
+                if k[2] != tile_zoom: # delete all old layers
                     to_remove.append(k)
             for k in to_remove:
                 if self.tile_items[k] != "fetching":
@@ -158,14 +192,14 @@ class CanvasRenderer(QGraphicsView):
         self.viewport().update()
 
     def _on_tile_loaded(self, key, pixmap):
-        col, row, zoom = key
+        col, row, fetched_zoom = key
         # Verify Context
-        if not self.main_window.current_session or self.viewport_zoom != zoom:
+        if not self.main_window.current_session or min(self.viewport_zoom, 1.0) != fetched_zoom:
             return
             
         item = QGraphicsPixmapItem(pixmap)
-        item.setPos((col * self.TILE_SIZE) / zoom, (row * self.TILE_SIZE) / zoom)
-        item.setScale(1.0 / zoom)
+        item.setPos((col * self.TILE_SIZE) / fetched_zoom, (row * self.TILE_SIZE) / fetched_zoom)
+        item.setScale(1.0 / fetched_zoom)
         self.scene.addItem(item)
         self.tile_items[key] = item
 
@@ -190,9 +224,16 @@ class CanvasRenderer(QGraphicsView):
             
             slice_path = QPainterPath()
             if self.isolated_slice_idx < len(s.selected_cells):
-                slice_rects = s.selected_cells[self.isolated_slice_idx]
-                for (sx1, sy1, sx2, sy2) in slice_rects:
-                    slice_path.addRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
+                poly = s.selected_polygons[self.isolated_slice_idx] if hasattr(s, 'selected_polygons') and self.isolated_slice_idx < len(s.selected_polygons) else None
+                if poly and len(poly) >= 3:
+                    poly_f = QPolygonF()
+                    for pt in poly:
+                        poly_f.append(QPointF(pt[0], pt[1]))
+                    slice_path.addPolygon(poly_f)
+                else:
+                    slice_rects = s.selected_cells[self.isolated_slice_idx]
+                    for (sx1, sy1, sx2, sy2) in slice_rects:
+                        slice_path.addRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
                 
             # Boolean subtraction logic natively executed on C++
             mask_path = screen_path.subtracted(slice_path)
@@ -216,17 +257,24 @@ class CanvasRenderer(QGraphicsView):
                 fill_color = QColor(color)
                 fill_color.setAlpha(80) 
                 painter.setPen(QPen(color, 2.0 / self.viewport_zoom))
-                painter.setBrush(QBrush(fill_color))
-                
+                poly = s.selected_polygons[i] if hasattr(s, 'selected_polygons') and i < len(s.selected_polygons) else None
                 # Check for brush polygons
-                if s.selected_polygons and i < len(s.selected_polygons) and s.selected_polygons[i]:
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-                    pass # TODO: Draw QPolygonF overlay if needed
-                
-                # Standard Rectangle
-                for (sx1, sy1, sx2, sy2) in slice_rects:
-                    if sx2 > left and sx1 < right and sy2 > top and sy1 < bottom:
-                        painter.drawRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
+                if poly and len(poly) >= 3:
+                    poly_w = QPolygonF()
+                    for pt in poly:
+                        poly_w.append(QPointF(pt[0], pt[1]))
+                    
+                    painter.setBrush(QBrush(fill_color))
+                    poly_pen = QPen(color, max(2.0 / self.viewport_zoom, 1.0))
+                    poly_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    painter.setPen(poly_pen)
+                    painter.drawPolygon(poly_w)
+                else:
+                    # Standard Rectangle
+                    painter.setBrush(QBrush(fill_color))
+                    for (sx1, sy1, sx2, sy2) in slice_rects:
+                        if sx2 > left and sx1 < right and sy2 > top and sy1 < bottom:
+                            painter.drawRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
 
         # Draw Grid (if reasonably sized)
         if (right - left) / s.grid_w < 800:
@@ -255,6 +303,17 @@ class CanvasRenderer(QGraphicsView):
             c = self._brush_points[0]
             painter.drawRect(QRectF(min(r.x(), c.x()), min(r.y(), c.y()), abs(r.x()-c.x()), abs(r.y()-c.y())))
 
+        # Draw live brush stroke
+        if self.active_tool == "brush" and len(self._brush_points) > 1:
+            pen = QPen(QColor("#00FF00"), max(2.5 / self.viewport_zoom, 1.0))
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            poly_live = QPolygonF()
+            for p in self._brush_points:
+                poly_live.append(QPointF(p[0], p[1]))
+            painter.drawPolyline(poly_live)
+
     # -----------------------------------------------------
     # Input Processing (Mouse / Zoom)
     # -----------------------------------------------------
@@ -282,6 +341,10 @@ class CanvasRenderer(QGraphicsView):
         self.redraw()
 
     def mousePressEvent(self, event: QMouseEvent):
+        if self.isolated_slice_idx is not None:
+            super().mousePressEvent(event)
+            return
+            
         if event.button() == Qt.MouseButton.RightButton:
             self._rect_drag_start = self.mapToScene(event.pos())
             self._brush_points = [self._rect_drag_start]
@@ -291,6 +354,10 @@ class CanvasRenderer(QGraphicsView):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        if self.isolated_slice_idx is not None:
+            super().mouseMoveEvent(event)
+            return
+            
         if self._rect_drag_start is not None:
             self._brush_points = [self.mapToScene(event.pos())]
             self.viewport().update()
@@ -304,6 +371,10 @@ class CanvasRenderer(QGraphicsView):
     def mouseReleaseEvent(self, event: QMouseEvent):
         s = self.main_window.current_session
         if not s: return
+
+        if self.isolated_slice_idx is not None:
+            super().mouseReleaseEvent(event)
+            return
         
         # Right Click Selection
         if event.button() == Qt.MouseButton.RightButton and self._rect_drag_start is not None:
@@ -363,12 +434,46 @@ class CanvasRenderer(QGraphicsView):
             
         if self.active_tool == "brush" and event.button() == Qt.MouseButton.LeftButton:
             if len(self._brush_points) > 2:
-                xs = [p[0] for p in self._brush_points]
-                ys = [p[1] for p in self._brush_points]
-                s.selected_cells.append({(min(xs), min(ys), max(xs), max(ys))})
-                s.sync_metadata()
+                # 1. Store the raw polygon stroke
+                if not hasattr(s, 'selected_polygons'):
+                    s.selected_polygons = []
+                while len(s.selected_polygons) < len(s.selected_cells):
+                    s.selected_polygons.append(None)
+                s.selected_polygons.append(self._brush_points.copy())
+
+                # 2. Map the stroke to grid rectangles using QPolygonF native intersection
+                poly_f = QPolygonF()
+                for p in self._brush_points:
+                    poly_f.append(QPointF(p[0], p[1]))
+                bbox = poly_f.boundingRect()
+
+                sc = int(bbox.left() // s.grid_w)
+                ec = int(bbox.right() // s.grid_w)
+                sr = int(bbox.top() // s.grid_h)
+                er = int(bbox.bottom() // s.grid_h)
+                
+                intersecting_rects = set()
+                for c in range(sc, ec + 1):
+                    for r in range(sr, er + 1):
+                        x1 = c * s.grid_w
+                        y1 = r * s.grid_h
+                        x2 = min(x1 + s.grid_w, s.real_width)
+                        y2 = min(y1 + s.grid_h, s.real_height)
+                        cell_rect = QRectF(x1, y1, x2 - x1, y2 - y1)
+                        cell_poly = QPolygonF(cell_rect)
+                        if poly_f.intersects(cell_poly) or poly_f.containsPoint(cell_rect.center(), Qt.FillRule.WindingFill):
+                            intersecting_rects.add((x1, y1, x2, y2))
+
+                if intersecting_rects:
+                    s.selected_cells.append(intersecting_rects)
+                    s.sync_metadata()
+            
             self._brush_points = []
             self.redraw()
             self.main_window.slice_previews.update_previews()
         
         super().mouseReleaseEvent(event)
+
+    def set_tool(self, tool_name):
+        self.active_tool = tool_name
+        self.viewport().update()

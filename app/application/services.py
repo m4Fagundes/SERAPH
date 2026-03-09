@@ -167,23 +167,40 @@ class ExportService:
                 crop = crop.convert("RGBA")
                 out_img.paste(crop, (rx1 - bx1, ry1 - by1))
 
+            # By default, a mask is fully opaque (255) meaning keep all pixels
+            mask = Image.new("L", (w, h), 255)
+            poly = session.selected_polygons[i] if session.selected_polygons and i < len(session.selected_polygons) else None
+            
             # Apply freehand polygon mask if this is a brush slice
-            poly = session.selected_polygons[i] if i < len(session.selected_polygons) else None
             if poly and len(poly) >= 3:
-                mask = Image.new("L", (w, h), 0)
+                # If there's a polygon, invert mask to fully transparent (0) then paint the polygon opaque (255)
+                mask.paste(0, [0, 0, w, h])
                 draw = ImageDraw.Draw(mask)
                 local_pts = [(x - bx1, y - by1) for (x, y) in poly]
                 draw.polygon(local_pts, fill=255)
-                # Apply exclusion strokes (eraser brush holes)
-                exclusions = session.slice_exclusions[i] if i < len(session.slice_exclusions) else []
+                
+            # Apply exclusion strokes (eraser brush holes) regardless of polygon
+            exclusions = session.slice_exclusions[i] if hasattr(session, 'slice_exclusions') and i < len(session.slice_exclusions) else []
+            if exclusions:
+                draw = ImageDraw.Draw(mask)
                 draw_exclusion_rects(draw, exclusions, bx1, by1, 1.0)
-                out_img.putalpha(mask)
+            
+            # Apply the mask to the alpha channel to create transparency
+            out_img.putalpha(mask)
 
-            # Flatten to white for non-transparent output formats
-            if format_ext not in ('.png', '.webp'):
+            # Tight crop to the polygon boundaries so we don't output full grid squares
+            if poly and len(poly) >= 3:
+                l_x1 = min(p[0] - bx1 for p in poly)
+                l_y1 = min(p[1] - by1 for p in poly)
+                l_x2 = max(p[0] - bx1 for p in poly)
+                l_y2 = max(p[1] - by1 for p in poly)
+                out_img = out_img.crop((int(l_x1), int(l_y1), int(l_x2), int(l_y2)))
+
+            # Flatten to white background for non-transparent output formats like JPEG
+            if format_ext not in ('.png', '.webp', '.tiff', '.tif'):
                 bg = Image.new("RGB", (w, h), (255, 255, 255))
-                alpha = out_img.split()[3]
-                bg.paste(out_img.convert("RGB"), mask=alpha)
+                # Paste the cutout image on top of the solid white background using its alpha channel as the paste mask
+                bg.paste(out_img, mask=out_img.split()[3])
                 out_img = bg
 
             filename = f"{base}_slice{i + 1}{format_ext}"
