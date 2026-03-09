@@ -1,203 +1,101 @@
 import logging
-import tkinter as tk
-from tkinter import messagebox
-from PIL import Image, ImageTk
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QAbstractItemView
+from PyQt6.QtGui import QColor, QPixmap, QIcon
+from PyQt6.QtCore import Qt
 
 logger = logging.getLogger(__name__)
 
+class SlicePreviews(QWidget):
+    """
+    Shows small thumbnails of extracted regions.
+    """
+    def __init__(self, main_window):
+        super().__init__()
+        self.mw = main_window
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 10, 0, 0)
+        
+        lbl = QLabel("PROJECT SLICES")
+        lbl.setStyleSheet("color: #aaaaaa; font-size: 11px; font-weight: bold; margin-bottom: 5px;")
+        self.layout.addWidget(lbl)
+        
+        self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet("""
+            QListWidget { 
+                background-color: #2a2a2a; 
+                border: none; 
+                color: #cccccc; 
+                outline: none; 
+            }
+            QListWidget::item { 
+                padding: 8px; 
+                border-bottom: 1px solid #333333; 
+            }
+            QListWidget::item:selected { 
+                background-color: #37373d; 
+            }
+        """)
+        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.list_widget.itemClicked.connect(self.on_item_clicked)
+        self.layout.addWidget(self.list_widget)
+        
+    def update_previews(self):
+        self.list_widget.clear()
+        s = self.mw.current_session
+        if not s: return
+        
+        for i, slice_rects in enumerate(s.selected_cells):
+            meta = s.slice_metadata[i] if i < len(s.slice_metadata) else {}
+            name = meta.get("name") or f"Slice {i+1}"
+            
+            color_hex = s.tile_colors[i] if i < len(s.tile_colors) else "#00FFFF"
+            
+            # Create a small colored icon for the sidebar instead of reading full pixels to keep it fast
+            pix = QPixmap(16, 16)
+            pix.fill(QColor(color_hex))
+            icon = QIcon(pix)
+            
+            # Count logical tiles within this slice region
+            tile_count = sum(1 for _ in slice_rects)
+            
+            item = QListWidgetItem(icon, f" {name} ({tile_count} tiles)")
+            item.setData(Qt.ItemDataRole.UserRole, i)
+            self.list_widget.addItem(item)
 
-class SlicePreviewsMixin:
-    """Mixin for the sidebar slice/tile preview panel."""
-
-    def _toggle_session_collapse(self, session_name):
-        """Toggle collapsed state of a session group in slice previews."""
-        if session_name in self._collapsed_sessions:
-            self._collapsed_sessions.discard(session_name)
-        else:
-            self._collapsed_sessions.add(session_name)
-        self._update_slice_previews()
-
-    def _delete_slice(self, session, slice_idx):
-        """Delete a single slice from a session."""
-        if slice_idx < 0 or slice_idx >= len(session.selected_cells):
-            return
-        self.undo_manager.push(session, "delete_tile")
-        session.selected_cells.pop(slice_idx)
-        if slice_idx < len(session.selected_polygons):
-            session.selected_polygons.pop(slice_idx)
-        if slice_idx < len(session.slice_metadata):
-            session.slice_metadata.pop(slice_idx)
-        session.sync_metadata()
-
-        # Close inspector if it was showing this slice
-        if (hasattr(self, '_insp_session') and self._insp_session is session
-                and hasattr(self, '_insp_slice_idx') and self._insp_slice_idx == slice_idx):
-            self._close_slice_inspector()
-            return  # _close_slice_inspector already redraws
-
-        self.redraw()
-        self._update_slice_previews()
-        self.trigger_modification()
-        self._auto_reexport(session)
-
-    def _delete_all_slices(self, session):
-        """Delete all slices from a session (with confirmation)."""
-        n = len(session.selected_cells)
-        if n == 0:
-            return
-        if not messagebox.askyesno("Confirm", f"Delete all {n} tile(s) from {session.name}?"):
-            return
-        self.undo_manager.push(session, "delete_all")
-        session.selected_cells.clear()
-        session.selected_polygons.clear()
-        session.slice_metadata.clear()
-        session.sync_metadata()
-
-        # Close inspector if showing a slice of this session
-        if hasattr(self, '_insp_session') and self._insp_session is session:
-            self._close_slice_inspector()
-            return
-
-        self.redraw()
-        self._update_slice_previews()
-        self.trigger_modification()
-        self._auto_reexport(session)
-
-    def _update_slice_previews(self):
-        """Rebuild the slice preview panel with full-width vertical thumbnail cards."""
-        # Clear existing
-        for w in self._slice_inner.winfo_children():
-            w.destroy()
-        self._slice_thumbs.clear()
-
-        total_slices = sum(len(s.selected_cells) for s in self.sessions)
-        self.slice_header.config(text=f"TILES ({total_slices})")
-
-        if total_slices == 0:
-            empty = tk.Label(self._slice_inner, text="Right-click cells to\ncreate tiles",
-                     bg=self.colors["sidebar"], fg="#555",
-                     font=("Segoe UI", 9, "italic"), justify="center")
-            empty.pack(pady=30)
-            empty.bind("<MouseWheel>", lambda e: self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
-            return
-
-        thumb_max_w = 220  # Full width card thumbnail
-
-        for session in self.sessions:
-            if not session.selected_cells:
-                continue
-
-            n = len(session.selected_cells)
-            collapsed = session.name in self._collapsed_sessions
-            arrow = "▶" if collapsed else "▼"
-
-            # Session header (clickable to collapse)
-            header = tk.Frame(self._slice_inner, bg="#2d2d2d", cursor="hand2")
-            header.pack(fill=tk.X, pady=(6, 0), padx=4)
-            hdr_text = f" {arrow}  {session.name}  ({n})"
-            lbl = tk.Label(header, text=hdr_text,
-                          bg="#2d2d2d", fg="#ccc",
-                          font=("Segoe UI", 9, "bold"), anchor="w")
-            lbl.pack(fill=tk.X, padx=6, pady=4, side=tk.LEFT, expand=True)
-            name = session.name
-            for widget in (lbl, header):
-                widget.bind("<Button-1>", lambda e, n=name: self._toggle_session_collapse(n))
-                widget.bind("<MouseWheel>", lambda e: self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
-
-            # Delete All button in session header
-            del_all_btn = tk.Button(header, text="🗑️",
-                                    command=lambda sr=session: self._delete_all_slices(sr),
-                                    bg="#c0392b", fg="white", relief="flat",
-                                    font=("Segoe UI", 8), padx=4, pady=1,
-                                    activebackground="#e74c3c", activeforeground="white",
-                                    cursor="hand2")
-            del_all_btn.pack(side=tk.RIGHT, padx=(0, 6), pady=4)
-
-            if collapsed:
-                continue
-
-            # Vertical card list
-            for idx, slice_rects in enumerate(session.selected_cells):
-                try:
-                    # Bounding box
-                    bx1 = min(r[0] for r in slice_rects)
-                    by1 = min(r[1] for r in slice_rects)
-                    bx2 = max(r[2] for r in slice_rects)
-                    by2 = max(r[3] for r in slice_rects)
-                    orig_w, orig_h = bx2 - bx1, by2 - by1
-
-                    # Use pyramid viewport to generate thumbnail (no RAM image)
-                    if session.pyramid_ready and orig_w > 0 and orig_h > 0:
-                        ratio = min(thumb_max_w / orig_w, 120 / orig_h)
-                        tw = max(1, int(orig_w * ratio))
-                        th = max(1, int(orig_h * ratio))
-                        crop = session.pyramid.get_viewport(bx1, by1, tw, th, ratio)
-                    else:
-                        crop = Image.new("RGB", (thumb_max_w, 60), (40, 40, 40))
-
-                    # Apply polygon mask for brush-drawn slices
-                    poly = session.selected_polygons[idx] \
-                           if idx < len(session.selected_polygons) else None
-                    if poly and len(poly) >= 3:
-                        from PIL import ImageDraw as _ImageDraw
-                        mask = Image.new("L", crop.size, 0)
-                        draw = _ImageDraw.Draw(mask)
-                        local_pts = [((x - bx1) * ratio, (y - by1) * ratio) for (x, y) in poly]
-                        draw.polygon(local_pts, fill=255)
-                        # Apply eraser strokes
-                        exclusions = session.slice_exclusions[idx] if idx < len(session.slice_exclusions) else []
-                        from app.domain.selection import draw_exclusion_rects as _draw_excl
-                        _draw_excl(draw, exclusions, bx1, by1, ratio)
-                        crop = crop.convert("RGBA")
-                        crop.putalpha(mask)
-
-                    tk_thumb = ImageTk.PhotoImage(crop)
-                    self._slice_thumbs.append(tk_thumb)
-
-                    # Card frame
-                    card = tk.Frame(self._slice_inner, bg="#2a2a2a", padx=0, pady=0)
-                    card.pack(fill=tk.X, padx=8, pady=3)
-
-                    # Image
-                    img_lbl = tk.Label(card, image=tk_thumb, bg="#222", anchor="center")
-                    img_lbl.pack(fill=tk.X, padx=4, pady=(4, 0))
-
-                    # Info row with delete button
-                    info_row = tk.Frame(card, bg="#2a2a2a")
-                    info_row.pack(fill=tk.X, padx=4, pady=(2, 4))
-
-                    # Color dot indicator
-                    tile_color = session.tile_colors[idx] if idx < len(session.tile_colors) else "#00FFFF"
-                    dot = tk.Canvas(info_row, width=10, height=10, bg="#2a2a2a",
-                                   highlightthickness=0)
-                    dot.create_oval(1, 1, 9, 9, fill=tile_color, outline="")
-                    dot.pack(side=tk.LEFT, padx=(4, 0))
-
-                    tile_name = session.slice_metadata[idx].get("name", "") if idx < len(session.slice_metadata) else ""
-                    label_text = tile_name if tile_name else f"Tile {idx+1}"
-                    info = tk.Label(info_row, text=f"  {label_text}   •   {orig_w}×{orig_h}px",
-                                   bg="#2a2a2a", fg="#999", anchor="w",
-                                   font=("Segoe UI", 8))
-                    info.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-                    del_btn = tk.Button(info_row, text="🗑️",
-                                        command=lambda sr=session, si=idx: self._delete_slice(sr, si),
-                                        bg="#c0392b", fg="white", relief="flat",
-                                        font=("Segoe UI", 8), padx=4, pady=0,
-                                        activebackground="#e74c3c", activeforeground="white",
-                                        cursor="hand2")
-                    del_btn.pack(side=tk.RIGHT, padx=(2, 2))
-
-                    # Propagate mousewheel from all card children
-                    for w in (card, img_lbl, info, info_row):
-                        w.bind("<MouseWheel>", lambda e: self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
-
-                    # Click to open inspector
-                    sess_ref = session
-                    slice_idx = idx
-                    for w in (card, img_lbl, info):
-                        w.configure(cursor="hand2")
-                        w.bind("<Button-1>", lambda e, sr=sess_ref, si=slice_idx: self._open_slice_inspector(sr, si))
-
-                except Exception as ex:
-                    logger.error("Slice preview error for '%s' slice %d: %s", session.name, idx, ex)
+    def on_item_clicked(self, item):
+        """Navigate to the slice when clicked in the sidebar"""
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        s = self.mw.current_session
+        if not s or idx >= len(s.selected_cells): return
+        
+        # Enable Isolation Mode on the Main Canvas instead of a Popup
+        self.mw.canvas_renderer.isolated_slice_idx = idx
+        
+        # Calculate Bounding Box Math for the Slice
+        slice_rects = s.selected_cells[idx]
+        if slice_rects:
+            min_x = min(r[0] for r in slice_rects)
+            min_y = min(r[1] for r in slice_rects)
+            max_x = max(r[2] for r in slice_rects)
+            max_y = max(r[3] for r in slice_rects)
+            
+            w = max_x - min_x
+            h = max_y - min_y
+            cx = min_x + (w / 2)
+            cy = min_y + (h / 2)
+            
+            # Viewport dimensions to perform Auto-Zoom fit
+            view_w = self.mw.canvas_renderer.viewport().width()
+            view_h = self.mw.canvas_renderer.viewport().height()
+            
+            # Allow 10% padding so the edges of the vignette are visible
+            fit_zoom = min((view_w * 0.9) / w, (view_h * 0.9) / h, 5.0) if w > 0 and h > 0 else 1.0
+            
+            self.mw.canvas_renderer.viewport_zoom = fit_zoom
+            
+            # Force the GPU camera to apply the new matrix and re-center
+            self.mw.canvas_renderer.resetTransform()
+            self.mw.canvas_renderer.scale(fit_zoom, fit_zoom)
+            self.mw.canvas_renderer.centerOn(cx, cy)
+            
+        self.mw.canvas_renderer.redraw()

@@ -1,4 +1,4 @@
-import tkinter as tk
+import sys
 import warnings
 
 from PIL import Image
@@ -25,9 +25,11 @@ def main() -> None:
             "Large images may consume more memory.",
             stacklevel=1,
         )
-    root = tk.Tk()
-    SlicerLabApp(root)
-    root.mainloop()
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication(sys.argv)
+    window = SlicerLabApp()
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
