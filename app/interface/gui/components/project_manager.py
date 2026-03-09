@@ -1,7 +1,10 @@
+import logging
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import os
 from app.domain.session import ImageSession
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectManagerMixin:
@@ -49,7 +52,7 @@ class ProjectManagerMixin:
                 self.save_status_label.config(text="Auto-saved")
             except Exception as e:
                 self.save_status_label.config(text="AutoSave Error")
-                print(f"AutoSave Error: {e}")
+                logger.error("AutoSave Error: %s", e)
 
     def _write_project_file(self, path):
         if self.current_session:
@@ -173,7 +176,7 @@ class ProjectManagerMixin:
             
         except Exception as e:
             messagebox.showerror("Error", f"Error opening project: {e}")
-            print(e)
+            logger.error("Error opening project '%s': %s", f, e)
 
     def add_image_btn(self):
         path = filedialog.askopenfilename(filetypes=[
@@ -228,6 +231,13 @@ class ProjectManagerMixin:
             self._activate_session(self.sessions[idx])
 
     def _activate_session(self, session):
+        # Unload the outgoing session to free RAM / file handles
+        if self.current_session and self.current_session is not session:
+            self.current_session.unload_image()
+
+        # Re-open the incoming session if it was previously unloaded
+        session.reload_image()
+
         self.current_session = session
         
         self.entry_w.delete(0, tk.END)
@@ -244,6 +254,7 @@ class ProjectManagerMixin:
         self.status_bar.config(text=f"Image: {session.name} | Size: {session.real_width}x{session.real_height}px")
         self.redraw()
         self._update_zoom_label()
+
 
     def _undo(self):
         """Undo the last tile action."""

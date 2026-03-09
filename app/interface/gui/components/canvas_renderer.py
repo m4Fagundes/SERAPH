@@ -1,6 +1,9 @@
+import logging
 import tkinter as tk
 from PIL import ImageTk
 from app.domain.selection import rect_to_cells
+
+logger = logging.getLogger(__name__)
 
 
 class CanvasRendererMixin:
@@ -21,9 +24,22 @@ class CanvasRendererMixin:
             self.canvas.create_line(x, y1, x, y2, fill=color, width=1)
             x += line_spacing * 2
 
+    # ------------------------------------------------------------------
+    # Debounced redraw — coalesces rapid requests into one render frame
+    # ------------------------------------------------------------------
+
     def redraw(self):
+        """Schedule a canvas repaint, coalescing rapid bursts to ~60 fps."""
+        if getattr(self, "_redraw_job", None) is not None:
+            self.root.after_cancel(self._redraw_job)
+        self._redraw_job = self.root.after(16, self._do_redraw)
+
+    def _do_redraw(self):
+        """Actual render — called by the debounced redraw()."""
+        self._redraw_job = None
         s = self.current_session
         if not s or not s.pyramid_ready: return
+
 
         try:
             s.grid_w = max(10, int(self.entry_w.get()))
@@ -126,8 +142,7 @@ class CanvasRendererMixin:
                         cy += s.grid_h
 
         except Exception as e:
-            print(f"Redraw error: {e}")
-            import traceback; traceback.print_exc()
+            logger.exception("Redraw error: %s", e)
 
         # Scale bar overlay (only when microns_per_pixel is set)
         self._draw_scale_bar()

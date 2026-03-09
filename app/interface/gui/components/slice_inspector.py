@@ -1,3 +1,4 @@
+import logging
 import tkinter as tk
 from PIL import Image, ImageTk
 from app.domain.selection import (
@@ -5,13 +6,15 @@ from app.domain.selection import (
     draw_exclusion_rects,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class SliceInspectorMixin:
     """Mixin for the tile detail inspector view."""
 
     def _open_slice_inspector(self, session, slice_idx):
         """Open a detail inspector for a specific slice with full-res navigation."""
-        print(f"Opening inspector: session={session.name}, slice_idx={slice_idx}")
+        logger.debug("Opening inspector: session=%s, slice_idx=%d", session.name, slice_idx)
         # Close existing inspector first (one at a time)
         if hasattr(self, '_inspector_frame') and self._inspector_frame:
             self._save_inspector_metadata()

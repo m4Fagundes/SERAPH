@@ -1,18 +1,26 @@
+import logging
 import os
 from PIL import Image, ImageDraw
 from app.domain.session import ImageSession
 from app.domain.selection import rect_to_cells, draw_exclusion_rects
+from app.infrastructure.exceptions import ProjectIOError
 from app.infrastructure.io import load_project_file, save_project_file, save_image_tile
+
+logger = logging.getLogger(__name__)
 
 class ProjectService:
     def load_project(self, path):
         """Loads a project and returns a list of ImageSession objects.
-        
+
         Returns (sessions, missing_items) where missing_items is a list of
         dicts with 'rel_path', 'abs_path', and 'item' for images that were
         not found.
+
+        Raises:
+            ProjectIOError: propagated from the I/O layer on read failure.
         """
-        data = load_project_file(path)
+        logger.debug("Loading project from service layer: %s", path)
+        data = load_project_file(path)  # raises ProjectIOError on failure
         project_dir = os.path.dirname(os.path.abspath(path))
         sessions = []
         missing = []
@@ -81,9 +89,12 @@ class ProjectService:
 
     def save_project(self, path, sessions):
         """Converts sessions to data and saves to file.
-        
+
         Image paths are stored relative to the .lab file directory
         for portability. The original absolute path is kept as fallback.
+
+        Raises:
+            ProjectIOError: propagated from the I/O layer on write failure.
         """
         project_dir = os.path.dirname(os.path.abspath(path))
         data = []

@@ -7,9 +7,10 @@ and merging to support smart add/subtract operations.
 """
 
 from collections import deque
+from typing import Any, List, Optional, Set, Tuple
 
 
-def draw_exclusion_rects(draw, exclusions, offset_x, offset_y, scale):
+def draw_exclusion_rects(draw: Any, exclusions: List[Tuple[float, float, float, float]], offset_x: float, offset_y: float, scale: float) -> None:
     """Draw exclusion rectangles onto a PIL mask (fill=0).
 
     Each exclusion is an (x1, y1, x2, y2) tuple in image coordinates.
@@ -28,7 +29,7 @@ def draw_exclusion_rects(draw, exclusions, offset_x, offset_y, scale):
         draw.rectangle([sx1, sy1, sx2, sy2], fill=0)
 
 
-def rect_to_cells(rect, grid_w, grid_h):
+def rect_to_cells(rect: Tuple[int, int, int, int], grid_w: int, grid_h: int) -> Set[Tuple[int, int]]:
     """Decompose a pixel rect into a set of (col, row) grid cells."""
     x1, y1, x2, y2 = rect
     col_start = x1 // grid_w
@@ -43,7 +44,7 @@ def rect_to_cells(rect, grid_w, grid_h):
     return cells
 
 
-def cells_to_rects(cells, grid_w, grid_h, img_w, img_h):
+def cells_to_rects(cells: Set[Tuple[int, int]], grid_w: int, grid_h: int, img_w: int, img_h: int) -> Set[Tuple[int, int, int, int]]:
     """Merge a set of (col, row) grid cells into a minimal set of pixel rects.
     
     Algorithm:
@@ -87,7 +88,7 @@ def cells_to_rects(cells, grid_w, grid_h, img_w, img_h):
     return result
 
 
-def find_connected_components(cells):
+def find_connected_components(cells: Set[Tuple[int, int]]) -> List[Set[Tuple[int, int]]]:
     """BFS flood fill with 4-connectivity. Returns list of cell sets."""
     if not cells:
         return []
@@ -113,17 +114,17 @@ def find_connected_components(cells):
     return components
 
 
-def _find_overlapping(selections, cx1, cy1, cx2, cy2):
+def _find_overlapping(selections: Set[Tuple[int, int, int, int]], cx1: int, cy1: int, cx2: int, cy2: int) -> Set[Tuple[int, int, int, int]]:
     """Find all pixel rects that overlap a given region."""
     return {s for s in selections if s[0] < cx2 and s[2] > cx1 and s[1] < cy2 and s[3] > cy1}
 
 
-def _find_adjacent(selections, cx1, cy1, cx2, cy2):
+def _find_adjacent(selections: Set[Tuple[int, int, int, int]], cx1: int, cy1: int, cx2: int, cy2: int) -> Set[Tuple[int, int, int, int]]:
     """Find all pixel rects that touch (share an edge with) a given region."""
     return {s for s in selections if s[0] <= cx2 and s[2] >= cx1 and s[1] <= cy2 and s[3] >= cy1}
 
 
-def subtract_from_slice(slice_rects, col, row, grid_w, grid_h, img_w, img_h):
+def subtract_from_slice(slice_rects: Set[Tuple[int, int, int, int]], col: int, row: int, grid_w: int, grid_h: int, img_w: int, img_h: int) -> List[Set[Tuple[int, int, int, int]]]:
     """Remove a grid cell from a slice, potentially splitting it.
     
     Returns a list of sets: 1 set if still connected, 2+ if disconnected,

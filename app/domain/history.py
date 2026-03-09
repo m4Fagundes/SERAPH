@@ -7,6 +7,7 @@ to restore the previous state.
 """
 
 import copy
+from typing import Any, Dict, List, Optional
 
 
 # Maximum number of undo steps per session
@@ -16,11 +17,11 @@ MAX_HISTORY = 50
 class UndoManager:
     """Stack-based undo/redo manager for tile operations."""
 
-    def __init__(self):
-        self._undo_stack = []  # list of Action dicts
-        self._redo_stack = []  # list of Action dicts
+    def __init__(self) -> None:
+        self._undo_stack: List[Dict[str, Any]] = []  # list of Action dicts
+        self._redo_stack: List[Dict[str, Any]] = []  # list of Action dicts
 
-    def push(self, session, action_type="modify"):
+    def push(self, session: Any, action_type: str = "modify") -> None:
         """Snapshot the current tile state before a modification.
 
         Call this BEFORE modifying selected_cells / selected_polygons /
@@ -47,13 +48,13 @@ class UndoManager:
         # Any new action invalidates the redo stack
         self._redo_stack.clear()
 
-    def can_undo(self):
+    def can_undo(self) -> bool:
         return len(self._undo_stack) > 0
 
-    def can_redo(self):
+    def can_redo(self) -> bool:
         return len(self._redo_stack) > 0
 
-    def undo(self):
+    def undo(self) -> Optional[Any]:
         """Undo the last tile action. Returns the affected session or None."""
         if not self._undo_stack:
             return None
@@ -79,7 +80,7 @@ class UndoManager:
         self._restore(session, snapshot)
         return session
 
-    def redo(self):
+    def redo(self) -> Optional[Any]:
         """Redo the last undone action. Returns the affected session or None."""
         if not self._redo_stack:
             return None
@@ -105,13 +106,13 @@ class UndoManager:
         self._restore(session, snapshot)
         return session
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all history (e.g. on project close)."""
         self._undo_stack.clear()
         self._redo_stack.clear()
 
     @staticmethod
-    def _restore(session, snapshot):
+    def _restore(session: Any, snapshot: Dict[str, Any]) -> None:
         """Apply a snapshot back to a session."""
         session.selected_cells = [
             set(tuple(r) for r in rects) for rects in snapshot["selected_cells"]

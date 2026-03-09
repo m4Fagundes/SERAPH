@@ -157,6 +157,26 @@ class ImagePyramid:
             return thumb.convert("RGB")
         return Image.new("RGB", (max_size, max_size), (20, 20, 20))
 
+    def unload(self) -> None:
+        """Release all file handles and pixel buffers.
+
+        Frees RAM / file descriptors when this image is not the active
+        session.  Dimensions are preserved so the session still knows
+        its real_width / real_height without re-opening the file.
+        After calling this, get_viewport() will raise AttributeError —
+        call the owning ImageSession.reload() before rendering again.
+        """
+        if self._openslide is not None:
+            try:
+                self._openslide.close()
+            except Exception:
+                pass
+            self._openslide = None
+
+        self._vips_image = None
+        self._pil_image_fallback = None
+        self.is_ready = False
+
     # ------------------------------------------------------------------
     # Tier 3: zoom ≥ 94% — pixel-perfect
     # ------------------------------------------------------------------

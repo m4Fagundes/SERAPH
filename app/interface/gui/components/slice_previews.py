@@ -1,6 +1,9 @@
+import logging
 import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
+
+logger = logging.getLogger(__name__)
 
 
 class SlicePreviewsMixin:
@@ -197,4 +200,4 @@ class SlicePreviewsMixin:
                         w.bind("<Button-1>", lambda e, sr=sess_ref, si=slice_idx: self._open_slice_inspector(sr, si))
 
                 except Exception as ex:
-                    print(f"Slice preview error: {ex}")
+                    logger.error("Slice preview error for '%s' slice %d: %s", session.name, idx, ex)

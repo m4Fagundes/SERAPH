@@ -1,7 +1,10 @@
+import logging
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import os
 import threading
+
+logger = logging.getLogger(__name__)
 
 
 class ExportHandlerMixin:
@@ -112,7 +115,7 @@ class ExportHandlerMixin:
                         session, session.export_dir, session.export_format)
                     self.status_bar.config(text=f"Auto-exported {len(session.selected_cells)} tile(s)")
             except Exception as e:
-                print(f"Auto-reexport error: {e}")
+                logger.error("Auto-reexport error for session '%s': %s", session.name, e)
 
     def slice_all(self):
         s = self.current_session
