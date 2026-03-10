@@ -82,7 +82,63 @@ class CanvasRenderer(QGraphicsView):
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
         elif tool_name == "brush":
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
-            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+            self.viewport().setCursor(self._make_pencil_cursor())
+
+    @staticmethod
+    def _make_pencil_cursor() -> "QCursor":
+        """Build a slim 24×24 pencil cursor with the hot-spot at the pencil tip."""
+        from PyQt6.QtGui import QCursor, QPainterPath
+        SIZE = 24
+        pix = QPixmap(SIZE, SIZE)
+        pix.fill(Qt.GlobalColor.transparent)
+
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Pencil runs bottom-left (tip) → top-right (eraser), very narrow body
+        tip_x,    tip_y    =  1, 22   # hot-spot: sharp tip
+        body_x,   body_y   = 18,  5   # start of eraser band
+        eraser_x, eraser_y = 22,  1   # top of eraser cap
+
+        # ── Pencil body (very thin parallelogram, only ~2 px wide) ────────────
+        body_path = QPainterPath()
+        body_path.moveTo(tip_x,      tip_y)        # tip bottom
+        body_path.lineTo(tip_x + 2,  tip_y - 2)   # tip top-edge
+        body_path.lineTo(body_x + 2, body_y)       # body top-right
+        body_path.lineTo(body_x,     body_y + 2)   # body top-left
+        body_path.closeSubpath()
+
+        p.setBrush(QBrush(QColor(255, 215, 60)))   # golden-yellow body
+        p.setPen(QPen(QColor(80, 55, 10), 0.8))
+        p.drawPath(body_path)
+
+        # ── Eraser band (small pink cap) ──────────────────────────────────────
+        eraser_path = QPainterPath()
+        eraser_path.moveTo(body_x,      body_y + 2)
+        eraser_path.lineTo(body_x + 2,  body_y)
+        eraser_path.lineTo(eraser_x,    eraser_y + 2)
+        eraser_path.lineTo(eraser_x - 2, eraser_y + 4)
+        eraser_path.closeSubpath()
+
+        p.setBrush(QBrush(QColor(235, 110, 110)))  # pink eraser
+        p.setPen(QPen(QColor(150, 50, 50), 0.7))
+        p.drawPath(eraser_path)
+
+        # ── Sharp graphite tip (tiny dark triangle) ───────────────────────────
+        tip_path = QPainterPath()
+        tip_path.moveTo(tip_x,      tip_y)
+        tip_path.lineTo(tip_x + 2,  tip_y - 2)
+        tip_path.lineTo(tip_x + 1,  tip_y - 4)
+        tip_path.closeSubpath()
+
+        p.setBrush(QBrush(QColor(25, 20, 10)))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawPath(tip_path)
+
+        p.end()
+
+        # Hotspot at the very tip
+        return QCursor(pix, tip_x, tip_y)
 
     def redraw(self):
         # Debounce the viewport updates to ~60fps to prevent Event loop congestion
@@ -550,6 +606,4 @@ class CanvasRenderer(QGraphicsView):
         
         super().mouseReleaseEvent(event)
 
-    def set_tool(self, tool_name):
-        self.active_tool = tool_name
-        self.viewport().update()
+
