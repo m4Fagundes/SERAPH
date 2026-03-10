@@ -1,12 +1,55 @@
 import logging
 import os
+from typing import Set, Tuple
 from PIL import Image, ImageDraw
 from app.domain.session import ImageSession
 from app.domain.selection import rect_to_cells, draw_exclusion_rects
 from app.infrastructure.exceptions import ProjectIOError
 from app.infrastructure.io import load_project_file, save_project_file, save_image_tile
+from app.infrastructure.tile_xml import write_tile_xml, read_tile_xml, build_tile_descriptor
 
 logger = logging.getLogger(__name__)
+
+
+class PixelMaskService:
+    """Application-layer service for toggling individual pixel removal masks.
+
+    Masks are stored as a :class:`set` of ``(px, py)`` image-space coordinate
+    pairs on ``session.pixel_masks[slice_idx]``.  This service has no side-effects
+    beyond mutating that set — callers are responsible for pushing an undo snapshot
+    via :class:`~app.domain.history.UndoManager` before calling :meth:`toggle_pixel`.
+    """
+
+    def toggle_pixel(
+        self, session: ImageSession, slice_idx: int, px: int, py: int
+    ) -> bool:
+        """Toggle the removal state of a single pixel.
+
+        Args:
+            session: The active :class:`ImageSession`.
+            slice_idx: Index into ``session.pixel_masks`` / ``session.selected_cells``.
+            px, py: Image-space pixel coordinates (0-based, full-resolution).
+
+        Returns:
+            ``True`` if the pixel is now *removed*; ``False`` if it was restored.
+        """
+        session.sync_metadata()  # ensure pixel_masks list is long enough
+        mask: Set[Tuple[int, int]] = session.pixel_masks[slice_idx]
+        coord = (px, py)
+        if coord in mask:
+            mask.discard(coord)
+            return False
+        else:
+            mask.add(coord)
+            return True
+
+    def get_mask(
+        self, session: ImageSession, slice_idx: int
+    ) -> Set[Tuple[int, int]]:
+        """Return the current pixel mask set for a slice (never ``None``)."""
+        session.sync_metadata()
+        return session.pixel_masks[slice_idx]
+
 
 class ProjectService:
     def load_project(self, path):
@@ -184,6 +227,15 @@ class ExportService:
             if exclusions:
                 draw = ImageDraw.Draw(mask)
                 draw_exclusion_rects(draw, exclusions, bx1, by1, 1.0)
+
+            # Apply per-pixel mask (individual pixels toggled in the Pixel Editor)
+            pixel_mask = session.pixel_masks[i] if hasattr(session, 'pixel_masks') and i < len(session.pixel_masks) else set()
+            if pixel_mask:
+                draw = ImageDraw.Draw(mask)
+                for (px, py) in pixel_mask:
+                    lx, ly = px - bx1, py - by1
+                    if 0 <= lx < w and 0 <= ly < h:
+                        draw.point((lx, ly), fill=0)
             
             # Apply the mask to the alpha channel to create transparency
             out_img.putalpha(mask)
@@ -207,6 +259,15 @@ class ExportService:
             full_path = os.path.join(output_dir, filename)
             if save_image_tile(out_img, full_path, format_ext):
                 count += 1
+                # Write companion XML tile descriptor
+                try:
+                    descriptor = build_tile_descriptor(session, i, output_dir)
+                    xml_path = os.path.join(
+                        output_dir, f"{base}_slice{i + 1}_tile.xml"
+                    )
+                    write_tile_xml(xml_path, descriptor)
+                except Exception as xml_exc:
+                    logger.warning("Could not write tile XML for slice %d: %s", i, xml_exc)
             if progress_callback:
                 progress_callback(i + 1, total)
         return count
@@ -287,3 +348,89 @@ class ExportService:
         json_path = os.path.join(output_dir, f"{base}_metadata.json")
         with open(json_path, "w", encoding="utf-8") as f:
             _json.dump(rows, f, indent=2, ensure_ascii=False)
+
+
+class TileImportService:
+    """Application-layer service for restoring a saved tile descriptor into a session.
+
+    Reads the XML produced by :class:`ExportService` and rehydrates the
+    corresponding slice (rects, metadata, pixel mask) into the active
+    :class:`~app.domain.session.ImageSession`.
+    """
+
+    def load_tile_xml(self, path: str, session: ImageSession) -> int:
+        """Parse *path*, append the described slice to *session*, and return
+        the new slice index.
+
+        Args:
+            path: Path to a ``*_tile.xml`` descriptor file.
+            session: The :class:`ImageSession` to extend.
+
+        Returns:
+            Index of the newly appended slice in ``session.selected_cells``.
+
+        Raises:
+            OSError: If the XML file cannot be read.
+            ValueError: If the XML is malformed or has an unsupported version.
+        """
+        descriptor = read_tile_xml(path)
+        sl = descriptor.get("slice", {})
+
+        # ── Resolve the rects ──
+        raw_rects = sl.get("rects", [])
+        if not raw_rects:
+            # Fallback: reconstruct a single rect from <bounds>
+            b = sl.get("bounds", {})
+            raw_rects = [(b.get("x1", 0), b.get("y1", 0),
+                          b.get("x2", 0), b.get("y2", 0))]
+        rects = {tuple(r) for r in raw_rects}
+
+        # ── Source image path validation (warn-only, don't block import) ──
+        src = descriptor.get("source", {})
+        xml_dir = os.path.dirname(os.path.abspath(path))
+        candidate_abs = src.get("abs_path", "")
+        candidate_rel = os.path.normpath(
+            os.path.join(xml_dir, src.get("rel_path", ""))
+        )
+        if not os.path.exists(candidate_abs) and not os.path.exists(candidate_rel):
+            logger.warning(
+                "Tile XML source image not found — "
+                "abs='%s' rel='%s'. Importing anyway.",
+                candidate_abs, candidate_rel,
+            )
+
+        # ── Append slice to session ──
+        session.selected_cells.append(rects)
+        session.sync_metadata()
+
+        new_idx = len(session.selected_cells) - 1
+
+        # ── Restore metadata ──
+        session.slice_metadata[new_idx] = {
+            "name": sl.get("name", ""),
+            "description": sl.get("description", ""),
+            "microns_per_pixel": sl.get("microns_per_pixel", ""),
+        }
+
+        # ── Restore pixel mask ──
+        pixel_mask = {(p[0], p[1]) for p in sl.get("pixel_mask", [])}
+        if hasattr(session, "pixel_masks"):
+            session.pixel_masks[new_idx] = pixel_mask
+
+        # ── Restore polygon (brush slices only) ──
+        raw_polygon = sl.get("polygon")  # list of (x,y) floats, or None
+        if hasattr(session, "selected_polygons"):
+            session.selected_polygons[new_idx] = (
+                [tuple(pt) for pt in raw_polygon]
+                if raw_polygon and len(raw_polygon) >= 3
+                else None
+            )
+
+        logger.info(
+            "Tile XML imported: %d rects, polygon=%s, %d removed pixels → slice idx %d",
+            len(rects),
+            f"{len(raw_polygon)} pts" if raw_polygon else "none",
+            len(pixel_mask),
+            new_idx,
+        )
+        return new_idx

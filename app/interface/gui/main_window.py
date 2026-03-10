@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QAction, QActionGroup
 
 from app.domain.history import UndoManager
-from app.application.services import ProjectService, ExportService
+from app.application.services import ProjectService, ExportService, TileImportService
 
 # Import the new PyQt Components (to be rewritten in subsequent steps)
 from .components import (
@@ -35,6 +35,7 @@ class SlicerLabApp(QMainWindow):
         
         self.project_service = ProjectService()
         self.export_service = ExportService()
+        self.tile_import_service = TileImportService()
         self.undo_manager = UndoManager()
 
         self._setup_ui()
@@ -123,10 +124,21 @@ class SlicerLabApp(QMainWindow):
         # --- Bottom Half: Slice Previews ---
         self.slice_previews = SlicePreviews(self)
 
+        # "Add Tile" button sits inside the SlicePreviews widget layout
+        # so it's always visible regardless of splitter sizing
+        add_tile_btn = QPushButton("＋ Add Tile")
+        add_tile_btn.setToolTip("Import a saved tile XML descriptor into the current session")
+        add_tile_btn.setStyleSheet(
+            "background-color: #2d6a4f; color: white; padding: 6px; "
+            "font-weight: bold; border-radius: 3px; margin-top: 4px;"
+        )
+        add_tile_btn.clicked.connect(self._add_tile)
+        self.slice_previews.layout.addWidget(add_tile_btn)
+
         self.sidebar_splitter.addWidget(project_widget)
         self.sidebar_splitter.addWidget(self.slice_previews)
-        
-        # Set default proportions
+
+        # Set default proportions (2 widgets)
         self.sidebar_splitter.setSizes([200, 500])
 
         self.sidebar_dock.setWidget(self.sidebar_splitter)
@@ -140,3 +152,7 @@ class SlicerLabApp(QMainWindow):
         self.active_tool = tool_name
         self.statusBar().showMessage(f"Tool selected: {tool_name}")
         self.canvas_renderer.set_tool(tool_name)
+
+    def _add_tile(self):
+        """Slot for the 'Add Tile' button — delegates to project_manager."""
+        self.project_manager.add_tile()

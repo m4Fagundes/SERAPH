@@ -3,7 +3,6 @@
 .gemini
 .gsd
 .skills
-skills/
 
 __pycache__/
 *.pyc

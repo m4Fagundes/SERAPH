@@ -132,3 +132,57 @@ class ProjectManager:
         self.mw.statusBar().showMessage(f"Image: {session.name} | {session.real_width}x{session.real_height}px")
         self.mw.canvas_renderer.redraw()
         self.mw.slice_previews.update_previews()
+
+    # ── Tile Import ───────────────────────────────────────────────────────────
+
+    def add_tile(self) -> None:
+        """Open a tile XML descriptor and import it into the current session."""
+        s = self.mw.current_session
+        if not s:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self.mw, "Add Tile", "No image session is active.")
+            return
+
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        path, _ = QFileDialog.getOpenFileName(
+            self.mw, "Open Tile Descriptor", "", "Tile Descriptor (*.xml)"
+        )
+        if not path:
+            return
+
+        try:
+            new_idx = self.mw.tile_import_service.load_tile_xml(path, s)
+        except Exception as exc:
+            QMessageBox.critical(self.mw, "Import Error", str(exc))
+            return
+
+        # Refresh sidebar
+        self.mw.slice_previews.update_previews()
+        self.mw.statusBar().showMessage(
+            f"Tile imported → Slice {new_idx + 1} | {len(s.selected_cells)} slices total"
+        )
+
+        # Navigate the canvas to the newly imported slice (isolation mode + auto-zoom)
+        self.mw.canvas_renderer.isolated_slice_idx = new_idx
+        slice_rects = s.selected_cells[new_idx]
+        if slice_rects:
+            min_x = min(r[0] for r in slice_rects)
+            min_y = min(r[1] for r in slice_rects)
+            max_x = max(r[2] for r in slice_rects)
+            max_y = max(r[3] for r in slice_rects)
+            w = max_x - min_x
+            h = max_y - min_y
+            cx = min_x + w / 2
+            cy = min_y + h / 2
+            view_w = self.mw.canvas_renderer.viewport().width()
+            view_h = self.mw.canvas_renderer.viewport().height()
+            fit_zoom = (
+                min((view_w * 0.9) / w, (view_h * 0.9) / h, 5.0)
+                if w > 0 and h > 0 else 1.0
+            )
+            self.mw.canvas_renderer.viewport_zoom = fit_zoom
+            self.mw.canvas_renderer.resetTransform()
+            self.mw.canvas_renderer.scale(fit_zoom, fit_zoom)
+            self.mw.canvas_renderer.centerOn(cx, cy)
+
+        self.mw.canvas_renderer.redraw()

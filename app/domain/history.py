@@ -41,6 +41,7 @@ class UndoManager:
             "selected_polygons": copy.deepcopy(session.selected_polygons),
             "slice_metadata": copy.deepcopy(session.slice_metadata),
             "tile_colors": copy.deepcopy(session.tile_colors),
+            "pixel_masks": copy.deepcopy(session.pixel_masks),
         }
         self._undo_stack.append(snapshot)
         if len(self._undo_stack) > MAX_HISTORY:
@@ -73,6 +74,7 @@ class UndoManager:
             "selected_polygons": copy.deepcopy(session.selected_polygons),
             "slice_metadata": copy.deepcopy(session.slice_metadata),
             "tile_colors": copy.deepcopy(session.tile_colors),
+            "pixel_masks": copy.deepcopy(session.pixel_masks),
         }
         self._redo_stack.append(redo_snapshot)
 
@@ -99,6 +101,7 @@ class UndoManager:
             "selected_polygons": copy.deepcopy(session.selected_polygons),
             "slice_metadata": copy.deepcopy(session.slice_metadata),
             "tile_colors": copy.deepcopy(session.tile_colors),
+            "pixel_masks": copy.deepcopy(session.pixel_masks),
         }
         self._undo_stack.append(undo_snapshot)
 
@@ -120,4 +123,5 @@ class UndoManager:
         session.selected_polygons = copy.deepcopy(snapshot["selected_polygons"])
         session.slice_metadata = copy.deepcopy(snapshot["slice_metadata"])
         session.tile_colors = copy.deepcopy(snapshot.get("tile_colors", []))
+        session.pixel_masks = copy.deepcopy(snapshot.get("pixel_masks", []))
         session.sync_metadata()

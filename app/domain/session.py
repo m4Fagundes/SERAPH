@@ -1,5 +1,5 @@
 import os
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Set
 from app.domain.pyramid import ImagePyramid
 
 
@@ -43,6 +43,7 @@ class ImageSession:
         self.slice_metadata: List[Dict[str, str]] = []
         self.slice_exclusions: List[List[Tuple[int, int, int, int]]] = []    # parallel to selected_cells: list of (x1,y1,x2,y2) rects to exclude
         self.tile_colors: List[str] = []         # parallel to selected_cells: hex color string
+        self.pixel_masks: List[Set[Tuple[int, int]]] = []  # parallel to selected_cells: set of (px, py) image-space pixels removed
         self.export_dir: Optional[str] = None
         self.export_format: Optional[str] = None
 
@@ -67,6 +68,9 @@ class ImageSession:
         while len(self.tile_colors) < n:
             self.tile_colors.append(TILE_COLORS[len(self.tile_colors) % len(TILE_COLORS)])
         self.tile_colors = self.tile_colors[:n]
+        while len(self.pixel_masks) < n:
+            self.pixel_masks.append(set())
+        self.pixel_masks = self.pixel_masks[:n]
 
     def set_grid(self, grid_w: int, grid_h: int, grid_color: str) -> None:
         """Set grid dimensions and color."""

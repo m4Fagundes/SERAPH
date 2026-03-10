@@ -5,6 +5,7 @@ from PyQt6.QtGui import QPainter, QPixmap, QImage, QWheelEvent, QMouseEvent, QPe
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QObject, QRunnable, QThreadPool
 import io
 from app.domain.selection import subtract_from_slice
+from app.application.services import PixelMaskService
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,9 @@ class CanvasRenderer(QGraphicsView):
         # Local view matrix properties to allow multiple independent windows
         self.viewport_zoom = 1.0 
         self.isolated_slice_idx = None
+        
+        # Shared pixel mask service (stateless, safe to reuse across events)
+        self._pms = PixelMaskService()
 
     def set_tool(self, tool_name):
         self.active_tool = tool_name
@@ -241,6 +245,48 @@ class CanvasRenderer(QGraphicsView):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawPath(mask_path)
             
+            # ── Pixel mask overlay — checkerboard transparency pattern ──────────
+            i = self.isolated_slice_idx
+            if hasattr(s, 'pixel_masks') and i < len(s.pixel_masks) and s.pixel_masks[i]:
+                # Colours for the two checkerboard cells (Photoshop-style alpha)
+                dark_cell  = QColor(80,  80,  80,  200)
+                light_cell = QColor(180, 180, 180, 200)
+                border_pen = QPen(QColor(210, 40, 40, 230), 0.08 / max(self.viewport_zoom, 1))
+                painter.setPen(Qt.PenStyle.NoPen)
+                for (px, py) in s.pixel_masks[i]:
+                    # Four sub-quadrants (each 0.5 × 0.5 real px)
+                    for qx in range(2):
+                        for qy in range(2):
+                            cell_color = dark_cell if (qx + qy) % 2 == 0 else light_cell
+                            painter.setBrush(QBrush(cell_color))
+                            painter.drawRect(
+                                QRectF(float(px) + qx * 0.5,
+                                       float(py) + qy * 0.5,
+                                       0.5, 0.5)
+                            )
+                    # Thin red border around the whole 1×1 pixel
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.setPen(border_pen)
+                    painter.drawRect(QRectF(float(px), float(py), 1.0, 1.0))
+                    painter.setPen(Qt.PenStyle.NoPen)
+
+            # ── Pixel grid — only when each real pixel is clearly visible ───────
+            if self.viewport_zoom >= 4.0:
+                grid_color = QColor(200, 200, 200, 55)
+                pen = QPen(grid_color, 1.0 / self.viewport_zoom)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                px_left   = max(0, int(left))
+                px_top    = max(0, int(top))
+                px_right  = min(s.real_width, int(right) + 2)
+                px_bottom = min(s.real_height, int(bottom) + 2)
+                # Guard: avoid drawing thousands of lines at low zoom
+                if (px_right - px_left) < 800 and (px_bottom - px_top) < 800:
+                    for x in range(px_left, px_right + 1):
+                        painter.drawLine(QPointF(x, px_top), QPointF(x, px_bottom))
+                    for y in range(px_top, px_bottom + 1):
+                        painter.drawLine(QPointF(px_left, y), QPointF(px_right, y))
+
             # Draw a bounding box contour line around it to frame the viewport
             if self.isolated_slice_idx < len(s.selected_cells):
                 painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -325,7 +371,7 @@ class CanvasRenderer(QGraphicsView):
         new_zoom = self.viewport_zoom * zoom_factor
         
         if new_zoom < 0.01: new_zoom = 0.01
-        if new_zoom > 10.0: new_zoom = 10.0
+        if new_zoom > 200.0: new_zoom = 200.0
         
         old_pos = self.mapToScene(event.position().toPoint())
         self.viewport_zoom = new_zoom
@@ -341,7 +387,26 @@ class CanvasRenderer(QGraphicsView):
         self.redraw()
 
     def mousePressEvent(self, event: QMouseEvent):
+        s = self.main_window.current_session
         if self.isolated_slice_idx is not None:
+            if event.button() == Qt.MouseButton.RightButton and s:
+                # Right-click in isolation mode = toggle individual pixel
+                scene_pt = self.mapToScene(event.position().toPoint())
+                px = int(scene_pt.x())
+                py = int(scene_pt.y())
+                idx = self.isolated_slice_idx
+                # Push undo snapshot before mutating
+                undo = getattr(self.main_window, 'undo_manager', None)
+                if undo:
+                    undo.push(s, 'pixel_mask_toggle')
+                removed = self._pms.toggle_pixel(s, idx, px, py)
+                state = "removed" if removed else "restored"
+                sb = getattr(self.main_window, 'statusBar', lambda: None)()
+                if sb:
+                    sb.showMessage(f"Pixel ({px}, {py}) {state}  |  mask size: {len(self._pms.get_mask(s, idx))}")
+                self.viewport().update()
+                return
+            # Left-click (pan) — fall through to default QGraphicsView handler
             super().mousePressEvent(event)
             return
             
@@ -354,7 +419,18 @@ class CanvasRenderer(QGraphicsView):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        s = self.main_window.current_session
         if self.isolated_slice_idx is not None:
+            # If right-button held while moving in isolation mode = drag-paint pixels
+            if event.buttons() & Qt.MouseButton.RightButton and s:
+                scene_pt = self.mapToScene(event.position().toPoint())
+                px = int(scene_pt.x())
+                py = int(scene_pt.y())
+                idx = self.isolated_slice_idx
+                # Don't push undo on every move step; only the initial press pushed one
+                self._pms.get_mask(s, idx).add((px, py))  # always remove on drag
+                self.viewport().update()
+                return
             super().mouseMoveEvent(event)
             return
             

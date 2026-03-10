@@ -1,7 +1,11 @@
 import logging
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QAbstractItemView
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QAbstractItemView, QMenu,
+)
 from PyQt6.QtGui import QColor, QPixmap, QIcon
 from PyQt6.QtCore import Qt
+from app.application.services import PixelMaskService
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +16,7 @@ class SlicePreviews(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.mw = main_window
+        self._pms = PixelMaskService()
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 10, 0, 0)
         
@@ -41,6 +46,8 @@ class SlicePreviews(QWidget):
         """)
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list_widget.itemClicked.connect(self.on_item_clicked)
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self._show_context_menu)
         self.layout.addWidget(self.list_widget)
         
     def update_previews(self):
@@ -103,3 +110,47 @@ class SlicePreviews(QWidget):
             self.mw.canvas_renderer.centerOn(cx, cy)
             
         self.mw.canvas_renderer.redraw()
+
+    # ── Context Menu ──────────────────────────────────────────────────────────
+
+    def _show_context_menu(self, pos) -> None:
+        """Show a right-click context menu on a slice list item."""
+        item = self.list_widget.itemAt(pos)
+        if item is None:
+            return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background-color: #2d2d2d; color: #eeeeee; border: 1px solid #555; }
+            QMenu::item:selected { background-color: #3e3e4f; }
+        """)
+        action_nav = menu.addAction("🔍 Focus in Canvas")
+        action_pixel = menu.addAction("🎨 Open Pixel Editor")
+        menu.addSeparator()
+        action_pixel.setToolTip("Edit individual pixels of this slice")
+
+        chosen = menu.exec(self.list_widget.mapToGlobal(pos))
+        if chosen == action_nav:
+            # Re-use existing navigation logic by simulating item click
+            self.on_item_clicked(item)
+        elif chosen == action_pixel:
+            self.open_pixel_editor(idx)
+
+    def open_pixel_editor(self, idx: int) -> None:
+        """Open the pixel-level editor dialog for slice *idx*."""
+        from app.interface.gui.components.pixel_editor import SlicePixelEditorDialog
+
+        s = self.mw.current_session
+        if not s or idx >= len(s.selected_cells):
+            return
+
+        # Retrieve the shared undo manager if the main window exposes one
+        undo_manager = getattr(self.mw, "undo_manager", None)
+
+        dialog = SlicePixelEditorDialog(
+            main_window=self.mw,
+            slice_idx=idx,
+            pixel_mask_service=self._pms,
+            undo_manager=undo_manager,
+        )
+        dialog.exec()
