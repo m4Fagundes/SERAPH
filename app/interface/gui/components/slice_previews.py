@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtCore import Qt
 from app.application.services import PixelMaskService
+from app.interface.gui.components.tile_preview_dialog import TilePreviewDialog
 
 logger = logging.getLogger(__name__)
 
@@ -201,18 +202,29 @@ class SlicePreviews(QWidget):
             QMenu { background-color: #2d2d2d; color: #eeeeee; border: 1px solid #555; }
             QMenu::item:selected { background-color: #3e3e4f; }
         """)
-        action_nav = menu.addAction("🔍 Focus in Canvas")
-        action_pixel = menu.addAction("🎨 Open Pixel Editor")
+        action_nav   = menu.addAction("🔍 Focar no Canvas")
+        action_real  = menu.addAction("🖼️ Ver em Resolução Real")
+        action_pixel = menu.addAction("🎨 Abrir Editor de Pixel")
         menu.addSeparator()
-        action_del = menu.addAction("🗑️ Delete Slice")
+        action_del = menu.addAction("🗑️ Deletar Slice")
 
         chosen = menu.exec(self.list_widget.mapToGlobal(pos))
         if chosen == action_nav:
             self.on_item_clicked(item)
+        elif chosen == action_real:
+            self.open_tile_preview(idx)
         elif chosen == action_pixel:
             self.open_pixel_editor(idx)
         elif chosen == action_del:
             self._delete_slice(idx)
+
+    def open_tile_preview(self, idx: int) -> None:
+        """Open the 1:1 real-resolution tile viewer for slice *idx*."""
+        s = self.mw.current_session
+        if not s or idx >= len(s.selected_cells):
+            return
+        dialog = TilePreviewDialog(session=s, slice_idx=idx, parent=self.mw)
+        dialog.exec()
 
     def open_pixel_editor(self, idx: int) -> None:
         """Open the pixel-level editor dialog for slice *idx*."""

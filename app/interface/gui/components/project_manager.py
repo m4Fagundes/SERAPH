@@ -186,3 +186,10 @@ class ProjectManager:
             self.mw.canvas_renderer.centerOn(cx, cy)
 
         self.mw.canvas_renderer.redraw()
+
+        # Open the real-resolution preview automatically so the user sees
+        # the final image immediately, independent of canvas tile loading state.
+        from app.interface.gui.components.tile_preview_dialog import TilePreviewDialog
+        preview = TilePreviewDialog(session=s, slice_idx=new_idx, parent=self.mw)
+        preview.exec()
+
