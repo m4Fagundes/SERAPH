@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 from typing import Set, Tuple
 from PIL import Image, ImageDraw
@@ -127,6 +128,14 @@ class ProjectService:
             else:
                 s.export_dir = None
             s.export_format = item.get("export_format", None)
+            # Restore pixel masks (per-slice set of (px, py) removed coords)
+            raw_masks = item.get("pixel_masks", [])
+            s.pixel_masks = [
+                {tuple(p) for p in m} for m in raw_masks
+            ]
+            # Pad pixel_masks to match selected_cells length
+            while len(s.pixel_masks) < len(s.selected_cells):
+                s.pixel_masks.append(set())
             sessions.append(s)
         return sessions, missing
 
@@ -171,6 +180,10 @@ class ProjectService:
                 "slice_exclusions": [
                     [list(r) for r in excl] if excl else []
                     for excl in s.slice_exclusions
+                ],
+                "pixel_masks": [
+                    [list(p) for p in m]
+                    for m in (s.pixel_masks if hasattr(s, 'pixel_masks') else [])
                 ],
                 "tile_colors": s.tile_colors,
                 "grid_color": s.grid_color,
@@ -375,15 +388,37 @@ class TileImportService:
         """
         descriptor = read_tile_xml(path)
         sl = descriptor.get("slice", {})
+        slice_type = sl.get("type", "grid")   # "brush" or "grid"
 
-        # ── Resolve the rects ──
-        raw_rects = sl.get("rects", [])
-        if not raw_rects:
-            # Fallback: reconstruct a single rect from <bounds>
-            b = sl.get("bounds", {})
-            raw_rects = [(b.get("x1", 0), b.get("y1", 0),
-                          b.get("x2", 0), b.get("y2", 0))]
-        rects = {tuple(r) for r in raw_rects}
+        # ── Restore polygon first (needed to compute brush bounding box) ──
+        raw_polygon = sl.get("polygon")  # list of (x,y) floats, or None
+        polygon = (
+            [tuple(pt) for pt in raw_polygon]
+            if raw_polygon and len(raw_polygon) >= 3
+            else None
+        )
+
+        # ── Resolve the bounding rect for selected_cells ──────────────────
+        # DESIGN: For brush slices the authoritative area is the polygon's
+        # tight bounding box (N/S/E/W extremes), NOT the grid cells.
+        # Grid cells can be 1000x1000px cells that happen to intersect the
+        # polygon — storing them as selected_cells caused the preview to show
+        # a region 10-100x larger than what was actually drawn by the user.
+        # For grid slices the original grid-cell rect set is kept unchanged.
+        if slice_type == "brush" and polygon:
+            bx1 = int(min(p[0] for p in polygon))
+            by1 = int(min(p[1] for p in polygon))
+            bx2 = int(math.ceil(max(p[0] for p in polygon)))
+            by2 = int(math.ceil(max(p[1] for p in polygon)))
+            rects = {(bx1, by1, bx2, by2)}
+        else:
+            # Grid slice: use the stored rects (or fall back to <bounds>)
+            raw_rects = sl.get("rects", [])
+            if not raw_rects:
+                b = sl.get("bounds", {})
+                raw_rects = [(b.get("x1", 0), b.get("y1", 0),
+                              b.get("x2", 0), b.get("y2", 0))]
+            rects = {tuple(r) for r in raw_rects}
 
         # ── Source image path validation (warn-only, don't block import) ──
         src = descriptor.get("source", {})
@@ -417,20 +452,17 @@ class TileImportService:
         if hasattr(session, "pixel_masks"):
             session.pixel_masks[new_idx] = pixel_mask
 
-        # ── Restore polygon (brush slices only) ──
-        raw_polygon = sl.get("polygon")  # list of (x,y) floats, or None
+        # ── Restore polygon ──
         if hasattr(session, "selected_polygons"):
-            session.selected_polygons[new_idx] = (
-                [tuple(pt) for pt in raw_polygon]
-                if raw_polygon and len(raw_polygon) >= 3
-                else None
-            )
+            session.selected_polygons[new_idx] = polygon
 
         logger.info(
-            "Tile XML imported: %d rects, polygon=%s, %d removed pixels → slice idx %d",
-            len(rects),
+            "Tile XML imported: type=%s, rect=%s, polygon=%s, %d removed pixels → slice idx %d",
+            slice_type,
+            list(rects),
             f"{len(raw_polygon)} pts" if raw_polygon else "none",
             len(pixel_mask),
             new_idx,
         )
         return new_idx
+

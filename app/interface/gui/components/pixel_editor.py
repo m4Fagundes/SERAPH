@@ -18,6 +18,7 @@ Usage::
 """
 
 import logging
+import math
 from typing import Optional, Set, Tuple
 
 from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer
@@ -169,9 +170,17 @@ class _PixelCanvas(QGraphicsView):
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.RightButton:
             scene_pt = self.mapToScene(event.pos())
-            # Convert scene (local slice) coords → image-space coords
-            px = self._bx1 + int(scene_pt.x())
-            py = self._by1 + int(scene_pt.y())
+
+            # Use math.floor() instead of int() to ensure a click always
+            # maps to exactly ONE pixel, never split across two adjacent ones.
+            # int() truncates toward zero, which misaligns for fractional coords
+            # near pixel boundaries (e.g. 2.9999 → 2, but -0.001 → 0 not -1).
+            lx = math.floor(scene_pt.x())
+            ly = math.floor(scene_pt.y())
+
+            # Convert local slice coords → absolute image-space coords
+            px = self._bx1 + lx
+            py = self._by1 + ly
 
             # Validate bounds
             if not (self._bx1 <= px < self._bx1 + self._slice_w and

@@ -1,5 +1,6 @@
 import logging
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+import math
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtGui import QPainter, QPixmap, QImage, QWheelEvent, QMouseEvent, QPen, QColor, QBrush, QPolygonF
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QObject, QRunnable, QThreadPool
@@ -74,6 +75,57 @@ class CanvasRenderer(QGraphicsView):
         
         # Shared pixel mask service (stateless, safe to reuse across events)
         self._pms = PixelMaskService()
+
+        # Scene items that represent removed pixels.
+        # Stored here so we can surgically add/remove them without a full redraw.
+        # Using QGraphicsRectItem (scene-space) instead of drawForeground (QPainter/OpenGL)
+        # ensures pixel-perfect alignment with the image bitmap below.
+        self._pixel_overlay_items: list = []
+
+    # ------------------------------------------------------------------
+    # Pixel Overlay (scene items — aligned with image bitmap)
+    # ------------------------------------------------------------------
+
+    def _rebuild_pixel_overlay(self, session, slice_idx: int) -> None:
+        """Rebuild scene-based pixel removal overlay for *slice_idx*.
+
+        Replaces the old drawForeground-based checkerboard with
+        ``QGraphicsRectItem`` objects that live inside the QGraphicsScene.
+        Because they share the same coordinate space as the image pixmap tiles,
+        they are rendered through the identical OpenGL pipeline — guaranteeing
+        sub-pixel-accurate alignment regardless of zoom or pan position.
+
+        Design principle (python-patterns): single responsibility — this method
+        *only* manages scene items; it does not read events or mutate the mask.
+        """
+        # --- 1. Remove stale overlay items from the scene ------------------
+        for item in self._pixel_overlay_items:
+            if item.scene() == self.scene:
+                self.scene.removeItem(item)
+        self._pixel_overlay_items.clear()
+
+        if session is None or slice_idx is None:
+            return
+        if slice_idx >= len(session.pixel_masks):
+            return
+
+        mask = session.pixel_masks[slice_idx]
+        if not mask:
+            return
+
+        # --- 2. Create one QGraphicsRectItem per removed pixel -------------
+        # Red semi-transparent fill, no border (border drawn in drawForeground)
+        remove_color = QColor(220, 30, 30, 160)
+        brush = QBrush(remove_color)
+        no_pen = QPen(Qt.PenStyle.NoPen)
+
+        for (px, py) in mask:
+            item = QGraphicsRectItem(float(px), float(py), 1.0, 1.0)
+            item.setBrush(brush)
+            item.setPen(no_pen)
+            item.setZValue(10)   # above image tiles (z=0), below grid (z=20)
+            self.scene.addItem(item)
+            self._pixel_overlay_items.append(item)
 
     def set_tool(self, tool_name):
         self.active_tool = tool_name
@@ -247,9 +299,22 @@ class CanvasRenderer(QGraphicsView):
                 if self.tile_items[k] != "fetching":
                     self.scene.removeItem(self.tile_items[k])
                 del self.tile_items[k]
+
+        # Sync scene-based pixel removal overlay with current mask state.
+        # This ensures correct alignment on every render: when isolation mode
+        # is activated, when the user navigates, or after session loads.
+        if self.isolated_slice_idx is not None:
+            self._rebuild_pixel_overlay(s, self.isolated_slice_idx)
+        else:
+            # Clear overlay when leaving isolation mode
+            for item in self._pixel_overlay_items:
+                if item.scene() == self.scene:
+                    self.scene.removeItem(item)
+            self._pixel_overlay_items.clear()
         
         # Force a foreground redraw without changing tiles
         self.viewport().update()
+
 
     def _on_tile_loaded(self, key, pixmap):
         col, row, fetched_zoom = key
@@ -295,60 +360,48 @@ class CanvasRenderer(QGraphicsView):
                     for (sx1, sy1, sx2, sy2) in slice_rects:
                         slice_path.addRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
                 
-            # Boolean subtraction logic natively executed on C++
+            # Boolean subtraction — mask everything outside the tile
             mask_path = screen_path.subtracted(slice_path)
             painter.setBrush(QColor("black"))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawPath(mask_path)
-            
-            # ── Pixel mask overlay — checkerboard transparency pattern ──────────
+
+            # ── Pixel removal borders (thin red outline only) ────────────────
+            # The fill is handled by _rebuild_pixel_overlay() via QGraphicsRectItem
+            # (scene-space items, same render pipeline as the image → perfect alignment).
+            # Here we only draw the 1-px border which does NOT need sub-pixel accuracy.
             i = self.isolated_slice_idx
             if hasattr(s, 'pixel_masks') and i < len(s.pixel_masks) and s.pixel_masks[i]:
-                # Colours for the two checkerboard cells (Photoshop-style alpha)
-                dark_cell  = QColor(80,  80,  80,  200)
-                light_cell = QColor(180, 180, 180, 200)
                 border_pen = QPen(QColor(210, 40, 40, 230), 0.08 / max(self.viewport_zoom, 1))
-                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(border_pen)
                 for (px, py) in s.pixel_masks[i]:
-                    # Four sub-quadrants (each 0.5 × 0.5 real px)
-                    for qx in range(2):
-                        for qy in range(2):
-                            cell_color = dark_cell if (qx + qy) % 2 == 0 else light_cell
-                            painter.setBrush(QBrush(cell_color))
-                            painter.drawRect(
-                                QRectF(float(px) + qx * 0.5,
-                                       float(py) + qy * 0.5,
-                                       0.5, 0.5)
-                            )
-                    # Thin red border around the whole 1×1 pixel
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-                    painter.setPen(border_pen)
                     painter.drawRect(QRectF(float(px), float(py), 1.0, 1.0))
-                    painter.setPen(Qt.PenStyle.NoPen)
 
-            # ── Pixel grid — only when each real pixel is clearly visible ───────
+            # ── Pixel grid — only when each real pixel is clearly visible ────
+            # FIX: use math.floor() for grid start to snap to integer pixel
+            # boundaries, and disable antialiasing so lines render crispy.
             if self.viewport_zoom >= 4.0:
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
                 grid_color = QColor(200, 200, 200, 55)
-                pen = QPen(grid_color, 1.0 / self.viewport_zoom)
+                pen = QPen(grid_color, 0.0)   # cosmetic pen = always 1 screen pixel wide
+                pen.setCosmetic(True)
                 painter.setPen(pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                px_left   = max(0, int(left))
-                px_top    = max(0, int(top))
-                px_right  = min(s.real_width, int(right) + 2)
-                px_bottom = min(s.real_height, int(bottom) + 2)
+
+                # Snap start positions to integer pixel boundaries
+                px_left   = max(0, math.floor(left))
+                px_top    = max(0, math.floor(top))
+                px_right  = min(s.real_width,  math.ceil(right)  + 1)
+                px_bottom = min(s.real_height, math.ceil(bottom) + 1)
+
                 # Guard: avoid drawing thousands of lines at low zoom
                 if (px_right - px_left) < 800 and (px_bottom - px_top) < 800:
                     for x in range(px_left, px_right + 1):
-                        painter.drawLine(QPointF(x, px_top), QPointF(x, px_bottom))
+                        painter.drawLine(QPointF(x, float(px_top)), QPointF(x, float(px_bottom)))
                     for y in range(px_top, px_bottom + 1):
-                        painter.drawLine(QPointF(px_left, y), QPointF(px_right, y))
+                        painter.drawLine(QPointF(float(px_left), y), QPointF(float(px_right), y))
 
-            # Draw a bounding box contour line around it to frame the viewport
-            if self.isolated_slice_idx < len(s.selected_cells):
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                color_hex = s.tile_colors[self.isolated_slice_idx] if self.isolated_slice_idx < len(s.tile_colors) else "#00FFFF"
-                painter.setPen(QPen(QColor(color_hex), max(2.0 / self.viewport_zoom, 1.0)))
-                painter.drawPath(slice_path)
             return
         
         # Draw Selections (Normal Mode)
@@ -448,9 +501,18 @@ class CanvasRenderer(QGraphicsView):
             if event.button() == Qt.MouseButton.RightButton and s:
                 # Right-click in isolation mode = toggle individual pixel
                 scene_pt = self.mapToScene(event.position().toPoint())
-                px = int(scene_pt.x())
-                py = int(scene_pt.y())
+                # math.floor() ensures click maps to exactly ONE pixel cell
+                px = math.floor(scene_pt.x())
+                py = math.floor(scene_pt.y())
                 idx = self.isolated_slice_idx
+
+                # FIX: reject clicks outside the tile bounds (vignette black area)
+                slice_rects = s.selected_cells[idx]
+                in_tile = any(r[0] <= px < r[2] and r[1] <= py < r[3] for r in slice_rects)
+                if not in_tile:
+                    super().mousePressEvent(event)
+                    return
+
                 # Push undo snapshot before mutating
                 undo = getattr(self.main_window, 'undo_manager', None)
                 if undo:
@@ -460,6 +522,8 @@ class CanvasRenderer(QGraphicsView):
                 sb = getattr(self.main_window, 'statusBar', lambda: None)()
                 if sb:
                     sb.showMessage(f"Pixel ({px}, {py}) {state}  |  mask size: {len(self._pms.get_mask(s, idx))}")
+                # Rebuild scene-based overlay so fill items stay in sync
+                self._rebuild_pixel_overlay(s, idx)
                 self.viewport().update()
                 return
             # Left-click (pan) — fall through to default QGraphicsView handler
@@ -480,11 +544,20 @@ class CanvasRenderer(QGraphicsView):
             # If right-button held while moving in isolation mode = drag-paint pixels
             if event.buttons() & Qt.MouseButton.RightButton and s:
                 scene_pt = self.mapToScene(event.position().toPoint())
-                px = int(scene_pt.x())
-                py = int(scene_pt.y())
+                px = math.floor(scene_pt.x())
+                py = math.floor(scene_pt.y())
                 idx = self.isolated_slice_idx
+
+                # FIX: reject drags outside the tile bounds (vignette black area)
+                slice_rects = s.selected_cells[idx]
+                in_tile = any(r[0] <= px < r[2] and r[1] <= py < r[3] for r in slice_rects)
+                if not in_tile:
+                    super().mouseMoveEvent(event)
+                    return
+
                 # Don't push undo on every move step; only the initial press pushed one
                 self._pms.get_mask(s, idx).add((px, py))  # always remove on drag
+                self._rebuild_pixel_overlay(s, idx)
                 self.viewport().update()
                 return
             super().mouseMoveEvent(event)

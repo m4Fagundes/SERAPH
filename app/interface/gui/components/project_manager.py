@@ -9,20 +9,28 @@ logger = logging.getLogger(__name__)
 class ProjectManager:
     def __init__(self, main_window):
         self.mw = main_window
+        # Track the currently open .lab file path for auto-save
+        self._current_project_path: str | None = None
 
     def setup_toolbar(self, toolbar):
-        # Build Project Menus
         new_action = QAction("📄 New", self.mw)
         new_action.triggered.connect(self.new_project)
         toolbar.addAction(new_action)
-        
+
         open_action = QAction("📂 Open", self.mw)
         open_action.triggered.connect(self.open_project)
         toolbar.addAction(open_action)
 
+        # 💾 Save — saves to current file if open, otherwise prompts
         save_action = QAction("💾 Save", self.mw)
+        save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self.save_project)
         toolbar.addAction(save_action)
+
+        # 💾 Save As — always prompts for a new path
+        saveas_action = QAction("💾 Save As", self.mw)
+        saveas_action.triggered.connect(self.save_project_as)
+        toolbar.addAction(saveas_action)
 
     def setup_grid_inputs(self, toolbar):
         lbl_w = QLabel(" W: ")
@@ -60,6 +68,8 @@ class ProjectManager:
         self.mw.file_list.clear()
         self.mw.current_session = None
         self.mw.canvas_renderer.scene.clear()
+        self._current_project_path = None
+        self.mw.setWindowTitle("Tiles Grid Analyzer")
 
     def open_project(self):
         f, _ = QFileDialog.getOpenFileName(self.mw, "Open Project", "", "Lab Project (*.lab)")
@@ -70,17 +80,33 @@ class ProjectManager:
                 self.mw.file_list.clear()
                 for s in self.mw.sessions:
                     self.mw.file_list.addItem(f" {s.name}")
-                    
                 if self.mw.sessions:
                     self._activate_session(self.mw.sessions[0])
+                # Remember path for subsequent auto-saves
+                self._current_project_path = f
+                self.mw.setWindowTitle(f"Tiles Grid Analyzer — {os.path.basename(f)}")
             except Exception as e:
                 QMessageBox.critical(self.mw, "Error", f"Could not load project: {e}")
 
     def save_project(self):
+        """Save to the currently open file; if none, prompt for a path."""
+        if self._current_project_path:
+            self.mw.project_service.save_project(self._current_project_path, self.mw.sessions)
+            self.mw.statusBar().showMessage(
+                f"✅ Saved — {os.path.basename(self._current_project_path)}"
+            )
+        else:
+            self.save_project_as()
+
+    def save_project_as(self):
+        """Always prompt for a new file path."""
         f, _ = QFileDialog.getSaveFileName(self.mw, "Save As", "", "Lab Project (*.lab)")
         if f:
             self.mw.project_service.save_project(f, self.mw.sessions)
-            self.mw.statusBar().showMessage(f"Project saved to {os.path.basename(f)}")
+            self._current_project_path = f
+            self.mw.setWindowTitle(f"Tiles Grid Analyzer — {os.path.basename(f)}")
+            self.mw.statusBar().showMessage(f"✅ Saved — {os.path.basename(f)}")
+
 
     def add_image(self):
         path, _ = QFileDialog.getOpenFileName(self.mw, "Add Image", "", "Images (*.jpg *.png *.tif *.svs *.ndpi *.mrxs *.tiff *.bmp)")
@@ -186,10 +212,4 @@ class ProjectManager:
             self.mw.canvas_renderer.centerOn(cx, cy)
 
         self.mw.canvas_renderer.redraw()
-
-        # Open the real-resolution preview automatically so the user sees
-        # the final image immediately, independent of canvas tile loading state.
-        from app.interface.gui.components.tile_preview_dialog import TilePreviewDialog
-        preview = TilePreviewDialog(session=s, slice_idx=new_idx, parent=self.mw)
-        preview.exec()
 
