@@ -7,7 +7,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QAction, QActionGroup
 
 from app.domain.history import UndoManager
-from app.application.services import ProjectService, ExportService, TileImportService
+from app.application.project_service import ProjectService
+from app.application.export_service import ExportService
+from app.application.import_service import TileImportService
 
 # Import the new PyQt Components (to be rewritten in subsequent steps)
 from .components import (

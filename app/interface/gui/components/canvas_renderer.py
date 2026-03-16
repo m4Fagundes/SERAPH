@@ -6,7 +6,7 @@ from PyQt6.QtGui import QPainter, QPixmap, QImage, QWheelEvent, QMouseEvent, QPe
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QObject, QRunnable, QThreadPool
 import io
 from app.domain.selection import subtract_from_slice
-from app.application.services import PixelMaskService
+from app.application.pixel_mask_service import PixelMaskService
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtCore import Qt
-from app.application.services import PixelMaskService
+from app.application.pixel_mask_service import PixelMaskService
 from app.interface.gui.components.tile_preview_dialog import TilePreviewDialog
 
 logger = logging.getLogger(__name__)

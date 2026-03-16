@@ -46,7 +46,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.application.services import PixelMaskService
+from app.application.pixel_mask_service import PixelMaskService
 from app.domain.history import UndoManager
 from app.domain.session import ImageSession
 
