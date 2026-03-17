@@ -82,6 +82,18 @@ class CanvasRenderer(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         
+        # ── Architecture: Explicit GPU framebuffer clear ──────────────────────
+        # QOpenGLWidget does NOT auto-clear the framebuffer between frames.
+        # FullViewportUpdate forces the ENTIRE viewport to repaint each frame,
+        # preventing ghost tile residues from prior zoom levels bleeding through.
+        from PyQt6.QtWidgets import QGraphicsView as _QGV
+        self.setViewportUpdateMode(_QGV.ViewportUpdateMode.FullViewportUpdate)
+        
+        # Scene background brush: solid dark fill as GPU-level fallback.
+        # drawBackground() below overrides this for OpenGL, but the brush
+        # covers any non-OpenGL fallback paths.
+        self.scene.setBackgroundBrush(QBrush(QColor("#111111")))
+        
         # Default Tool: Pan
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.active_tool = "grid"
@@ -248,6 +260,17 @@ class CanvasRenderer(QGraphicsView):
         # Hotspot at the very tip
         return QCursor(pix, tip_x, tip_y)
 
+    # ── Rendering: Explicit background clear (OpenGL framebuffer pattern) ────
+    def drawBackground(self, painter: QPainter, rect) -> None:
+        """Explicitly clear the OpenGL framebuffer before any scene items are drawn.
+        
+        QOpenGLWidget does NOT auto-clear the framebuffer between frames.
+        Without this, old tile pixels from prior zoom levels persist as ghosts.
+        """
+        painter.fillRect(rect, QColor("#111111"))
+
+
+
     def redraw(self):
         # Debounce the viewport updates to ~60fps to prevent Event loop congestion
         if getattr(self, "_redraw_job", False):
@@ -271,6 +294,19 @@ class CanvasRenderer(QGraphicsView):
         
         self.resetTransform()
         self.scale(zoom, zoom)
+        
+        # ── Zoom-level hard eviction ──────────────────────────────────────────
+        # When tile_zoom changes, ALL scene items from the previous zoom level
+        # must be removed IMMEDIATELY from the QGraphicsScene.
+        # Without this, they accumulate as ghost layers causing the kaleidoscope effect.
+        last_tile_zoom = getattr(self, "_last_tile_zoom", tile_zoom)
+        if last_tile_zoom != tile_zoom:
+            to_remove = [k for k in self.tile_items if k[2] != tile_zoom]
+            for k in to_remove:
+                item = self.tile_items.pop(k)
+                if item != "fetching" and item.scene() == self.scene:
+                    self.scene.removeItem(item)
+        self._last_tile_zoom = tile_zoom
         
         # Instantiate Base Layer Thumbnail for black-flash protection
         if not hasattr(s, "base_layer_item"):
@@ -346,16 +382,18 @@ class CanvasRenderer(QGraphicsView):
                     self.threadpool.start(worker)
                     self.tile_items[lod_key] = "fetching"
                     
-        # Clean up old unseen tiles (LRU basic garbage collection)
+        # Lightweight LRU: remove tiles that are way off-screen (> 300 cached)
         if len(self.tile_items) > 300:
-            to_remove = []
-            for k, item in self.tile_items.items():
-                if k[2] != tile_zoom: # delete all old layers
-                    to_remove.append(k)
+            visible_keys = set(
+                (c, r, tile_zoom)
+                for c in range(start_col - 2, end_col + 3)
+                for r in range(start_row - 2, end_row + 3)
+            )
+            to_remove = [k for k in self.tile_items if k not in visible_keys]
             for k in to_remove:
-                if self.tile_items[k] != "fetching":
-                    self.scene.removeItem(self.tile_items[k])
-                del self.tile_items[k]
+                item = self.tile_items.pop(k)
+                if item != "fetching" and item.scene() == self.scene:
+                    self.scene.removeItem(item)
 
         # Sync scene-based pixel removal overlay with current mask state.
         # This ensures correct alignment on every render: when isolation mode
@@ -472,7 +510,7 @@ class CanvasRenderer(QGraphicsView):
                 color = QColor(tile.color)
                 fill_color = QColor(color)
                 fill_color.setAlpha(80) 
-                painter.setPen(QPen(color, 2.0 / self.viewport_zoom))
+                painter.setPen(QPen(color, 0))
                 poly = tile.polygon
                 # Check for brush polygons
                 if poly and len(poly) >= 3:
@@ -481,7 +519,8 @@ class CanvasRenderer(QGraphicsView):
                         poly_w.append(QPointF(pt[0], pt[1]))
                     
                     painter.setBrush(QBrush(fill_color))
-                    poly_pen = QPen(color, max(2.0 / self.viewport_zoom, 1.0))
+                    poly_pen = QPen(color, 0)
+                    poly_pen.setCosmetic(True)
                     poly_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                     painter.setPen(poly_pen)
                     painter.drawPolygon(poly_w)
@@ -492,10 +531,16 @@ class CanvasRenderer(QGraphicsView):
                         if sx2 > left and sx1 < right and sy2 > top and sy1 < bottom:
                             painter.drawRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
 
-        # Draw Grid (if reasonably sized)
-        if (right - left) / s.grid_w < 800:
+        # Draw Grid — only when grid cells are visible at ≥8 screen pixels wide
+        # Use a cosmetic pen (width=0) so lines are ALWAYS 1 screen pixel, regardless of zoom.
+        # The old `max(1.0/viewport_zoom, 1.0)` caused 20+ px wide lines at low zoom → yellow flood.
+        cell_screen_w = s.grid_w * self.viewport_zoom
+        cell_screen_h = s.grid_h * self.viewport_zoom
+        if cell_screen_w >= 8 and (right - left) / s.grid_w < 800:
             grid_color = QColor(s.grid_color)
-            pen = QPen(grid_color, max(1.0 / self.viewport_zoom, 1.0), Qt.PenStyle.DashLine)
+            grid_color.setAlpha(180)
+            pen = QPen(grid_color, 0, Qt.PenStyle.DashLine)  # 0 = cosmetic: 1 screen-pixel always
+            pen.setCosmetic(True)
             painter.setPen(pen)
 
             sc = int(left // s.grid_w)
@@ -510,9 +555,11 @@ class CanvasRenderer(QGraphicsView):
                 y = r * s.grid_h
                 painter.drawLine(int(left), y, int(right), y)
 
+
         # Draw rect select preview
         if self._rect_drag_start is not None and len(self._brush_points) == 1:
-            pen = QPen(QColor("#FF6600"), 2.0 / self.viewport_zoom, Qt.PenStyle.DashLine)
+            pen = QPen(QColor("#FF6600"), 0, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             r = self._rect_drag_start
@@ -521,7 +568,8 @@ class CanvasRenderer(QGraphicsView):
 
         # Draw live brush stroke
         if self.active_tool == "brush" and len(self._brush_points) > 1:
-            pen = QPen(QColor("#00FF00"), max(2.5 / self.viewport_zoom, 1.0))
+            pen = QPen(QColor("#00FF00"), 0)
+            pen.setCosmetic(True)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)

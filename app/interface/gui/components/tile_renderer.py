@@ -91,6 +91,13 @@ class TileRenderer(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
+        # ── Architecture: Explicit GPU framebuffer clear ──────────────────────
+        # Same pattern as CanvasRenderer: QOpenGLWidget retains the framebuffer
+        # between frames. FullViewportUpdate forces a complete repaint each frame.
+        from PyQt6.QtWidgets import QGraphicsView as _QGV
+        self.setViewportUpdateMode(_QGV.ViewportUpdateMode.FullViewportUpdate)
+        self.scene.setBackgroundBrush(QBrush(QColor("#1a1a1a")))
+
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -222,7 +229,12 @@ class TileRenderer(QGraphicsView):
             self.scene.addItem(item)
             self._pixel_overlay_items.append(item)
 
-    # ----- drawForeground (vector overlays) ----------------------------------
+    # ── Rendering: Explicit background clear (OpenGL framebuffer pattern) ────
+    def drawBackground(self, painter: QPainter, rect) -> None:
+        """Explicitly clear the OpenGL framebuffer before any scene items are drawn."""
+        painter.fillRect(rect, QColor("#1a1a1a"))
+
+    # ── Rendering: Vector overlays on top of the tile pixmap ───────────────
 
     def drawForeground(self, painter: QPainter, rect):
         s = self.main_window.current_session
@@ -248,7 +260,8 @@ class TileRenderer(QGraphicsView):
             membrane_color = QColor(base_color)
             membrane_color.setAlpha(120)
             painter.setBrush(QBrush(membrane_color))
-            border_pen = QPen(base_color, max(2.0 / self._zoom, 1.0))
+            border_pen = QPen(base_color, 0)  # cosmetic: always 1 screen pixel
+            border_pen.setCosmetic(True)
             border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(border_pen)
             painter.drawPolygon(poly_f)
