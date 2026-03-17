@@ -7,3 +7,6 @@
 __pycache__/
 *.pyc
 skills/
+*.pth
+*.zip
+app/infrastructure/ml_models/nuclick_torch/weights/
