@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtCore import Qt
 from app.application.pixel_mask_service import PixelMaskService
-from app.interface.gui.components.tile_preview_dialog import TilePreviewDialog
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +106,10 @@ class SlicePreviews(QWidget):
         if not s:
             return
 
-        for i, slice_rects in enumerate(s.selected_cells):
-            meta = s.slice_metadata[i] if i < len(s.slice_metadata) else {}
-            name = meta.get("name") or f"Slice {i + 1}"
-            color_hex = s.tile_colors[i] if i < len(s.tile_colors) else "#00FFFF"
-            tile_count = len(slice_rects)
+        for i, tile in enumerate(s.tiles):
+            name = tile.metadata.get("name") or f"Slice {i + 1}"
+            color_hex = tile.color
+            tile_count = len(tile.rects)
 
             # Capture `i` by value so the lambda closes over the right index
             def make_delete(idx=i):
@@ -131,63 +129,37 @@ class SlicePreviews(QWidget):
     def _delete_slice(self, idx: int) -> None:
         """Remove slice *idx* from the session and refresh the UI."""
         s = self.mw.current_session
-        if not s or idx >= len(s.selected_cells):
+        if not s or idx >= len(s.tiles):
             return
 
-        cr = self.mw.canvas_renderer
+        tr = self.mw.tile_renderer
 
-        # Adjust or clear isolation mode
-        if cr.isolated_slice_idx == idx:
-            cr.isolated_slice_idx = None
-        elif cr.isolated_slice_idx is not None and cr.isolated_slice_idx > idx:
-            cr.isolated_slice_idx -= 1
+        # If we are currently editing this tile, leave isolation mode
+        if tr.slice_idx == idx:
+            self.mw.switch_to_canvas()
+        elif tr.slice_idx is not None and tr.slice_idx > idx:
+            # Adjust tracked index since everything shifts down
+            tr._slice_idx -= 1
 
-        # Remove from all parallel lists
-        s.selected_cells.pop(idx)
-        if hasattr(s, "selected_polygons") and idx < len(s.selected_polygons):
-            s.selected_polygons.pop(idx)
-        if hasattr(s, "pixel_masks") and idx < len(s.pixel_masks):
-            s.pixel_masks.pop(idx)
-        if idx < len(s.slice_metadata):
-            s.slice_metadata.pop(idx)
-        if idx < len(s.tile_colors):
-            s.tile_colors.pop(idx)
+        # Release cached pixels before removal
+        if hasattr(s.tiles[idx], "clear_cache"):
+            s.tiles[idx].clear_cache()
 
-        s.sync_metadata()
+        # Remove from unified tile list
+        s.tiles.pop(idx)
+
         self.update_previews()
-        cr.redraw()
+        self.mw.canvas_renderer.redraw()
 
     def on_item_clicked(self, item):
         """Navigate to the slice when clicked in the sidebar."""
         idx = item.data(Qt.ItemDataRole.UserRole)
         s = self.mw.current_session
-        if not s or idx >= len(s.selected_cells):
+        if not s or idx >= len(s.tiles):
             return
 
-        self.mw.canvas_renderer.isolated_slice_idx = idx
-
-        slice_rects = s.selected_cells[idx]
-        if slice_rects:
-            min_x = min(r[0] for r in slice_rects)
-            min_y = min(r[1] for r in slice_rects)
-            max_x = max(r[2] for r in slice_rects)
-            max_y = max(r[3] for r in slice_rects)
-
-            w = max_x - min_x
-            h = max_y - min_y
-            cx = min_x + w / 2
-            cy = min_y + h / 2
-
-            view_w = self.mw.canvas_renderer.viewport().width()
-            view_h = self.mw.canvas_renderer.viewport().height()
-            fit_zoom = min((view_w * 0.9) / w, (view_h * 0.9) / h, 5.0) if w > 0 and h > 0 else 1.0
-
-            self.mw.canvas_renderer.viewport_zoom = fit_zoom
-            self.mw.canvas_renderer.resetTransform()
-            self.mw.canvas_renderer.scale(fit_zoom, fit_zoom)
-            self.mw.canvas_renderer.centerOn(cx, cy)
-
-        self.mw.canvas_renderer.redraw()
+        # Delegate to MainWindow bounded-context transition
+        self.mw.switch_to_tile(idx)
 
     # ── Context Menu ──────────────────────────────────────────────────────────
 
@@ -203,42 +175,11 @@ class SlicePreviews(QWidget):
             QMenu::item:selected { background-color: #3e3e4f; }
         """)
         action_nav   = menu.addAction("🔍 Focar no Canvas")
-        action_real  = menu.addAction("🖼️ Ver em Resolução Real")
-        action_pixel = menu.addAction("🎨 Abrir Editor de Pixel")
         menu.addSeparator()
         action_del = menu.addAction("🗑️ Deletar Slice")
 
         chosen = menu.exec(self.list_widget.mapToGlobal(pos))
         if chosen == action_nav:
             self.on_item_clicked(item)
-        elif chosen == action_real:
-            self.open_tile_preview(idx)
-        elif chosen == action_pixel:
-            self.open_pixel_editor(idx)
         elif chosen == action_del:
             self._delete_slice(idx)
-
-    def open_tile_preview(self, idx: int) -> None:
-        """Open the 1:1 real-resolution tile viewer for slice *idx*."""
-        s = self.mw.current_session
-        if not s or idx >= len(s.selected_cells):
-            return
-        dialog = TilePreviewDialog(session=s, slice_idx=idx, parent=self.mw)
-        dialog.exec()
-
-    def open_pixel_editor(self, idx: int) -> None:
-        """Open the pixel-level editor dialog for slice *idx*."""
-        from app.interface.gui.components.pixel_editor import SlicePixelEditorDialog
-
-        s = self.mw.current_session
-        if not s or idx >= len(s.selected_cells):
-            return
-
-        undo_manager = getattr(self.mw, "undo_manager", None)
-        dialog = SlicePixelEditorDialog(
-            main_window=self.mw,
-            slice_idx=idx,
-            pixel_mask_service=self._pms,
-            undo_manager=undo_manager,
-        )
-        dialog.exec()

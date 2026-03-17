@@ -2,7 +2,7 @@ import sys
 import platform
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QToolBar, QDockWidget, QListWidget, QPushButton, 
-                             QLabel, QFrame, QScrollArea, QSplitter)
+                             QLabel, QFrame, QScrollArea, QSplitter, QStackedWidget)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QAction, QActionGroup
 
@@ -10,10 +10,14 @@ from app.domain.history import UndoManager
 from app.application.project_service import ProjectService
 from app.application.export_service import ExportService
 from app.application.import_service import TileImportService
+from app.application.interactive_segmentation_service import InteractiveSegmentationService
+from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
+from PyQt6.QtWidgets import QComboBox, QCheckBox
 
 # Import the new PyQt Components (to be rewritten in subsequent steps)
 from .components import (
     CanvasRenderer,
+    TileRenderer,
     ProjectManager,
     SlicePreviews,
     ExportHandler
@@ -38,14 +42,34 @@ class SlicerLabApp(QMainWindow):
         self.project_service = ProjectService()
         self.export_service = ExportService()
         self.tile_import_service = TileImportService()
+
+        # ── Composition Root: wire infrastructure adapters into services ──
+        ml_models = []
+        try:
+            nuclick_adapter = NuClickAdapter(
+                model_path="app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth"
+            )
+            ml_models.append(nuclick_adapter)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("Failed to load NuClick adapter: %s", e)
+
+        self.segmentation_service = InteractiveSegmentationService(
+            models=ml_models
+        )
         self.undo_manager = UndoManager()
 
         self._setup_ui()
 
     def _setup_ui(self):
-        # 1. Central Widget (Canvas)
-        self.canvas_renderer = CanvasRenderer(self)
-        self.setCentralWidget(self.canvas_renderer)
+        # 1. Central Widget — QStackedWidget hosts two independent environments
+        self._central_stack = QStackedWidget()
+        self.canvas_renderer = CanvasRenderer(self)     # Index 0 — Macro (full image)
+        self.tile_renderer   = TileRenderer(self)       # Index 1 — Micro (isolated tile)
+        self._central_stack.addWidget(self.canvas_renderer)
+        self._central_stack.addWidget(self.tile_renderer)
+        self._central_stack.setCurrentIndex(0)
+        self.setCentralWidget(self._central_stack)
 
         # 2. Top Toolbar
         self.toolbar = QToolBar("Main Toolbar")
@@ -77,6 +101,36 @@ class SlicerLabApp(QMainWindow):
         self.action_brush.triggered.connect(lambda: self._activate_tool("brush"))
         self.tool_group.addAction(self.action_brush)
         self.toolbar.addAction(self.action_brush)
+
+        self.toolbar.addSeparator()
+
+        # Tools exclusively for Tile/Slice Isolation mode
+        self.action_segment = QAction("🧠 Segment Nucleus", self)
+        self.action_segment.setCheckable(True)
+        self.action_segment.triggered.connect(lambda: self._activate_tool("segment"))
+        self.tool_group.addAction(self.action_segment)
+        self.toolbar.addAction(self.action_segment)
+
+        self.action_erase = QAction("🧽 Erase Pixels", self)
+        self.action_erase.setCheckable(True)
+        self.action_erase.triggered.connect(lambda: self._activate_tool("erase"))
+        self.tool_group.addAction(self.action_erase)
+        self.toolbar.addAction(self.action_erase)
+
+        self.toolbar.addSeparator()
+
+        # Model Selector Combobox in Toolbar
+        self.combo_model = QComboBox()
+        self.combo_model.addItems(self.segmentation_service.get_available_models())
+        self.combo_model.setStyleSheet("QComboBox { background-color: #444; color: #ccc; border: 1px solid #555; padding: 2px 6px; }")
+        self.toolbar.addWidget(self.combo_model)
+        
+        # Checkbox for Segmentation Membrane Overlay
+        self.chk_show_membrane = QCheckBox("Show Membrane")
+        self.chk_show_membrane.setChecked(True)
+        self.chk_show_membrane.setStyleSheet("QCheckBox { color: #ccc; margin-left: 10px; }")
+        self.chk_show_membrane.stateChanged.connect(lambda: self.canvas_renderer.viewport().update() if self.canvas_renderer else None)
+        self.toolbar.addWidget(self.chk_show_membrane)
 
         self.toolbar.addSeparator()
         
@@ -155,6 +209,40 @@ class SlicerLabApp(QMainWindow):
         self.statusBar().showMessage(f"Tool selected: {tool_name}")
         self.canvas_renderer.set_tool(tool_name)
 
+    def update_tool_context(self, is_isolated: bool):
+        """Enable/Disable tools based on whether the user is in global view or inside an isolated tile."""
+        self.action_grid.setEnabled(not is_isolated)
+        self.action_brush.setEnabled(not is_isolated)
+        self.action_segment.setEnabled(is_isolated)
+        self.action_erase.setEnabled(is_isolated)
+        self.combo_model.setEnabled(is_isolated)
+
+        # Auto-switch to an available tool safely to avoid undefined states
+        if is_isolated and self.active_tool in ("grid", "brush"):
+            self.action_segment.setChecked(True)
+            self._activate_tool("segment")
+        elif not is_isolated and self.active_tool in ("segment", "erase"):
+            self.action_grid.setChecked(True)
+            self._activate_tool("grid")
+
     def _add_tile(self):
         """Slot for the 'Add Tile' button — delegates to project_manager."""
         self.project_manager.add_tile()
+
+    # ── Environment Switching (Bounded Context Transitions) ─────────────────
+
+    def switch_to_tile(self, idx: int) -> None:
+        """Transition from Macro (full image) to Micro (isolated tile editing)."""
+        s = self.current_session
+        if not s or idx >= len(s.tiles):
+            return
+        self.tile_renderer.load_tile(s, idx)
+        self._central_stack.setCurrentIndex(1)
+        self.update_tool_context(True)
+
+    def switch_to_canvas(self) -> None:
+        """Transition from Micro (isolated tile) back to Macro (full image)."""
+        self.tile_renderer.unload()
+        self._central_stack.setCurrentIndex(0)
+        self.update_tool_context(False)
+        self.canvas_renderer.redraw()

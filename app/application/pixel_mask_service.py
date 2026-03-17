@@ -21,14 +21,13 @@ class PixelMaskService:
 
         Args:
             session: The active :class:`ImageSession`.
-            slice_idx: Index into ``session.pixel_masks`` / ``session.selected_cells``.
+            slice_idx: Index into ``session.tiles``.
             px, py: Image-space pixel coordinates (0-based, full-resolution).
 
         Returns:
             ``True`` if the pixel is now *removed*; ``False`` if it was restored.
         """
-        session.sync_metadata()  # ensure pixel_masks list is long enough
-        mask: Set[Tuple[int, int]] = session.pixel_masks[slice_idx]
+        mask: Set[Tuple[int, int]] = session.tiles[slice_idx].pixel_mask
         coord = (px, py)
         if coord in mask:
             mask.discard(coord)
@@ -41,5 +40,4 @@ class PixelMaskService:
         self, session: ImageSession, slice_idx: int
     ) -> Set[Tuple[int, int]]:
         """Return the current pixel mask set for a slice (never ``None``)."""
-        session.sync_metadata()
-        return session.pixel_masks[slice_idx]
+        return session.tiles[slice_idx].pixel_mask

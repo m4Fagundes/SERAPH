@@ -46,33 +46,44 @@ class ProjectService:
             s.zoom_level = item.get("zoom_level", 1.0)
             s.camera_x = item.get("camera_x", 0)
             s.camera_y = item.get("camera_y", 0)
+            s.camera_y = item.get("camera_y", 0)
             
-            sel = item.get("selected_regions", item.get("selected_cells", []))
-            if sel and isinstance(sel[0], (list, tuple)):
-                if sel[0] and isinstance(sel[0][0], (list, tuple)):
-                    s.selected_cells = [set(tuple(r) for r in group) for group in sel]
-                else:
-                    s.selected_cells = [{tuple(r)} for r in sel if len(r) == 4]
-            s.slice_metadata = item.get("slice_metadata", [])
-            # Load polygon data (brush-drawn slices)
-            raw_polys = item.get("selected_polygons", [])
-            s.selected_polygons = [
-                [tuple(pt) for pt in poly] if poly else None
-                for poly in raw_polys
-            ]
-            s.sync_metadata()
-            # Restore exclusion rects
-            raw_excls = item.get("slice_exclusions", [])
-            s.slice_exclusions = [
-                [tuple(r) for r in tile_excls] if tile_excls else []
-                for tile_excls in raw_excls
-            ]
-            s.sync_metadata()
-            # Restore tile colors if saved
-            saved_colors = item.get("tile_colors", [])
-            if saved_colors:
-                s.tile_colors = saved_colors[:len(s.selected_cells)]
-                s.sync_metadata()  # fills remaining colors from palette
+            # --- Schema Migration: Old Parallel Arrays -> unified Tile objects ---
+            from app.domain.tile import Tile
+            s.tiles = []
+            
+            if "tiles" in item:
+                s.tiles = [Tile.deserialize(t_data) for t_data in item["tiles"]]
+            else:
+                # Old schema loader
+                sel = item.get("selected_regions", item.get("selected_cells", []))
+                rects_list = []
+                if sel and isinstance(sel[0], (list, tuple)):
+                    if sel[0] and isinstance(sel[0][0], (list, tuple)):
+                        rects_list = [[tuple(r) for r in group] for group in sel]
+                    else:
+                        rects_list = [[tuple(r)] for r in sel if len(r) == 4]
+                
+                raw_polys = item.get("selected_polygons", [])
+                slice_metadata = item.get("slice_metadata", [])
+                raw_excls = item.get("slice_exclusions", [])
+                saved_colors = item.get("tile_colors", [])
+                raw_masks = item.get("pixel_masks", [])
+                
+                for i, rects in enumerate(rects_list):
+                    t = Tile(rects=rects)
+                    if i < len(raw_polys) and raw_polys[i]:
+                        t.polygon = [tuple(pt) for pt in raw_polys[i]]
+                    if i < len(slice_metadata):
+                        t.metadata = slice_metadata[i]
+                    if i < len(raw_excls) and raw_excls[i]:
+                        t.exclusions = [tuple(r) for r in raw_excls[i]]
+                    if i < len(saved_colors):
+                        t.color = saved_colors[i]
+                    if i < len(raw_masks) and raw_masks[i]:
+                        t.pixel_mask = {tuple(p) for p in raw_masks[i]}
+                    s.tiles.append(t)
+            
             s.grid_color = item.get("grid_color", "#FFFF00")
             # Resolve export_dir relative path
             raw_export_dir = item.get("export_dir", None)
@@ -82,14 +93,6 @@ class ProjectService:
             else:
                 s.export_dir = None
             s.export_format = item.get("export_format", None)
-            # Restore pixel masks (per-slice set of (px, py) removed coords)
-            raw_masks = item.get("pixel_masks", [])
-            s.pixel_masks = [
-                {tuple(p) for p in m} for m in raw_masks
-            ]
-            # Pad pixel_masks to match selected_cells length
-            while len(s.pixel_masks) < len(s.selected_cells):
-                s.pixel_masks.append(set())
             sessions.append(s)
         return sessions, missing
 
@@ -125,21 +128,7 @@ class ProjectService:
                 "abs_path": os.path.abspath(s.path),
                 "grid_w": s.grid_w,
                 "grid_h": s.grid_h,
-                "selected_regions": [[list(r) for r in group] for group in s.selected_cells],
-                "selected_polygons": [
-                    [list(pt) for pt in poly] if poly else None
-                    for poly in s.selected_polygons
-                ],
-                "slice_metadata": s.slice_metadata,
-                "slice_exclusions": [
-                    [list(r) for r in excl] if excl else []
-                    for excl in s.slice_exclusions
-                ],
-                "pixel_masks": [
-                    [list(p) for p in m]
-                    for m in (s.pixel_masks if hasattr(s, 'pixel_masks') else [])
-                ],
-                "tile_colors": s.tile_colors,
+                "tiles": [t.serialize() for t in s.tiles],
                 "grid_color": s.grid_color,
                 "export_dir": rel_export_dir,
                 "export_format": s.export_format,

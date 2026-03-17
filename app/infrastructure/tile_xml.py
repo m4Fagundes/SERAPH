@@ -132,13 +132,9 @@ def build_tile_descriptor(
     Returns:
         dict ready to be passed to :func:`write_tile_xml`.
     """
-    # Always fetch the underlying grid rects first (used in else-branch below)
-    slice_rects = session.selected_cells[slice_idx]
-
-    # Retrieve polygon for brush slices (authoritative shape)
-    polygon = None
-    if hasattr(session, "selected_polygons") and slice_idx < len(session.selected_polygons):
-        polygon = session.selected_polygons[slice_idx]  # list of (x,y) or None
+    tile = session.tiles[slice_idx]
+    slice_rects = tile.rects
+    polygon = tile.polygon
 
     # For brush slices, compute bounds from the actual polygon, not the grid rects
     if polygon and len(polygon) >= 3:
@@ -152,16 +148,8 @@ def build_tile_descriptor(
         bx2 = max(r[2] for r in slice_rects)
         by2 = max(r[3] for r in slice_rects)
 
-    meta: Dict[str, str] = (
-        session.slice_metadata[slice_idx]
-        if slice_idx < len(session.slice_metadata) else {}
-    )
-
-    pixel_mask: Set[Tuple[int, int]] = (
-        session.pixel_masks[slice_idx]
-        if hasattr(session, "pixel_masks") and slice_idx < len(session.pixel_masks)
-        else set()
-    )
+    meta: Dict[str, str] = tile.metadata
+    pixel_mask: Set[Tuple[int, int]] = tile.pixel_mask
 
     abs_src = os.path.abspath(session.path)
     try:

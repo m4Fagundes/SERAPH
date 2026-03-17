@@ -78,27 +78,19 @@ class TileImportService:
                 candidate_abs, candidate_rel,
             )
 
-        # ── Append slice to session ──
-        session.selected_cells.append(rects)
-        session.sync_metadata()
-
-        new_idx = len(session.selected_cells) - 1
-
-        # ── Restore metadata ──
-        session.slice_metadata[new_idx] = {
+        # ── Append Tile to session ──
+        from app.domain.tile import Tile
+        tile = Tile(rects=list(rects))
+        tile.metadata = {
             "name": sl.get("name", ""),
             "description": sl.get("description", ""),
             "microns_per_pixel": sl.get("microns_per_pixel", ""),
         }
-
-        # ── Restore pixel mask ──
-        pixel_mask = {(p[0], p[1]) for p in sl.get("pixel_mask", [])}
-        if hasattr(session, "pixel_masks"):
-            session.pixel_masks[new_idx] = pixel_mask
-
-        # ── Restore polygon ──
-        if hasattr(session, "selected_polygons"):
-            session.selected_polygons[new_idx] = polygon
+        tile.pixel_mask = {(p[0], p[1]) for p in sl.get("pixel_mask", [])}
+        tile.polygon = polygon
+        
+        session.tiles.append(tile)
+        new_idx = len(session.tiles) - 1
 
         logger.info(
             "Tile XML imported: type=%s, rect=%s, polygon=%s, %d removed pixels → slice idx %d",

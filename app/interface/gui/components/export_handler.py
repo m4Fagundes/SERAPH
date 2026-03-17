@@ -31,11 +31,11 @@ class ExportHandlerMixin:
 
     def save_selected_cells(self):
         s = self.current_session
-        if not s or not s.selected_cells: 
+        if not s or not s.tiles: 
             messagebox.showwarning("Warning", "No cells selected.")
             return
         
-        n = len(s.selected_cells)
+        n = len(s.tiles)
         msg = f"Save {n} tile(s) as {self.export_format.upper()[1:]}?"
         if not messagebox.askyesno("Confirm", msg): return
         
@@ -108,12 +108,12 @@ class ExportHandlerMixin:
 
     def _auto_reexport(self, session):
         """Re-export slices if session was previously exported."""
-        if session.export_dir and session.export_format and session.selected_cells:
+        if session.export_dir and session.export_format and session.tiles:
             try:
                 if os.path.isdir(session.export_dir):
                     self.export_service.save_selected_cells(
                         session, session.export_dir, session.export_format)
-                    self.status_bar.config(text=f"Auto-exported {len(session.selected_cells)} tile(s)")
+                    self.status_bar.config(text=f"Auto-exported {len(session.tiles)} tile(s)")
             except Exception as e:
                 logger.error("Auto-reexport error for session '%s': %s", session.name, e)
 

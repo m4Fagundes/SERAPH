@@ -133,8 +133,8 @@ class ProjectManager:
         self.entry_w.setText(str(session.grid_w))
         self.entry_h.setText(str(session.grid_h))
 
-        # Clear isolated mode to return to full image view
-        self.mw.canvas_renderer.isolated_slice_idx = None
+        # Return to the Macro environment (full image view)
+        self.mw.switch_to_canvas()
         self.mw.slice_previews.list_widget.clearSelection()
 
         # Reset camera
@@ -185,31 +185,9 @@ class ProjectManager:
         # Refresh sidebar
         self.mw.slice_previews.update_previews()
         self.mw.statusBar().showMessage(
-            f"Tile imported → Slice {new_idx + 1} | {len(s.selected_cells)} slices total"
+            f"Tile imported → Slice {new_idx + 1} | {len(s.tiles)} slices total"
         )
 
-        # Navigate the canvas to the newly imported slice (isolation mode + auto-zoom)
-        self.mw.canvas_renderer.isolated_slice_idx = new_idx
-        slice_rects = s.selected_cells[new_idx]
-        if slice_rects:
-            min_x = min(r[0] for r in slice_rects)
-            min_y = min(r[1] for r in slice_rects)
-            max_x = max(r[2] for r in slice_rects)
-            max_y = max(r[3] for r in slice_rects)
-            w = max_x - min_x
-            h = max_y - min_y
-            cx = min_x + w / 2
-            cy = min_y + h / 2
-            view_w = self.mw.canvas_renderer.viewport().width()
-            view_h = self.mw.canvas_renderer.viewport().height()
-            fit_zoom = (
-                min((view_w * 0.9) / w, (view_h * 0.9) / h, 5.0)
-                if w > 0 and h > 0 else 1.0
-            )
-            self.mw.canvas_renderer.viewport_zoom = fit_zoom
-            self.mw.canvas_renderer.resetTransform()
-            self.mw.canvas_renderer.scale(fit_zoom, fit_zoom)
-            self.mw.canvas_renderer.centerOn(cx, cy)
-
-        self.mw.canvas_renderer.redraw()
+        # Navigate to the newly imported slice using the Micro environment
+        self.mw.switch_to_tile(new_idx)
 

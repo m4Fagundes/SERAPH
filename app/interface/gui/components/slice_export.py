@@ -50,7 +50,7 @@ class ExportHandler:
             QMessageBox.warning(self.mw, "Export", "No image loaded.")
             return
             
-        if not s.selected_cells:
+        if not s.tiles:
             QMessageBox.warning(self.mw, "Export", "No slices selected to export.")
             return
 

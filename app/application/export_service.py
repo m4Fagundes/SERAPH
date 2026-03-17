@@ -20,27 +20,27 @@ class ExportService:
         if not session or not output_dir: return 0
 
         count = 0
-        total = len(session.selected_cells)
+        total = len(session.tiles)
         base = os.path.splitext(session.name)[0]
-        for i, slice_rects in enumerate(session.selected_cells):
+        for i, tile in enumerate(session.tiles):
             # Bounding box of this slice
-            bx1 = min(r[0] for r in slice_rects)
-            by1 = min(r[1] for r in slice_rects)
-            bx2 = max(r[2] for r in slice_rects)
-            by2 = max(r[3] for r in slice_rects)
+            bx1, by1, bx2, by2 = tile.bounding_box
 
             w, h = bx2 - bx1, by2 - by1
+            if w <= 0 or h <= 0:
+                continue
+                
             # Always use RGBA internally so we can apply polygon mask
             out_img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
 
-            for (rx1, ry1, rx2, ry2) in slice_rects:
+            for (rx1, ry1, rx2, ry2) in tile.rects:
                 crop = session.pyramid.get_region_fullres(rx1, ry1, rx2 - rx1, ry2 - ry1)
                 crop = crop.convert("RGBA")
                 out_img.paste(crop, (rx1 - bx1, ry1 - by1))
 
             # By default, a mask is fully opaque (255) meaning keep all pixels
             mask = Image.new("L", (w, h), 255)
-            poly = session.selected_polygons[i] if session.selected_polygons and i < len(session.selected_polygons) else None
+            poly = tile.polygon
             
             # Apply freehand polygon mask if this is a brush slice
             if poly and len(poly) >= 3:
@@ -51,13 +51,13 @@ class ExportService:
                 draw.polygon(local_pts, fill=255)
                 
             # Apply exclusion strokes (eraser brush holes) regardless of polygon
-            exclusions = session.slice_exclusions[i] if hasattr(session, 'slice_exclusions') and i < len(session.slice_exclusions) else []
+            exclusions = tile.exclusions
             if exclusions:
                 draw = ImageDraw.Draw(mask)
                 draw_exclusion_rects(draw, exclusions, bx1, by1, 1.0)
 
             # Apply per-pixel mask (individual pixels toggled in the Pixel Editor)
-            pixel_mask = session.pixel_masks[i] if hasattr(session, 'pixel_masks') and i < len(session.pixel_masks) else set()
+            pixel_mask = tile.pixel_mask
             if pixel_mask:
                 draw = ImageDraw.Draw(mask)
                 for (px, py) in pixel_mask:
@@ -132,14 +132,13 @@ class ExportService:
         base = os.path.splitext(session.name)[0]
         rows = []
 
-        for i, slice_rects in enumerate(session.selected_cells):
-            bx1 = min(r[0] for r in slice_rects)
-            by1 = min(r[1] for r in slice_rects)
-            bx2 = max(r[2] for r in slice_rects)
-            by2 = max(r[3] for r in slice_rects)
+        for i, tile in enumerate(session.tiles):
+            bx1, by1, bx2, by2 = tile.bounding_box
             w_px, h_px = bx2 - bx1, by2 - by1
+            if w_px <= 0 or h_px <= 0:
+                continue
 
-            meta = session.slice_metadata[i] if i < len(session.slice_metadata) else {}
+            meta = tile.metadata
             mpp_str = meta.get("microns_per_pixel", "")
             try:
                 mpp = float(mpp_str) if mpp_str else None

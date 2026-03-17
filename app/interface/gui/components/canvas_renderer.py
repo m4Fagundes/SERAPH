@@ -1,10 +1,11 @@
 import logging
 import math
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QApplication
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtGui import QPainter, QPixmap, QImage, QWheelEvent, QMouseEvent, QPen, QColor, QBrush, QPolygonF
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QObject, QRunnable, QThreadPool
 import io
+import time
 from app.domain.selection import subtract_from_slice
 from app.application.pixel_mask_service import PixelMaskService
 
@@ -12,6 +13,38 @@ logger = logging.getLogger(__name__)
 
 class WorkerSignals(QObject):
     result = pyqtSignal(tuple, object)
+
+class SegmentationSignals(QObject):
+    """Signals emitted by the background segmentation worker."""
+    finished = pyqtSignal(list)   # polygon in global coords
+    error = pyqtSignal(str)
+
+class SegmentationWorker(QRunnable):
+    """Runs interactive segmentation inference off the main thread."""
+
+    def __init__(self, segmentation_service, model_name, session, slice_idx, gx, gy):
+        super().__init__()
+        self.segmentation_service = segmentation_service
+        self.model_name = model_name
+        self.session = session
+        self.slice_idx = slice_idx
+        self.gx = gx
+        self.gy = gy
+        self.signals = SegmentationSignals()
+
+    def run(self):
+        try:
+            print(f"[SegmentationWorker] Starting inference: model={self.model_name}, "
+                  f"slice={self.slice_idx}, click=({self.gx},{self.gy})", flush=True)
+            polygon = self.segmentation_service.segment_at_point(
+                self.model_name, self.session, self.slice_idx, self.gx, self.gy
+            )
+            print(f"[SegmentationWorker] Result: {len(polygon)} polygon points", flush=True)
+            self.signals.finished.emit(polygon)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.signals.error.emit(str(e))
 
 class TileWorker(QRunnable):
     def __init__(self, session, col, row, zoom, tile_size):
@@ -71,7 +104,7 @@ class CanvasRenderer(QGraphicsView):
         
         # Local view matrix properties to allow multiple independent windows
         self.viewport_zoom = 1.0 
-        self.isolated_slice_idx = None
+        self._isolated_slice_idx = None
         
         # Shared pixel mask service (stateless, safe to reuse across events)
         self._pms = PixelMaskService()
@@ -81,6 +114,23 @@ class CanvasRenderer(QGraphicsView):
         # Using QGraphicsRectItem (scene-space) instead of drawForeground (QPainter/OpenGL)
         # ensures pixel-perfect alignment with the image bitmap below.
         self._pixel_overlay_items: list = []
+
+    @property
+    def isolated_slice_idx(self):
+        return self._isolated_slice_idx
+
+    @isolated_slice_idx.setter
+    def isolated_slice_idx(self, val):
+        self._isolated_slice_idx = val
+        self.main_window.update_tool_context(val is not None)
+        
+        # When entering or leaving isolated mode, immediately clear all active graphics tiles
+        # to guarantee strict isolation boundaries and no artifact bleeding from cached pyvips tiles.
+        for k, item in list(self.tile_items.items()):
+            if item != "fetching" and item.scene() == self.scene:
+                self.scene.removeItem(item)
+        self.tile_items.clear()
+        self.redraw()
 
     # ------------------------------------------------------------------
     # Pixel Overlay (scene items — aligned with image bitmap)
@@ -106,10 +156,10 @@ class CanvasRenderer(QGraphicsView):
 
         if session is None or slice_idx is None:
             return
-        if slice_idx >= len(session.pixel_masks):
+        if slice_idx >= len(session.tiles):
             return
 
-        mask = session.pixel_masks[slice_idx]
+        mask = session.tiles[slice_idx].pixel_mask
         if not mask:
             return
 
@@ -135,6 +185,12 @@ class CanvasRenderer(QGraphicsView):
         elif tool_name == "brush":
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.viewport().setCursor(self._make_pencil_cursor())
+        elif tool_name == "erase":
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+        elif tool_name == "segment":
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
 
     @staticmethod
     def _make_pencil_cursor() -> "QCursor":
@@ -235,10 +291,14 @@ class CanvasRenderer(QGraphicsView):
             # Push it behind all other pyvips tiles
             base_item.setZValue(-1)
             
-            self.scene.addItem(base_item)
             s.base_layer_item = base_item
-        elif s.base_layer_item.scene() != self.scene:
-            self.scene.addItem(s.base_layer_item)
+            
+        if self.isolated_slice_idx is not None:
+            if s.base_layer_item.scene() == self.scene:
+                self.scene.removeItem(s.base_layer_item)
+        else:
+            if s.base_layer_item.scene() != self.scene:
+                self.scene.addItem(s.base_layer_item)
         
         # Calculate true visible scene rectangle (Full Res Coords)
         visible_rect = self.mapToScene(self.viewport().rect()).boundingRect()
@@ -262,24 +322,21 @@ class CanvasRenderer(QGraphicsView):
         if (end_col - start_col) * (end_row - start_row) > 150:
             return
             
-        isolation_rects = []
-        if self.isolated_slice_idx is not None and self.isolated_slice_idx < len(s.selected_cells):
-            isolation_rects = s.selected_cells[self.isolated_slice_idx]
+        isolation_bounds = None
+        if self.isolated_slice_idx is not None and self.isolated_slice_idx < len(s.tiles):
+            isolation_bounds = s.tiles[self.isolated_slice_idx].bounding_box
             
         for col in range(start_col, end_col + 1):
             for row in range(start_row, end_row + 1):
                 # Skip tiles completely outside the isolated slice if isolated mode is active
-                if self.isolated_slice_idx is not None and isolation_rects:
+                if self.isolated_slice_idx is not None and isolation_bounds is not None:
                     tile_x1 = col * lod_tile_w
                     tile_y1 = row * lod_tile_w
                     tile_x2 = tile_x1 + lod_tile_w
                     tile_y2 = tile_y1 + lod_tile_w
-                    overlap = False
-                    for (sx1, sy1, sx2, sy2) in isolation_rects:
-                        if sx2 > tile_x1 and sx1 < tile_x2 and sy2 > tile_y1 and sy1 < tile_y2:
-                            overlap = True
-                            break
-                    if not overlap:
+                    
+                    sx1, sy1, sx2, sy2 = isolation_bounds
+                    if not (sx2 > tile_x1 and sx1 < tile_x2 and sy2 > tile_y1 and sy1 < tile_y2):
                         continue
                         
                 lod_key = (col, row, tile_zoom)
@@ -340,42 +397,47 @@ class CanvasRenderer(QGraphicsView):
         left, top, right, bottom = rect.left(), rect.top(), rect.right(), rect.bottom()
         
         # ---------------------------------------------------------------------
-        # ISOLATION MODE: Paint an absolute black vignette outside the selected slice
+        # ISOLATION MODE: Membrane Overlay
         # ---------------------------------------------------------------------
         if self.isolated_slice_idx is not None:
-            from PyQt6.QtGui import QPainterPath
-            screen_path = QPainterPath()
-            screen_path.addRect(QRectF(left, top, right - left, bottom - top))
-            
-            slice_path = QPainterPath()
-            if self.isolated_slice_idx < len(s.selected_cells):
-                poly = s.selected_polygons[self.isolated_slice_idx] if hasattr(s, 'selected_polygons') and self.isolated_slice_idx < len(s.selected_polygons) else None
-                if poly and len(poly) >= 3:
+            # 1. Check if the user wants to see the segmentation membrane
+            show_membrane = True
+            if hasattr(self.main_window, 'chk_show_membrane'):
+                show_membrane = self.main_window.chk_show_membrane.isChecked()
+
+            # 2. Draw the membrane for the current slice if toggled ON
+            if show_membrane and self.isolated_slice_idx < len(s.tiles):
+                tile = s.tiles[self.isolated_slice_idx]
+                if tile.polygon and len(tile.polygon) >= 3:
                     poly_f = QPolygonF()
-                    for pt in poly:
+                    for pt in tile.polygon:
                         poly_f.append(QPointF(pt[0], pt[1]))
-                    slice_path.addPolygon(poly_f)
-                else:
-                    slice_rects = s.selected_cells[self.isolated_slice_idx]
-                    for (sx1, sy1, sx2, sy2) in slice_rects:
-                        slice_path.addRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
-                
-            # Boolean subtraction — mask everything outside the tile
-            mask_path = screen_path.subtracted(slice_path)
-            painter.setBrush(QColor("black"))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawPath(mask_path)
+                    
+                    # Style the membrane
+                    base_color = QColor(tile.color)
+                    membrane_color = QColor(base_color)
+                    membrane_color.setAlpha(120) # Semi-transparent fill
+                    
+                    painter.setBrush(QBrush(membrane_color))
+                    
+                    # Solid boundary line
+                    border_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
+                    border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    painter.setPen(border_pen)
+                    
+                    # Draw
+                    painter.drawPolygon(poly_f)
 
             # ── Pixel removal borders (thin red outline only) ────────────────
             # The fill is handled by _rebuild_pixel_overlay() via QGraphicsRectItem
             # (scene-space items, same render pipeline as the image → perfect alignment).
             # Here we only draw the 1-px border which does NOT need sub-pixel accuracy.
             i = self.isolated_slice_idx
-            if hasattr(s, 'pixel_masks') and i < len(s.pixel_masks) and s.pixel_masks[i]:
+            if i < len(s.tiles) and s.tiles[i].pixel_mask:
                 border_pen = QPen(QColor(210, 40, 40, 230), 0.08 / max(self.viewport_zoom, 1))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.setPen(border_pen)
-                for (px, py) in s.pixel_masks[i]:
+                for (px, py) in s.tiles[i].pixel_mask:
                     painter.drawRect(QRectF(float(px), float(py), 1.0, 1.0))
 
             # ── Pixel grid — only when each real pixel is clearly visible ────
@@ -405,14 +467,13 @@ class CanvasRenderer(QGraphicsView):
             return
         
         # Draw Selections (Normal Mode)
-        if s.selected_cells:
-            for i, slice_rects in enumerate(s.selected_cells):
-                color_hex = s.tile_colors[i] if i < len(s.tile_colors) else "#00FFFF"
-                color = QColor(color_hex)
+        if s.tiles:
+            for i, tile in enumerate(s.tiles):
+                color = QColor(tile.color)
                 fill_color = QColor(color)
                 fill_color.setAlpha(80) 
                 painter.setPen(QPen(color, 2.0 / self.viewport_zoom))
-                poly = s.selected_polygons[i] if hasattr(s, 'selected_polygons') and i < len(s.selected_polygons) else None
+                poly = tile.polygon
                 # Check for brush polygons
                 if poly and len(poly) >= 3:
                     poly_w = QPolygonF()
@@ -427,7 +488,7 @@ class CanvasRenderer(QGraphicsView):
                 else:
                     # Standard Rectangle
                     painter.setBrush(QBrush(fill_color))
-                    for (sx1, sy1, sx2, sy2) in slice_rects:
+                    for (sx1, sy1, sx2, sy2) in tile.rects:
                         if sx2 > left and sx1 < right and sy2 > top and sy1 < bottom:
                             painter.drawRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
 
@@ -495,37 +556,98 @@ class CanvasRenderer(QGraphicsView):
         
         self.redraw()
 
+    def _on_segmentation_done(self, polygon: list, session, slice_idx: int):
+        """Callback invoked on the main thread when background segmentation finishes."""
+        self.setStyleSheet("")
+        sb = getattr(self.main_window, 'statusBar', lambda: None)()
+
+        if polygon:
+            session.tiles[slice_idx].polygon = polygon
+            if sb:
+                sb.showMessage(f"Segmentation successful: {len(polygon)} points.")
+        else:
+            if sb:
+                sb.showMessage("Failed to find nucleus at coordinates.")
+
+        self.viewport().update()
+
+    def _on_segmentation_error(self, error_msg: str):
+        """Callback invoked on the main thread when background segmentation fails."""
+        self.setStyleSheet("")
+        logger.error("Inference failed: %s", error_msg)
+        sb = getattr(self.main_window, 'statusBar', lambda: None)()
+        if sb:
+            sb.showMessage("Inference failed.")
+        self.viewport().update()
+
     def mousePressEvent(self, event: QMouseEvent):
         s = self.main_window.current_session
         if self.isolated_slice_idx is not None:
-            if event.button() == Qt.MouseButton.RightButton and s:
-                # Right-click in isolation mode = toggle individual pixel
+            # INTERACTIVE SEGMENTATION MODE (Left Click)
+            if self.active_tool == "segment" and event.button() == Qt.MouseButton.LeftButton and s:
                 scene_pt = self.mapToScene(event.position().toPoint())
-                # math.floor() ensures click maps to exactly ONE pixel cell
                 px = math.floor(scene_pt.x())
                 py = math.floor(scene_pt.y())
                 idx = self.isolated_slice_idx
 
-                # FIX: reject clicks outside the tile bounds (vignette black area)
-                slice_rects = s.selected_cells[idx]
+                slice_rects = s.tiles[idx].rects
                 in_tile = any(r[0] <= px < r[2] and r[1] <= py < r[3] for r in slice_rects)
                 if not in_tile:
                     super().mousePressEvent(event)
                     return
 
-                # Push undo snapshot before mutating
+                model_name = self.main_window.combo_model.currentText()
+                if not model_name: return
+
+                sb = getattr(self.main_window, 'statusBar', lambda: None)()
+                if sb: sb.showMessage(f"Processing inference with {model_name}...")
+
+                self.setStyleSheet("opacity: 0.5;")
+
+                # Delegate to Application Service on a background thread (Error 3 & 5 fix)
+                seg_service = self.main_window.segmentation_service
+                worker = SegmentationWorker(seg_service, model_name, s, idx, px, py)
+                worker.signals.finished.connect(
+                    lambda poly, _s=s, _idx=idx: self._on_segmentation_done(poly, _s, _idx)
+                )
+                worker.signals.error.connect(
+                    lambda err: self._on_segmentation_error(err)
+                )
+                self.threadpool.start(worker)
+                return
+
+            # PIXEL ERASE MODE (Left Click drag to paint erase, Right Click to restore)
+            if self.active_tool == "erase" and (event.button() == Qt.MouseButton.LeftButton or event.button() == Qt.MouseButton.RightButton) and s:
+                scene_pt = self.mapToScene(event.position().toPoint())
+                px = math.floor(scene_pt.x())
+                py = math.floor(scene_pt.y())
+                idx = self.isolated_slice_idx
+
+                slice_rects = s.tiles[idx].rects
+                in_tile = any(r[0] <= px < r[2] and r[1] <= py < r[3] for r in slice_rects)
+                if not in_tile:
+                    super().mousePressEvent(event)
+                    return
+
                 undo = getattr(self.main_window, 'undo_manager', None)
                 if undo:
                     undo.push(s, 'pixel_mask_toggle')
-                removed = self._pms.toggle_pixel(s, idx, px, py)
-                state = "removed" if removed else "restored"
+                    
+                erase_mode = event.button() == Qt.MouseButton.LeftButton
+                mask = self._pms.get_mask(s, idx)
+                if erase_mode:
+                    mask.add((px, py))
+                else:
+                    mask.discard((px, py))
+                    
                 sb = getattr(self.main_window, 'statusBar', lambda: None)()
                 if sb:
-                    sb.showMessage(f"Pixel ({px}, {py}) {state}  |  mask size: {len(self._pms.get_mask(s, idx))}")
-                # Rebuild scene-based overlay so fill items stay in sync
+                    sb.showMessage(f"Pixel ({px}, {py}) {'removed' if erase_mode else 'restored'}  |  mask size: {len(mask)}")
+                
                 self._rebuild_pixel_overlay(s, idx)
                 self.viewport().update()
                 return
+            
             # Left-click (pan) — fall through to default QGraphicsView handler
             super().mousePressEvent(event)
             return
@@ -541,22 +663,26 @@ class CanvasRenderer(QGraphicsView):
     def mouseMoveEvent(self, event: QMouseEvent):
         s = self.main_window.current_session
         if self.isolated_slice_idx is not None:
-            # If right-button held while moving in isolation mode = drag-paint pixels
-            if event.buttons() & Qt.MouseButton.RightButton and s:
+            # If mouse button held while moving in isolation mode AND active_tool == "erase"
+            if self.active_tool == "erase" and (event.buttons() & Qt.MouseButton.LeftButton or event.buttons() & Qt.MouseButton.RightButton) and s:
                 scene_pt = self.mapToScene(event.position().toPoint())
                 px = math.floor(scene_pt.x())
                 py = math.floor(scene_pt.y())
                 idx = self.isolated_slice_idx
 
-                # FIX: reject drags outside the tile bounds (vignette black area)
-                slice_rects = s.selected_cells[idx]
+                slice_rects = s.tiles[idx].rects
                 in_tile = any(r[0] <= px < r[2] and r[1] <= py < r[3] for r in slice_rects)
                 if not in_tile:
                     super().mouseMoveEvent(event)
                     return
 
-                # Don't push undo on every move step; only the initial press pushed one
-                self._pms.get_mask(s, idx).add((px, py))  # always remove on drag
+                erase_mode = bool(event.buttons() & Qt.MouseButton.LeftButton)
+                mask = self._pms.get_mask(s, idx)
+                if erase_mode:
+                    mask.add((px, py))
+                else:
+                    mask.discard((px, py))
+                    
                 self._rebuild_pixel_overlay(s, idx)
                 self.viewport().update()
                 return
@@ -599,9 +725,10 @@ class CanvasRenderer(QGraphicsView):
                 x2, y2 = min(x1 + s.grid_w, s.real_width), min(y1 + s.grid_h, s.real_height)
                 
                 # Check overlap (naive subtraction logic port)
+                from app.domain.tile import Tile
                 found_idx = None
-                for i, slice_rects in enumerate(s.selected_cells):
-                    for r in slice_rects:
+                for i, tile in enumerate(s.tiles):
+                    for r in tile.rects:
                         if r[0] < x2 and r[2] > x1 and r[1] < y2 and r[3] > y1:
                             found_idx = i
                             break
@@ -610,41 +737,35 @@ class CanvasRenderer(QGraphicsView):
 
                 if found_idx is not None:
                     # SUBTRACT from this slice group
-                    old_slice = s.selected_cells.pop(found_idx)
+                    old_tile = s.tiles.pop(found_idx)
                     new_slices = subtract_from_slice(
-                        old_slice, col, row,
+                        old_tile.rects, col, row,
                         s.grid_w, s.grid_h, s.real_width, s.real_height)
                     for ns in new_slices:
-                        s.selected_cells.append(ns)
+                        s.tiles.append(Tile(rects=list(ns)))
                 else:
                     # ADD as new independent slice
-                    s.selected_cells.append({(x1, y1, x2, y2)})
-                    
-                s.sync_metadata()
+                    s.tiles.append(Tile(rects=[(x1, y1, x2, y2)]))
                 self.redraw()
                 self.main_window.slice_previews.update_previews()
             else:
                 # Drag Select Cells
+                from app.domain.tile import Tile
                 sc, ec = int(rx1 // s.grid_w), int((rx2 - 1) // s.grid_w)
                 sr, er = int(ry1 // s.grid_h), int((ry2 - 1) // s.grid_h)
                 rects = set()
                 for c in range(sc, ec + 1):
                     for r in range(sr, er + 1):
                         rects.add((c * s.grid_w, r * s.grid_h, (c+1)*s.grid_w, (r+1)*s.grid_h))
-                s.selected_cells.append(rects)
-                s.sync_metadata()
+                s.tiles.append(Tile(rects=list(rects)))
                 self.redraw()
                 self.main_window.slice_previews.update_previews()
             return
             
         if self.active_tool == "brush" and event.button() == Qt.MouseButton.LeftButton:
             if len(self._brush_points) > 2:
-                # 1. Store the raw polygon stroke
-                if not hasattr(s, 'selected_polygons'):
-                    s.selected_polygons = []
-                while len(s.selected_polygons) < len(s.selected_cells):
-                    s.selected_polygons.append(None)
-                s.selected_polygons.append(self._brush_points.copy())
+                from app.domain.tile import Tile
+                new_tile = Tile(polygon=self._brush_points.copy())
 
                 # 2. Map the stroke to grid rectangles using QPolygonF native intersection
                 poly_f = QPolygonF()
@@ -670,8 +791,8 @@ class CanvasRenderer(QGraphicsView):
                             intersecting_rects.add((x1, y1, x2, y2))
 
                 if intersecting_rects:
-                    s.selected_cells.append(intersecting_rects)
-                    s.sync_metadata()
+                    new_tile.rects = list(intersecting_rects)
+                    s.tiles.append(new_tile)
             
             self._brush_points = []
             self.redraw()
