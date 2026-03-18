@@ -815,17 +815,25 @@ class CanvasRenderer(QGraphicsView):
                 from app.domain.tile import Tile
                 new_tile = Tile(polygon=self._brush_points.copy())
 
-                # 2. Map the stroke to grid rectangles using QPolygonF native intersection
+                # 2. Map the stroke to grid rectangles using QPainterPath area intersection.
+                # QPainterPath.intersects() checks true AREA overlap (filled region),
+                # while QPolygonF.intersects() was edge-based and selected the entire bounding box.
+                from PyQt6.QtGui import QPainterPath as _QPainterPath
                 poly_f = QPolygonF()
                 for p in self._brush_points:
                     poly_f.append(QPointF(p[0], p[1]))
                 bbox = poly_f.boundingRect()
 
+                # Build a closed filled path from the freehand stroke
+                stroke_path = _QPainterPath()
+                stroke_path.addPolygon(poly_f)
+                stroke_path.closeSubpath()
+
                 sc = int(bbox.left() // s.grid_w)
                 ec = int(bbox.right() // s.grid_w)
                 sr = int(bbox.top() // s.grid_h)
                 er = int(bbox.bottom() // s.grid_h)
-                
+
                 intersecting_rects = set()
                 for c in range(sc, ec + 1):
                     for r in range(sr, er + 1):
@@ -834,8 +842,9 @@ class CanvasRenderer(QGraphicsView):
                         x2 = min(x1 + s.grid_w, s.real_width)
                         y2 = min(y1 + s.grid_h, s.real_height)
                         cell_rect = QRectF(x1, y1, x2 - x1, y2 - y1)
-                        cell_poly = QPolygonF(cell_rect)
-                        if poly_f.intersects(cell_poly) or poly_f.containsPoint(cell_rect.center(), Qt.FillRule.WindingFill):
+                        cell_path = _QPainterPath()
+                        cell_path.addRect(cell_rect)
+                        if stroke_path.intersects(cell_path):
                             intersecting_rects.add((x1, y1, x2, y2))
 
                 if intersecting_rects:

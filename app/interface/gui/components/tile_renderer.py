@@ -131,12 +131,22 @@ class TileRenderer(QGraphicsView):
         if pil_img is None:
             return
 
-        # Convert PIL → QPixmap
-        if pil_img.mode != "RGB":
-            pil_img = pil_img.convert("RGB")
-        data = pil_img.tobytes("raw", "RGB")
-        qim = QImage(data, pil_img.width, pil_img.height,
-                      pil_img.width * 3, QImage.Format.Format_RGB888)
+        # ── python-patterns §4 Separate concerns ─────────────────────────────
+        # Domain entity owns the polygon geometry → delegates masking to Tile.
+        # TileRenderer only handles format conversion and display.
+        pil_img = tile.apply_polygon_mask(pil_img)
+
+        # Convert PIL → QPixmap (RGBA if polygon-masked, RGB for grid tiles)
+        if pil_img.mode == "RGBA":
+            data = pil_img.tobytes("raw", "RGBA")
+            qim = QImage(data, pil_img.width, pil_img.height,
+                         pil_img.width * 4, QImage.Format.Format_RGBA8888)
+        else:
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
+            data = pil_img.tobytes("raw", "RGB")
+            qim = QImage(data, pil_img.width, pil_img.height,
+                         pil_img.width * 3, QImage.Format.Format_RGB888)
         pix = QPixmap.fromImage(qim)
 
         self._pixmap_item = QGraphicsPixmapItem(pix)

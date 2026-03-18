@@ -7,10 +7,12 @@ class Tile:
     Encapsulates all metadata, shapes, annotations, and pixel modifications for this specific region.
     Also handles independent image rendering to prevent zooming crashes.
     """
-    def __init__(self, rects: Optional[List[Tuple[int, int, int, int]]] = None):
+    def __init__(self,
+                 rects: Optional[List[Tuple[int, int, int, int]]] = None,
+                 polygon: Optional[List[Tuple[int, int]]] = None):
         # Annotations
         self.rects: List[Tuple[int, int, int, int]] = rects or []
-        self.polygon: Optional[List[Tuple[int, int]]] = None
+        self.polygon: Optional[List[Tuple[int, int]]] = polygon
         self.exclusions: List[Tuple[int, int, int, int]] = []
         self.pixel_mask: Set[Tuple[int, int]] = set()
         
@@ -50,6 +52,35 @@ class Tile:
         if region:
             self._image_cache = region.convert("RGB")
         return self._image_cache
+
+    def apply_polygon_mask(self, img: Image.Image) -> Image.Image:
+        """Clip *img* (bounding-box crop) to the brush polygon shape.
+
+        python-patterns §4 — Single Responsibility:
+          The Tile domain entity owns its own polygon geometry, so it is the
+          correct place to convert that geometry into a pixel mask.
+
+        Returns a new RGBA image where pixels outside ``self.polygon`` are
+        fully transparent.  If ``self.polygon`` is None the original image is
+        returned unchanged (grid tiles use this path — no masking).
+        """
+        if not self.polygon or len(self.polygon) < 3:
+            return img
+
+        from PIL import ImageDraw
+
+        bx1, by1, _, _ = self.bounding_box
+
+        # Translate global polygon coords → local image coords
+        local_poly = [(pt[0] - bx1, pt[1] - by1) for pt in self.polygon]
+
+        # Build an alpha mask: white inside polygon, black outside
+        mask = Image.new("L", img.size, 0)
+        ImageDraw.Draw(mask).polygon(local_poly, fill=255)
+
+        rgba = img.convert("RGBA")
+        rgba.putalpha(mask)
+        return rgba
 
     def clear_cache(self):
         """Releases the memory-resident image when leaving isolation mode."""
