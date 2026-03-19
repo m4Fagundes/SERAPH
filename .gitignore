@@ -10,4 +10,7 @@ __pycache__/
 skills/
 *.pth
 *.zip
-app/infrastructure/ml_models/nuclick_torch/weights/
+.DS_Store
+.env
+.venv
+venv/
