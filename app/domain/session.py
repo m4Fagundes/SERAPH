@@ -44,6 +44,7 @@ class ImageSession:
         
         # New Domain Entity List
         self.tiles: List[Tile] = []
+        self.segmentations: List[List[Tuple[int, int]]] = []
 
         self.export_dir: Optional[str] = None
         self.export_format: Optional[str] = None

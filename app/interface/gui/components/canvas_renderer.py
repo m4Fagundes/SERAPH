@@ -8,6 +8,7 @@ import io
 import time
 from app.domain.selection import subtract_from_slice
 from app.application.pixel_mask_service import PixelMaskService
+from app.domain.geometry import is_point_in_polygon
 
 logger = logging.getLogger(__name__)
 
@@ -443,28 +444,23 @@ class CanvasRenderer(QGraphicsView):
             if hasattr(self.main_window, 'chk_show_membrane'):
                 show_membrane = self.main_window.chk_show_membrane.isChecked()
 
-            # 2. Draw the membrane for the current slice if toggled ON
-            if show_membrane and self.isolated_slice_idx < len(s.tiles):
-                tile = s.tiles[self.isolated_slice_idx]
-                if tile.polygon and len(tile.polygon) >= 3:
-                    poly_f = QPolygonF()
-                    for pt in tile.polygon:
-                        poly_f.append(QPointF(pt[0], pt[1]))
-                    
-                    # Style the membrane
-                    base_color = QColor(tile.color)
-                    membrane_color = QColor(base_color)
-                    membrane_color.setAlpha(120) # Semi-transparent fill
-                    
-                    painter.setBrush(QBrush(membrane_color))
-                    
-                    # Solid boundary line
-                    border_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
-                    border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                    painter.setPen(border_pen)
-                    
-                    # Draw
-                    painter.drawPolygon(poly_f)
+            # 2. Draw the membrane for all active segmentations if toggled ON
+            if show_membrane and hasattr(s, "segmentations"):
+                base_color = QColor("#00FFFF")
+                membrane_color = QColor(base_color)
+                membrane_color.setAlpha(120) # Semi-transparent fill
+                
+                painter.setBrush(QBrush(membrane_color))
+                border_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
+                border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(border_pen)
+                
+                for poly in s.segmentations:
+                    if len(poly) >= 3:
+                        poly_f = QPolygonF()
+                        for pt in poly:
+                            poly_f.append(QPointF(pt[0], pt[1]))
+                        painter.drawPolygon(poly_f)
 
             # ── Pixel removal borders (thin red outline only) ────────────────
             # The fill is handled by _rebuild_pixel_overlay() via QGraphicsRectItem
@@ -505,31 +501,33 @@ class CanvasRenderer(QGraphicsView):
             return
         
         # Draw Selections (Normal Mode)
+        if hasattr(s, "segmentations"):
+            color = QColor("#00FFFF")
+            fill_color = QColor(color)
+            fill_color.setAlpha(80)
+            painter.setBrush(QBrush(fill_color))
+            poly_pen = QPen(color, max(2.0 / self.viewport_zoom, 1.0))
+            poly_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(poly_pen)
+            
+            for poly in s.segmentations:
+                if len(poly) >= 3:
+                    poly_f = QPolygonF()
+                    for pt in poly:
+                        poly_f.append(QPointF(pt[0], pt[1]))
+                    painter.drawPolygon(poly_f)
+
         if s.tiles:
             for i, tile in enumerate(s.tiles):
                 color = QColor(tile.color)
                 fill_color = QColor(color)
                 fill_color.setAlpha(80) 
                 painter.setPen(QPen(color, 0))
-                poly = tile.polygon
-                # Check for brush polygons
-                if poly and len(poly) >= 3:
-                    poly_w = QPolygonF()
-                    for pt in poly:
-                        poly_w.append(QPointF(pt[0], pt[1]))
-                    
-                    painter.setBrush(QBrush(fill_color))
-                    poly_pen = QPen(color, 0)
-                    poly_pen.setCosmetic(True)
-                    poly_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                    painter.setPen(poly_pen)
-                    painter.drawPolygon(poly_w)
-                else:
-                    # Standard Rectangle
-                    painter.setBrush(QBrush(fill_color))
-                    for (sx1, sy1, sx2, sy2) in tile.rects:
-                        if sx2 > left and sx1 < right and sy2 > top and sy1 < bottom:
-                            painter.drawRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
+                # Standard Rectangle
+                painter.setBrush(QBrush(fill_color))
+                for (sx1, sy1, sx2, sy2) in tile.rects:
+                    if sx2 > left and sx1 < right and sy2 > top and sy1 < bottom:
+                        painter.drawRect(QRectF(float(sx1), float(sy1), float(sx2 - sx1), float(sy2 - sy1)))
 
         # Draw Grid — only when grid cells are visible at ≥8 screen pixels wide
         # Use a cosmetic pen (width=0) so lines are ALWAYS 1 screen pixel, regardless of zoom.
@@ -610,7 +608,9 @@ class CanvasRenderer(QGraphicsView):
         sb = getattr(self.main_window, 'statusBar', lambda: None)()
 
         if polygon:
-            session.tiles[slice_idx].polygon = polygon
+            if not hasattr(session, "segmentations"):
+                session.segmentations = []
+            session.segmentations.append(polygon)
             if sb:
                 sb.showMessage(f"Segmentation successful: {len(polygon)} points.")
         else:
@@ -637,6 +637,17 @@ class CanvasRenderer(QGraphicsView):
                 px = math.floor(scene_pt.x())
                 py = math.floor(scene_pt.y())
                 idx = self.isolated_slice_idx
+
+                # Check if clicked inside an existing segmentation to remove it
+                if hasattr(s, "segmentations"):
+                    for idx_seg, poly in enumerate(s.segmentations):
+                        if is_point_in_polygon(px, py, poly):
+                            s.segmentations.pop(idx_seg)
+                            sb = getattr(self.main_window, 'statusBar', lambda: None)()
+                            if sb:
+                                sb.showMessage("Segmentation removed.")
+                            self.viewport().update()
+                            return
 
                 slice_rects = s.tiles[idx].rects
                 in_tile = any(r[0] <= px < r[2] and r[1] <= py < r[3] for r in slice_rects)

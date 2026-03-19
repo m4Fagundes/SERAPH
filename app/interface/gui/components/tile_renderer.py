@@ -27,6 +27,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtCore import Qt, QPointF, QRectF, QObject, QRunnable, QThreadPool, pyqtSignal
 
 from app.application.pixel_mask_service import PixelMaskService
+from app.domain.geometry import is_point_in_polygon
 
 logger = logging.getLogger(__name__)
 
@@ -255,26 +256,28 @@ class TileRenderer(QGraphicsView):
 
         left, top, right, bottom = rect.left(), rect.top(), rect.right(), rect.bottom()
 
-        # ── Membrane Overlay ─────────────────────────────────────────────────
+        # ── Membrane Overlay (Múltiplas segmentações) ─────────────────────────
         show_membrane = True
         if hasattr(self.main_window, "chk_show_membrane"):
             show_membrane = self.main_window.chk_show_membrane.isChecked()
 
-        if show_membrane and tile.polygon and len(tile.polygon) >= 3:
-            poly_f = QPolygonF()
-            for pt in tile.polygon:
-                sx, sy = self._global_to_scene(pt[0], pt[1])
-                poly_f.append(QPointF(sx, sy))
-
-            base_color = QColor(tile.color)
+        if show_membrane and hasattr(s, "segmentations"):
+            base_color = QColor("#00FFFF") # Default color for segmentations
             membrane_color = QColor(base_color)
             membrane_color.setAlpha(120)
             painter.setBrush(QBrush(membrane_color))
-            border_pen = QPen(base_color, 0)  # cosmetic: always 1 screen pixel
+            border_pen = QPen(base_color, 0)
             border_pen.setCosmetic(True)
             border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(border_pen)
-            painter.drawPolygon(poly_f)
+            
+            for poly in s.segmentations:
+                if len(poly) >= 3:
+                    poly_f = QPolygonF()
+                    for pt in poly:
+                        sx, sy = self._global_to_scene(pt[0], pt[1])
+                        poly_f.append(QPointF(sx, sy))
+                    painter.drawPolygon(poly_f)
 
         # ── Pixel removal borders ────────────────────────────────────────────
         if tile.pixel_mask:
@@ -341,6 +344,17 @@ class TileRenderer(QGraphicsView):
             scene_pt = self.mapToScene(event.position().toPoint())
             gx, gy = self._scene_to_global(math.floor(scene_pt.x()), math.floor(scene_pt.y()))
             gx, gy = int(gx), int(gy)
+
+            # Check if clicked inside an existing segmentation to remove it
+            if hasattr(s, "segmentations"):
+                for idx_seg, poly in enumerate(s.segmentations):
+                    if is_point_in_polygon(gx, gy, poly):
+                        s.segmentations.pop(idx_seg)
+                        sb = getattr(self.main_window, "statusBar", lambda: None)()
+                        if sb:
+                            sb.showMessage("Segmentation removed.")
+                        self.viewport().update()
+                        return
 
             tile = s.tiles[idx]
             in_tile = any(r[0] <= gx < r[2] and r[1] <= gy < r[3] for r in tile.rects)
@@ -428,7 +442,9 @@ class TileRenderer(QGraphicsView):
     def _on_seg_done(self, polygon: list, session, slice_idx: int):
         sb = getattr(self.main_window, "statusBar", lambda: None)()
         if polygon:
-            session.tiles[slice_idx].polygon = polygon
+            if not hasattr(session, "segmentations"):
+                session.segmentations = []
+            session.segmentations.append(polygon)
             if sb:
                 sb.showMessage(f"Segmentation successful: {len(polygon)} points.")
         else:
