@@ -3,6 +3,7 @@ from .canvas_renderer import CanvasRenderer
 from .tile_renderer import TileRenderer
 from .slice_previews import SlicePreviews
 from .slice_export import ExportHandler
+from .properties_panel import PropertiesPanel
 
 __all__ = [
     "ProjectManager",
@@ -10,4 +11,5 @@ __all__ = [
     "TileRenderer",
     "SlicePreviews",
     "ExportHandler",
+    "PropertiesPanel",
 ]

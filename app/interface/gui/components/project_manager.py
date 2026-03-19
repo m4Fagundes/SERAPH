@@ -39,7 +39,7 @@ class ProjectManager:
         
         self.entry_w = QLineEdit("1000")
         self.entry_w.setFixedWidth(60)
-        self.entry_w.setStyleSheet("background: #2a2a2a; border: 1px solid #444; border-radius: 4px; padding: 3px; color: white;")
+        self.entry_w.setStyleSheet("background: #3c3c3c; border: 1px solid #555555; border-radius: 4px; padding: 4px; color: white; font-family: 'Segoe UI', Tahoma, sans-serif;")
         self.entry_w.textChanged.connect(self._grid_changed)
         toolbar.addWidget(self.entry_w)
         
@@ -49,7 +49,7 @@ class ProjectManager:
         
         self.entry_h = QLineEdit("1000")
         self.entry_h.setFixedWidth(60)
-        self.entry_h.setStyleSheet("background: #2a2a2a; border: 1px solid #444; border-radius: 4px; padding: 3px; color: white;")
+        self.entry_h.setStyleSheet("background: #3c3c3c; border: 1px solid #555555; border-radius: 4px; padding: 4px; color: white; font-family: 'Segoe UI', Tahoma, sans-serif;")
         self.entry_h.textChanged.connect(self._grid_changed)
         toolbar.addWidget(self.entry_h)
 

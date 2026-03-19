@@ -20,7 +20,8 @@ from .components import (
     TileRenderer,
     ProjectManager,
     SlicePreviews,
-    ExportHandler
+    ExportHandler,
+    PropertiesPanel
 )
 
 class SlicerLabApp(QMainWindow):
@@ -74,7 +75,37 @@ class SlicerLabApp(QMainWindow):
         # 2. Top Toolbar
         self.toolbar = QToolBar("Main Toolbar")
         self.toolbar.setMovable(False)
-        self.toolbar.setStyleSheet("QToolBar { background-color: #333333; spacing: 10px; padding: 5px; }")
+        self.toolbar.setStyleSheet("""
+            QToolBar {
+                background-color: #252526;
+                border-bottom: 1px solid #333333;
+                spacing: 8px;
+                padding: 6px;
+            }
+            QToolButton {
+                background-color: transparent;
+                color: #cccccc;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                font-size: 8pt;
+                font-weight: 500;
+            }
+            QToolButton:hover {
+                background-color: #3e3e42;
+                border: 1px solid #454545;
+                color: #ffffff;
+            }
+            QToolButton:checked {
+                background-color: #0e639c;
+                color: #ffffff;
+                border: 1px solid #1177bb;
+            }
+            QToolButton:pressed {
+                background-color: #094771;
+            }
+        """)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
 
         # Initialize sub-modules
@@ -122,13 +153,28 @@ class SlicerLabApp(QMainWindow):
         # Model Selector Combobox in Toolbar
         self.combo_model = QComboBox()
         self.combo_model.addItems(self.segmentation_service.get_available_models())
-        self.combo_model.setStyleSheet("QComboBox { background-color: #444; color: #ccc; border: 1px solid #555; padding: 2px 6px; }")
+        self.combo_model.setStyleSheet("""
+            QComboBox { 
+                background-color: #3c3c3c; 
+                color: #ffffff; 
+                border: 1px solid #555555; 
+                border-radius: 4px; 
+                padding: 4px 8px; 
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+            QComboBox:focus { border: 1px solid #007acc; background-color: #444444; }
+            QComboBox::drop-down { border: none; }
+        """)
         self.toolbar.addWidget(self.combo_model)
         
         # Checkbox for Segmentation Membrane Overlay
         self.chk_show_membrane = QCheckBox("Show Membrane")
         self.chk_show_membrane.setChecked(True)
-        self.chk_show_membrane.setStyleSheet("QCheckBox { color: #ccc; margin-left: 10px; }")
+        self.chk_show_membrane.setStyleSheet("""
+            QCheckBox { color: #cccccc; margin-left: 10px; font-family: 'Segoe UI', Tahoma, sans-serif; }
+            QCheckBox::indicator { width: 14px; height: 14px; background-color: #3c3c3c; border: 1px solid #555; border-radius: 3px; }
+            QCheckBox::indicator:checked { background-color: #0e639c; border: 1px solid #0e639c; }
+        """)
         self.chk_show_membrane.stateChanged.connect(lambda: self.canvas_renderer.viewport().update() if self.canvas_renderer else None)
         self.toolbar.addWidget(self.chk_show_membrane)
 
@@ -147,7 +193,13 @@ class SlicerLabApp(QMainWindow):
         # 3. Left Dock (Sidebar)
         self.sidebar_dock = QDockWidget("Project Workspace", self)
         self.sidebar_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-        self.sidebar_dock.setStyleSheet("QDockWidget { background-color: #252526; color: #ccc; }")
+        self.sidebar_dock.setStyleSheet("""
+            QDockWidget { 
+                background-color: #252526; 
+                color: #ccc; 
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+        """)
         
         # We use a Splitter here instead of a fixed layout so the two lists expand dynamically without gaps
         self.sidebar_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -155,22 +207,29 @@ class SlicerLabApp(QMainWindow):
         # --- Top Half: Project Files ---
         project_widget = QWidget()
         project_layout = QVBoxLayout(project_widget)
-        project_layout.setContentsMargins(0, 0, 0, 0)
+        project_layout.setContentsMargins(15, 15, 15, 15)
+        project_layout.setSpacing(10)
         
         lbl_proj = QLabel("PROJECT IMAGES")
-        lbl_proj.setStyleSheet("color: #aaaaaa; font-size: 11px; font-weight: bold; margin-bottom: 5px;")
+        lbl_proj.setStyleSheet("color: #aaaaaa; font-size: 8pt; font-weight: bold; letter-spacing: 1px;")
         
         self.file_list = QListWidget()
         self.file_list.setStyleSheet("""
-            QListWidget { background-color: #2a2a2a; border: none; outline: none; }
-            QListWidget::item { padding: 8px; border-bottom: 1px solid #333333; }
-            QListWidget::item:hover { background-color: #3e3e42; cursor: pointer; }
-            QListWidget::item:selected { background-color: #37373d; }
+            QListWidget { background-color: transparent; border: none; outline: none; }
+            QListWidget::item { padding: 8px; border-radius: 4px; color: #cccccc; margin-bottom: 2px; }
+            QListWidget::item:hover { background-color: #3e3e42; color: #ffffff; }
+            QListWidget::item:selected { background-color: #0e639c; color: #ffffff; font-weight: bold; }
         """)
         self.file_list.itemClicked.connect(self.project_manager.switch_image_tab)
         
         add_btn = QPushButton("＋ Add Image")
-        add_btn.setStyleSheet("background-color: #007acc; color: white; padding: 6px; font-weight: bold; border-radius: 3px;")
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007acc; color: white; padding: 8px; font-weight: bold; border-radius: 4px; border: none; font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+            QPushButton:hover { background-color: #0098ff; }
+            QPushButton:pressed { background-color: #005a9e; }
+        """)
         add_btn.clicked.connect(self.project_manager.add_image)
 
         project_layout.addWidget(lbl_proj)
@@ -199,6 +258,11 @@ class SlicerLabApp(QMainWindow):
 
         self.sidebar_dock.setWidget(self.sidebar_splitter)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.sidebar_dock)
+        
+        # 3.5 Right Dock (Properties)
+        self.properties_dock = PropertiesPanel("Tile Properties", self)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.properties_dock)
+        self.properties_dock.hide() # Hidden by default on canvas view
         
         # 4. Status Bar
         self.statusBar().showMessage("Ready. Add an image to start.")
@@ -237,12 +301,22 @@ class SlicerLabApp(QMainWindow):
         if not s or idx >= len(s.tiles):
             return
         self.tile_renderer.load_tile(s, idx)
+        
+        # Show and populate properties pane
+        self.properties_dock.load_tile(s.tiles[idx])
+        self.properties_dock.show()
+        
         self._central_stack.setCurrentIndex(1)
         self.update_tool_context(True)
 
     def switch_to_canvas(self) -> None:
         """Transition from Micro (isolated tile) back to Macro (full image)."""
         self.tile_renderer.unload()
+        
+        # Hide properties pane
+        self.properties_dock.clear()
+        self.properties_dock.hide()
+        
         self._central_stack.setCurrentIndex(0)
         self.update_tool_context(False)
         self.canvas_renderer.redraw()

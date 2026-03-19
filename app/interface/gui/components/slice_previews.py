@@ -1,7 +1,8 @@
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QAbstractItemView, QMenu, QPushButton,
+    QAbstractItemView, QMenu, QPushButton, QDialog, QFormLayout, QLineEdit,
+    QTextEdit, QDialogButtonBox,
 )
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtCore import Qt
@@ -16,6 +17,7 @@ class _SliceRow(QWidget):
     def __init__(self, name: str, tile_count: int, color_hex: str, on_delete):
         super().__init__()
         self.setStyleSheet("background: transparent;")
+        self.setMinimumHeight(32)
 
         row = QHBoxLayout(self)
         row.setContentsMargins(6, 4, 4, 4)
@@ -31,10 +33,10 @@ class _SliceRow(QWidget):
 
         # Name + tile count
         lbl = QLabel(
-            f"{name}  <span style='color:#666;font-size:10px;'>({tile_count} tiles)</span>"
+            f"<b>{name}</b>  <span style='color:#a0a0a0;font-size:8pt;'>({tile_count} tiles)</span>"
         )
         lbl.setTextFormat(Qt.TextFormat.RichText)
-        lbl.setStyleSheet("color: #cccccc; font-size: 12px;")
+        lbl.setStyleSheet("color: #eeeeee; font-size: 9pt; font-family: 'Segoe UI', Tahoma, sans-serif; background: transparent;")
         row.addWidget(lbl, stretch=1)
 
         # Delete button
@@ -47,7 +49,7 @@ class _SliceRow(QWidget):
                 background: transparent;
                 color: #888;
                 border: none;
-                font-size: 13px;
+                font-size: 10pt;
                 padding: 0;
             }
             QPushButton:hover  { color: #ff5555; }
@@ -65,31 +67,33 @@ class SlicePreviews(QWidget):
         self.mw = main_window
         self._pms = PixelMaskService()
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 10, 0, 0)
+        self.layout.setContentsMargins(15, 15, 15, 15)
+        self.layout.setSpacing(10)
 
         lbl = QLabel("PROJECT SLICES")
         lbl.setStyleSheet(
-            "color: #aaaaaa; font-size: 11px; font-weight: bold; margin-bottom: 5px;"
+            "color: #aaaaaa; font-size: 8pt; font-weight: bold; letter-spacing: 1px;"
         )
         self.layout.addWidget(lbl)
 
         self.list_widget = QListWidget()
         self.list_widget.setStyleSheet("""
             QListWidget {
-                background-color: #2a2a2a;
+                background-color: transparent;
                 border: none;
                 color: #cccccc;
                 outline: none;
             }
             QListWidget::item {
-                padding: 0px;
-                border-bottom: 1px solid #333333;
+                padding: 4px 0px; 
+                border-radius: 4px;
+                margin-bottom: 2px;
             }
             QListWidget::item:hover {
                 background-color: #3e3e42;
             }
             QListWidget::item:selected {
-                background-color: #37373d;
+                background-color: #0e639c;
             }
         """)
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -175,11 +179,58 @@ class SlicePreviews(QWidget):
             QMenu::item:selected { background-color: #3e3e4f; }
         """)
         action_nav   = menu.addAction("🔍 Focar no Canvas")
+        action_edit  = menu.addAction("✏️ Editar Propriedades")
         menu.addSeparator()
         action_del = menu.addAction("🗑️ Deletar Slice")
 
         chosen = menu.exec(self.list_widget.mapToGlobal(pos))
         if chosen == action_nav:
             self.on_item_clicked(item)
+        elif chosen == action_edit:
+            self._edit_slice_properties(idx)
         elif chosen == action_del:
             self._delete_slice(idx)
+
+    def _edit_slice_properties(self, idx: int) -> None:
+        s = self.mw.current_session
+        if not s or idx >= len(s.tiles):
+            return
+        
+        tile = s.tiles[idx]
+        meta = tile.metadata
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Editar Propriedades")
+        dialog.setMinimumWidth(350)
+        dialog.setStyleSheet("QDialog { background-color: #1e1e1e; color: #cccccc; } QLabel { color: #cccccc; } QLineEdit, QTextEdit { background-color: #333; color: white; border: 1px solid #555;}")
+        
+        layout = QFormLayout(dialog)
+        
+        name_input = QLineEdit(meta.get("name", ""))
+        microns_input = QLineEdit(meta.get("microns_per_pixel", ""))
+        
+        desc_input = QTextEdit()
+        desc_input.setPlainText(meta.get("description", ""))
+        desc_input.setMaximumHeight(80)
+        
+        comment_input = QTextEdit()
+        comment_input.setPlainText(meta.get("comment", ""))
+        comment_input.setMaximumHeight(80)
+        
+        layout.addRow("Nome (Name):", name_input)
+        layout.addRow("Microns/Pixel:", microns_input)
+        layout.addRow("Descrição (Desc):", desc_input)
+        layout.addRow("Comentário (Comment):", comment_input)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            meta["name"] = name_input.text().strip()
+            meta["microns_per_pixel"] = microns_input.text().strip()
+            meta["description"] = desc_input.toPlainText().strip()
+            meta["comment"] = comment_input.toPlainText().strip()
+            # Force UI update if name changed
+            self.update_previews()

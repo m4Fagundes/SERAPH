@@ -18,7 +18,7 @@ class Tile:
         
         # Display & Metadata
         self.color: str = "#00FFFF"
-        self.metadata: Dict[str, str] = {"name": "", "description": "", "microns_per_pixel": ""}
+        self.metadata: Dict[str, str] = {"name": "", "description": "", "comment": "", "microns_per_pixel": ""}
         
         # Memory-resident image for Independent Rendering (True Isolation)
         self._image_cache: Optional[Image.Image] = None
@@ -108,5 +108,10 @@ class Tile:
         tile.exclusions = [tuple(e) for e in data.get("exclusions", [])]
         tile.pixel_mask = set(tuple(px) for px in data.get("pixel_mask", []))
         tile.color = data.get("color", "#00FFFF")
-        tile.metadata = data.get("metadata", {"name": "", "description": "", "microns_per_pixel": ""})
+        
+        # Ensure 'comment' exists for backward compatibility
+        default_meta = {"name": "", "description": "", "comment": "", "microns_per_pixel": ""}
+        loaded_meta = data.get("metadata", {})
+        tile.metadata = {**default_meta, **loaded_meta}
+        
         return tile

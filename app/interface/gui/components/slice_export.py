@@ -14,7 +14,18 @@ class ExportHandler:
         
         self.format_combo = QComboBox()
         self.format_combo.addItems(["PNG", "JPEG", "TIFF", "BMP", "WebP"])
-        self.format_combo.setStyleSheet("background: #2a2a2a; border: 1px solid #444; border-radius: 4px; padding: 3px; color: white;")
+        self.format_combo.setStyleSheet("""
+            QComboBox { 
+                background-color: #3c3c3c; 
+                color: #ffffff; 
+                border: 1px solid #555555; 
+                border-radius: 4px; 
+                padding: 4px 8px; 
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+            QComboBox:focus { border: 1px solid #007acc; background-color: #444444; }
+            QComboBox::drop-down { border: none; }
+        """)
         self.format_combo.currentTextChanged.connect(self._format_changed)
         toolbar.addWidget(self.format_combo)
         
@@ -31,11 +42,15 @@ class ExportHandler:
                 color: white; 
                 border: none; 
                 border-radius: 4px; 
-                padding: 5px 15px;
+                padding: 6px 15px;
+                font-family: 'Segoe UI', Tahoma, sans-serif;
                 font-weight: bold;
             }
             QPushButton:hover {
                 background-color: #0098ff;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
             }
         """)
         toolbar.addWidget(export_btn)
