@@ -67,7 +67,9 @@ class TileWorker(QRunnable):
                 pil_img = pil_img.convert("RGB")
             data = pil_img.tobytes("raw", "RGB")
             qim = QImage(data, pil_img.width, pil_img.height, QImage.Format.Format_RGB888).copy()
+            qim.setDevicePixelRatio(1.0)
             pix = QPixmap.fromImage(qim)
+            pix.setDevicePixelRatio(1.0)
             self.signals.result.emit((self.col, self.row, self.zoom), pix)
         except Exception as e:
             logger.error(f"TileWorker error coords {self.col},{self.row}: {e}")
@@ -320,7 +322,9 @@ class CanvasRenderer(QGraphicsView):
                 
             data = thumb_pil.tobytes("raw", "RGB")
             qim = QImage(data, thumb_pil.width, thumb_pil.height, thumb_pil.width * 3, QImage.Format.Format_RGB888)
+            qim.setDevicePixelRatio(1.0)
             pix = QPixmap.fromImage(qim)
+            pix.setDevicePixelRatio(1.0)
             
             base_item = QGraphicsPixmapItem(pix)
             # Scale the low-res thumb to cover the entire full-res scene

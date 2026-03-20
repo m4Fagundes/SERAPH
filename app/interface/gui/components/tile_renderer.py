@@ -148,7 +148,10 @@ class TileRenderer(QGraphicsView):
             data = pil_img.tobytes("raw", "RGB")
             qim = QImage(data, pil_img.width, pil_img.height,
                          pil_img.width * 3, QImage.Format.Format_RGB888)
+                         
+        qim.setDevicePixelRatio(1.0)
         pix = QPixmap.fromImage(qim)
+        pix.setDevicePixelRatio(1.0)
 
         self._pixmap_item = QGraphicsPixmapItem(pix)
         self._pixmap_item.setZValue(0)
