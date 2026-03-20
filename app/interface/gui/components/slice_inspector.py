@@ -194,6 +194,16 @@ class SliceInspectorMixin:
         # Separator
         tk.Frame(props_inner, height=1, bg="#3a3a3a").pack(fill=tk.X, padx=12, pady=8)
 
+        # Comment
+        tk.Label(props_inner, text="COMMENT", bg="#252526", fg="#888",
+                 font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        self._insp_comment = tk.Text(props_inner, bg="#333", fg="white", relief="flat",
+                                     font=("Segoe UI", 10), height=3,
+                                     insertbackground="white", wrap="word")
+        self._insp_comment.insert("1.0", meta.get("comment", ""))
+        self._insp_comment.pack(fill=tk.X, padx=12, pady=(0, 12))
+
         # Description
         tk.Label(props_inner, text="DESCRIPTION", bg="#252526", fg="#888",
                  font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(0, 4))
@@ -502,6 +512,8 @@ class SliceInspectorMixin:
                     session.slice_metadata[idx]["name"] = self._insp_name.get().strip()
                     session.slice_metadata[idx]["microns_per_pixel"] = self._insp_microns.get().strip()
                     session.slice_metadata[idx]["description"] = self._insp_desc.get("1.0", "end-1c").strip()
+                    if hasattr(self, '_insp_comment'):
+                        session.slice_metadata[idx]["comment"] = self._insp_comment.get("1.0", "end-1c").strip()
                 except Exception:
                     pass
 

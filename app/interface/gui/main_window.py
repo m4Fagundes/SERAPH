@@ -1,274 +1,322 @@
-import tkinter as tk
-from tkinter import ttk
+import sys
 import platform
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                             QToolBar, QDockWidget, QListWidget, QPushButton, 
+                             QLabel, QFrame, QScrollArea, QSplitter, QStackedWidget)
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon, QAction, QActionGroup
+
 from app.domain.history import UndoManager
-from app.interface.gui.utils import detect_dark_mode_mac
-from app.interface.gui.components import (
-    UIComponents, setup_ttk_styles,
-    CanvasRendererMixin,
-    ZoomPanMixin,
-    SelectionToolsMixin,
-    SliceInspectorMixin,
-    SlicePreviewsMixin,
-    ProjectManagerMixin,
-    ExportHandlerMixin,
+from app.application.project_service import ProjectService
+from app.application.export_service import ExportService
+from app.application.import_service import TileImportService
+from app.application.interactive_segmentation_service import InteractiveSegmentationService
+from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
+from PyQt6.QtWidgets import QComboBox, QCheckBox
+
+# Import the new PyQt Components (to be rewritten in subsequent steps)
+from .components import (
+    CanvasRenderer,
+    TileRenderer,
+    ProjectManager,
+    SlicePreviews,
+    ExportHandler,
+    PropertiesPanel
 )
-from app.application.services import ProjectService, ExportService
 
-
-class SlicerLabApp(
-    CanvasRendererMixin,
-    ZoomPanMixin,
-    SelectionToolsMixin,
-    SliceInspectorMixin,
-    SlicePreviewsMixin,
-    ProjectManagerMixin,
-    ExportHandlerMixin,
-):
-    # Supported export formats
-    EXPORT_FORMATS = [
-        ("PNG", ".png"),
-        ("JPEG", ".jpg"),
-        ("TIFF", ".tiff"),
-        ("BMP", ".bmp"),
-        ("WebP", ".webp")
-    ]
-
-    def __init__(self, root):
-        self.root = root
+class SlicerLabApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
         self.is_mac = platform.system() == "Darwin"
-        self.is_dark_mode = detect_dark_mode_mac()
         
-        self.root.title(f"Tiles Grid Analyzer - {'macOS' if self.is_mac else 'Windows'}")
-        self.root.geometry("1400x900")
-        self.root.configure(bg="#1e1e1e")
+        self.setWindowTitle(f"Tiles Grid Analyzer - {'macOS' if self.is_mac else 'Windows'}")
+        self.resize(1400, 900)
+        self.setStyleSheet("QMainWindow { background-color: #1e1e1e; color: #cccccc; }")
 
         self.sessions = []
         self.current_session = None
         self.current_project_path = None
-        self.autosave_timer = None
-        self.export_format = ".png"
         
-        self.tk_image = None
-        self.last_mouse_x = 0
-        self.last_mouse_y = 0
-
         # Tool mode: "grid" (default) or "brush"
         self.active_tool = "grid"
-        self._brush_points = []   # list of (img_x, img_y) while drawing
-        self._brush_btn = None    # reference to toolbar brush button
         
-        # Services & Components
-        self.ui = UIComponents()
         self.project_service = ProjectService()
         self.export_service = ExportService()
-        self.undo_manager = UndoManager()
+        self.tile_import_service = TileImportService()
 
-        # Slice preview state
-        self._slice_thumbs = []  # keep refs to prevent GC
-        self._collapsed_sessions = set()  # session names that are collapsed
+        # ── Composition Root: wire infrastructure adapters into services ──
+        ml_models = []
+        try:
+            nuclick_adapter = NuClickAdapter(
+                model_path="app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth"
+            )
+            ml_models.append(nuclick_adapter)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("Failed to load NuClick adapter: %s", e)
+
+        self.segmentation_service = InteractiveSegmentationService(
+            models=ml_models
+        )
+        self.undo_manager = UndoManager()
 
         self._setup_ui()
 
     def _setup_ui(self):
-        self.colors = {"bg": "#1e1e1e", "sidebar": "#252526", "toolbar": "#333333", "accent": "#007acc", "text": "#cccccc"}
+        # 1. Central Widget — QStackedWidget hosts two independent environments
+        self._central_stack = QStackedWidget()
+        self.canvas_renderer = CanvasRenderer(self)     # Index 0 — Macro (full image)
+        self.tile_renderer   = TileRenderer(self)       # Index 1 — Micro (isolated tile)
+        self._central_stack.addWidget(self.canvas_renderer)
+        self._central_stack.addWidget(self.tile_renderer)
+        self._central_stack.setCurrentIndex(0)
+        self.setCentralWidget(self._central_stack)
+
+        # 2. Top Toolbar
+        self.toolbar = QToolBar("Main Toolbar")
+        self.toolbar.setMovable(False)
+        self.toolbar.setStyleSheet("""
+            QToolBar {
+                background-color: #252526;
+                border-bottom: 1px solid #333333;
+                spacing: 8px;
+                padding: 6px;
+            }
+            QToolButton {
+                background-color: transparent;
+                color: #cccccc;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                font-size: 8pt;
+                font-weight: 500;
+            }
+            QToolButton:hover {
+                background-color: #3e3e42;
+                border: 1px solid #454545;
+                color: #ffffff;
+            }
+            QToolButton:checked {
+                background-color: #0e639c;
+                color: #ffffff;
+                border: 1px solid #1177bb;
+            }
+            QToolButton:pressed {
+                background-color: #094771;
+            }
+        """)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
+
+        # Initialize sub-modules
+        self.project_manager = ProjectManager(self)
+        self.export_handler = ExportHandler(self)
         
-        setup_ttk_styles()
+        # Setup Toolbar Actions
+        self.project_manager.setup_toolbar(self.toolbar)
+        self.toolbar.addSeparator()
+
+        # Tool selection mode (Exclusive Group)
+        self.tool_group = QActionGroup(self)
+        self.tool_group.setExclusive(True)
+
+        self.action_grid = QAction("🟥 Grid Tool", self)
+        self.action_grid.setCheckable(True)
+        self.action_grid.setChecked(True)
+        self.action_grid.triggered.connect(lambda: self._activate_tool("grid"))
+        self.tool_group.addAction(self.action_grid)
+        self.toolbar.addAction(self.action_grid)
+
+        self.action_brush = QAction("🖌️ Brush Tool", self)
+        self.action_brush.setCheckable(True)
+        self.action_brush.triggered.connect(lambda: self._activate_tool("brush"))
+        self.tool_group.addAction(self.action_brush)
+        self.toolbar.addAction(self.action_brush)
+
+        self.toolbar.addSeparator()
+
+        # Tools exclusively for Tile/Slice Isolation mode
+        self.action_segment = QAction("🧠 Segment Nucleus", self)
+        self.action_segment.setCheckable(True)
+        self.action_segment.triggered.connect(lambda: self._activate_tool("segment"))
+        self.tool_group.addAction(self.action_segment)
+        self.toolbar.addAction(self.action_segment)
+
+        self.action_erase = QAction("🧽 Erase Pixels", self)
+        self.action_erase.setCheckable(True)
+        self.action_erase.triggered.connect(lambda: self._activate_tool("erase"))
+        self.tool_group.addAction(self.action_erase)
+        self.toolbar.addAction(self.action_erase)
+
+        self.toolbar.addSeparator()
+
+        # Model Selector Combobox in Toolbar
+        self.combo_model = QComboBox()
+        self.combo_model.addItems(self.segmentation_service.get_available_models())
+        self.combo_model.setStyleSheet("""
+            QComboBox { 
+                background-color: #3c3c3c; 
+                color: #ffffff; 
+                border: 1px solid #555555; 
+                border-radius: 4px; 
+                padding: 4px 8px; 
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+            QComboBox:focus { border: 1px solid #007acc; background-color: #444444; }
+            QComboBox::drop-down { border: none; }
+        """)
+        self.toolbar.addWidget(self.combo_model)
         
-        main = tk.Frame(self.root, bg=self.colors["bg"])
-        main.pack(fill=tk.BOTH, expand=True)
+        # Checkbox for Segmentation Membrane Overlay
+        self.chk_show_membrane = QCheckBox("Show Membrane")
+        self.chk_show_membrane.setChecked(True)
+        self.chk_show_membrane.setStyleSheet("""
+            QCheckBox { color: #cccccc; margin-left: 10px; font-family: 'Segoe UI', Tahoma, sans-serif; }
+            QCheckBox::indicator { width: 14px; height: 14px; background-color: #3c3c3c; border: 1px solid #555; border-radius: 3px; }
+            QCheckBox::indicator:checked { background-color: #0e639c; border: 1px solid #0e639c; }
+        """)
+        self.chk_show_membrane.stateChanged.connect(lambda: self.canvas_renderer.viewport().update() if self.canvas_renderer else None)
+        self.toolbar.addWidget(self.chk_show_membrane)
 
-        # Sidebar
-        self.sidebar = tk.Frame(main, width=260, bg=self.colors["sidebar"])
-        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        self.sidebar.pack_propagate(False)
+        self.toolbar.addSeparator()
         
-        # --- Top section: project images ---
-        top_section = tk.Frame(self.sidebar, bg=self.colors["sidebar"])
-        top_section.pack(fill=tk.X)
-
-        tk.Label(top_section, text="PROJECT / IMAGES", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w").pack(fill=tk.X, padx=12, pady=(10,4))
-        self.file_list = tk.Listbox(top_section, bg="#2a2a2a", fg=self.colors["text"], selectbackground="#37373d", selectforeground="white", bd=0, highlightthickness=0, font=("Segoe UI", 10), activestyle="none", height=4, relief="flat")
-        self.file_list.pack(fill=tk.X, padx=8, pady=(0,6))
-        self.file_list.bind("<<ListboxSelect>>", self.switch_image_tab)
+        # Grid Size Inputs (Moved to ProjectManager or Toolbar)
+        self.project_manager.setup_grid_inputs(self.toolbar)
         
-        self.ui.create_button(top_section, "＋ Add Image", self.add_image_btn, style_type="accent", padx=8, pady=(0,8), fill=tk.X)
-
-        # --- Separator ---
-        tk.Frame(self.sidebar, height=1, bg="#3a3a3a").pack(fill=tk.X, padx=8)
-
-        # --- Bottom section: slice previews ---
-        self.slice_header = tk.Label(self.sidebar, text="TILES (0)", bg=self.colors["sidebar"], fg="#888", font=("Segoe UI", 8, "bold"), anchor="w")
-        self.slice_header.pack(fill=tk.X, padx=12, pady=(8,4))
-
-        # Scrollable container for slices
-        slice_container = tk.Frame(self.sidebar, bg=self.colors["sidebar"])
-        slice_container.pack(fill=tk.BOTH, expand=True)
-
-        self._slice_canvas = tk.Canvas(slice_container, bg=self.colors["sidebar"], highlightthickness=0, bd=0)
-        self._slice_scrollbar = tk.Scrollbar(slice_container, orient="vertical", command=self._slice_canvas.yview)
-        self._slice_inner = tk.Frame(self._slice_canvas, bg=self.colors["sidebar"])
-
-        self._slice_canvas_window = self._slice_canvas.create_window((0, 0), window=self._slice_inner, anchor="nw")
-        self._slice_canvas.configure(yscrollcommand=self._slice_scrollbar.set)
-
-        # Resize inner frame width to match canvas
-        def _on_slice_canvas_configure(e):
-            self._slice_canvas.itemconfig(self._slice_canvas_window, width=e.width)
-        self._slice_canvas.bind("<Configure>", _on_slice_canvas_configure)
-        self._slice_inner.bind("<Configure>", lambda e: self._slice_canvas.configure(scrollregion=self._slice_canvas.bbox("all")))
-
-        self._slice_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self._slice_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Mouse wheel scrolling
-        def _on_slice_mousewheel(e):
-            self._slice_canvas.yview_scroll(-1 * (e.delta // 120), "units")
-        self._slice_canvas.bind("<MouseWheel>", _on_slice_mousewheel)
-        self._slice_inner.bind("<MouseWheel>", _on_slice_mousewheel)
-
-        # Main Area
-        content = tk.Frame(main, bg=self.colors["bg"])
-        content.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-
-        self.toolbar = tk.Frame(content, bg=self.colors["toolbar"], height=50)
-        self.toolbar.pack(fill=tk.X)
+        # Push the Export controls to the far right edge of the screen
+        spacer = QWidget()
+        spacer.setSizePolicy(spacer.sizePolicy().Policy.Expanding, spacer.sizePolicy().Policy.Preferred)
+        self.toolbar.addWidget(spacer)
         
-        # Project Menu
-        self._setup_project_menu()
-        tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
-        
-        self._setup_grid_inputs()
-        self._add_toolbar_btn("🎨", self.choose_color, tooltip="Grid Color")
+        self.export_handler.setup_toolbar(self.toolbar)
 
-        # Brush tool toggle button
-        self._brush_btn = tk.Button(
-            self.toolbar, text="🖌️ Brush",
-            command=lambda: self._activate_tool("brush" if self.active_tool == "grid" else "grid"),
-            bg="#444", fg="white", relief="flat",
-            font=("Segoe UI", 10), padx=8, pady=4,
-            activebackground="#555", activeforeground="white",
-            cursor="hand2"
+        # 3. Left Dock (Sidebar)
+        self.sidebar_dock = QDockWidget("Project Workspace", self)
+        self.sidebar_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        self.sidebar_dock.setStyleSheet("""
+            QDockWidget { 
+                background-color: #252526; 
+                color: #ccc; 
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+        """)
+        
+        # We use a Splitter here instead of a fixed layout so the two lists expand dynamically without gaps
+        self.sidebar_splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        # --- Top Half: Project Files ---
+        project_widget = QWidget()
+        project_layout = QVBoxLayout(project_widget)
+        project_layout.setContentsMargins(15, 15, 15, 15)
+        project_layout.setSpacing(10)
+        
+        lbl_proj = QLabel("PROJECT IMAGES")
+        lbl_proj.setStyleSheet("color: #aaaaaa; font-size: 8pt; font-weight: bold; letter-spacing: 1px;")
+        
+        self.file_list = QListWidget()
+        self.file_list.setStyleSheet("""
+            QListWidget { background-color: transparent; border: none; outline: none; }
+            QListWidget::item { padding: 8px; border-radius: 4px; color: #cccccc; margin-bottom: 2px; }
+            QListWidget::item:hover { background-color: #3e3e42; color: #ffffff; }
+            QListWidget::item:selected { background-color: #0e639c; color: #ffffff; font-weight: bold; }
+        """)
+        self.file_list.itemClicked.connect(self.project_manager.switch_image_tab)
+        
+        add_btn = QPushButton("＋ Add Image")
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007acc; color: white; padding: 8px; font-weight: bold; border-radius: 4px; border: none; font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+            QPushButton:hover { background-color: #0098ff; }
+            QPushButton:pressed { background-color: #005a9e; }
+        """)
+        add_btn.clicked.connect(self.project_manager.add_image)
+
+        project_layout.addWidget(lbl_proj)
+        project_layout.addWidget(self.file_list)
+        project_layout.addWidget(add_btn)
+
+        # --- Bottom Half: Slice Previews ---
+        self.slice_previews = SlicePreviews(self)
+
+        # "Add Tile" button sits inside the SlicePreviews widget layout
+        # so it's always visible regardless of splitter sizing
+        add_tile_btn = QPushButton("＋ Add Tile")
+        add_tile_btn.setToolTip("Import a saved tile XML descriptor into the current session")
+        add_tile_btn.setStyleSheet(
+            "background-color: #2d6a4f; color: white; padding: 6px; "
+            "font-weight: bold; border-radius: 3px; margin-top: 4px;"
         )
-        self._brush_btn.pack(side=tk.LEFT, padx=2, pady=4)
+        add_tile_btn.clicked.connect(self._add_tile)
+        self.slice_previews.layout.addWidget(add_tile_btn)
 
-        tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+        self.sidebar_splitter.addWidget(project_widget)
+        self.sidebar_splitter.addWidget(self.slice_previews)
+
+        # Set default proportions (2 widgets)
+        self.sidebar_splitter.setSizes([200, 500])
+
+        self.sidebar_dock.setWidget(self.sidebar_splitter)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.sidebar_dock)
         
-        # Zoom Controls
-        self._setup_zoom_controls()
-        tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+        # 3.5 Right Dock (Properties)
+        self.properties_dock = PropertiesPanel("Tile Properties", self)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.properties_dock)
+        self.properties_dock.hide() # Hidden by default on canvas view
         
-        # Export Format
-        self._setup_format_selector()
-        tk.Frame(self.toolbar, width=1, bg="#555").pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+        # 4. Status Bar
+        self.statusBar().showMessage("Ready. Add an image to start.")
+        self.statusBar().setStyleSheet("background-color: #007acc; color: white;")
+
+    def _activate_tool(self, tool_name):
+        self.active_tool = tool_name
+        self.statusBar().showMessage(f"Tool selected: {tool_name}")
+        self.canvas_renderer.set_tool(tool_name)
+
+    def update_tool_context(self, is_isolated: bool):
+        """Enable/Disable tools based on whether the user is in global view or inside an isolated tile."""
+        self.action_grid.setEnabled(not is_isolated)
+        self.action_brush.setEnabled(not is_isolated)
+        self.action_segment.setEnabled(is_isolated)
+        self.action_erase.setEnabled(is_isolated)
+        self.combo_model.setEnabled(is_isolated)
+
+        # Auto-switch to an available tool safely to avoid undefined states
+        if is_isolated and self.active_tool in ("grid", "brush"):
+            self.action_segment.setChecked(True)
+            self._activate_tool("segment")
+        elif not is_isolated and self.active_tool in ("segment", "erase"):
+            self.action_grid.setChecked(True)
+            self._activate_tool("grid")
+
+    def _add_tile(self):
+        """Slot for the 'Add Tile' button — delegates to project_manager."""
+        self.project_manager.add_tile()
+
+    # ── Environment Switching (Bounded Context Transitions) ─────────────────
+
+    def switch_to_tile(self, idx: int) -> None:
+        """Transition from Macro (full image) to Micro (isolated tile editing)."""
+        s = self.current_session
+        if not s or idx >= len(s.tiles):
+            return
+        self.tile_renderer.load_tile(s, idx)
         
-        # Tile Buttons
-        self._add_toolbar_btn("✂️ Tile", self.save_selected_cells, bg="#27ae60", tooltip="Export Selected Tiles")
-        self._add_toolbar_btn("🔲 All", self.slice_all, bg="#27ae60", tooltip="Export All Grid Tiles")
+        # Show and populate properties pane
+        self.properties_dock.load_tile(s.tiles[idx])
+        self.properties_dock.show()
         
-        # Status label
-        self.save_status_label = tk.Label(self.toolbar, text="", bg=self.colors["toolbar"], fg="#aaa", font=("Segoe UI", 8, "italic"))
-        self.save_status_label.pack(side=tk.RIGHT, padx=10)
+        self._central_stack.setCurrentIndex(1)
+        self.update_tool_context(True)
 
-        # Canvas
-        self.canvas_area = tk.Frame(content, bg="black")
-        self.canvas_area.pack(fill=tk.BOTH, expand=True)
-        self.canvas = tk.Canvas(self.canvas_area, bg="#111", highlightthickness=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+    def switch_to_canvas(self) -> None:
+        """Transition from Micro (isolated tile) back to Macro (full image)."""
+        self.tile_renderer.unload()
         
-        self.status_bar = tk.Label(content, text="Ready. Add an image to start.", bg=self.colors["accent"], fg="white", anchor="w", font=("Segoe UI", 8))
-        self.status_bar.pack(fill=tk.X)
-
-        self._setup_binds()
-        self._show_welcome_screen()
-
-    def _show_welcome_screen(self):
-        """Show a full-window welcome overlay that blocks all interaction."""
-        self.welcome_frame = tk.Frame(self.root, bg="#1a1a2e")
-        self.welcome_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-
-        # Center container
-        center = tk.Frame(self.welcome_frame, bg="#1a1a2e")
-        center.place(relx=0.5, rely=0.45, anchor="center")
-
-        # App icon/logo area
-        tk.Label(center, text="✂️", font=("Segoe UI", 48), bg="#1a1a2e", fg="white").pack(pady=(0, 5))
-
-        # Title
-        tk.Label(center, text="Tiles Grid Analyzer", font=("Segoe UI", 28, "bold"),
-                 bg="#1a1a2e", fg="#e0e0e0").pack(pady=(0, 5))
-
-        # Subtitle
-        tk.Label(center, text="Grid-based image tiling tool",
-                 font=("Segoe UI", 11), bg="#1a1a2e", fg="#888").pack(pady=(0, 30))
-
-        # Buttons container
-        btn_frame = tk.Frame(center, bg="#1a1a2e")
-        btn_frame.pack()
-
-        # New Project button
-        new_btn = tk.Button(btn_frame, text="📄  New Project",
-                           command=self.new_project,
-                           bg="#007acc", fg="white",
-                           activebackground="#005a9e", activeforeground="white",
-                           relief="flat", font=("Segoe UI", 13, "bold"),
-                           padx=30, pady=12, cursor="hand2", width=20)
-        new_btn.pack(pady=5)
-
-        # Open Project button
-        open_btn = tk.Button(btn_frame, text="📂  Open Project",
-                            command=self.open_project,
-                            bg="#333", fg="white",
-                            activebackground="#444", activeforeground="white",
-                            relief="flat", font=("Segoe UI", 13),
-                            padx=30, pady=12, cursor="hand2", width=20)
-        open_btn.pack(pady=5)
-
-        # Version / footer
-        tk.Label(self.welcome_frame, text="v1.0",
-                 font=("Segoe UI", 8), bg="#1a1a2e", fg="#555").place(relx=0.5, rely=0.95, anchor="center")
-
-    def _dismiss_welcome(self):
-        """Remove the welcome screen overlay."""
-        if hasattr(self, 'welcome_frame') and self.welcome_frame:
-            self.welcome_frame.destroy()
-            self.welcome_frame = None
-
-    def _setup_grid_inputs(self):
-        f = tk.Frame(self.toolbar, bg=self.colors["toolbar"])
-        f.pack(side=tk.LEFT, padx=5)
-        tk.Label(f, text="W:", bg=self.colors["toolbar"], fg="white", font=("Segoe UI", 9)).pack(side=tk.LEFT)
-        self.entry_w = tk.Entry(f, width=4, justify="center", bg="#444", fg="white", relief="flat", font=("Segoe UI", 9))
-        self.entry_w.insert(0, "1000")
-        self.entry_w.pack(side=tk.LEFT, padx=1)
-        tk.Label(f, text="H:", bg=self.colors["toolbar"], fg="white", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(3,0))
-        self.entry_h = tk.Entry(f, width=4, justify="center", bg="#444", fg="white", relief="flat", font=("Segoe UI", 9))
-        self.entry_h.insert(0, "1000")
-        self.entry_h.pack(side=tk.LEFT, padx=1)
+        # Hide properties pane
+        self.properties_dock.clear()
+        self.properties_dock.hide()
         
-        self.entry_w.bind("<KeyRelease>", lambda e: self.trigger_modification())
-        self.entry_h.bind("<KeyRelease>", lambda e: self.trigger_modification())
-        self.entry_w.bind("<FocusOut>", lambda e: self.redraw())
-        self.entry_h.bind("<FocusOut>", lambda e: self.redraw())
-
-    def _add_toolbar_btn(self, text, command, bg=None, tooltip=None):
-        if bg == "#27ae60":
-            style_type = "green"
-        else:
-            style_type = "default"
-        self.ui.create_button(self.toolbar, text, command, style_type=style_type)
-
-    def _setup_binds(self):
-        c = self.canvas
-        c.bind("<MouseWheel>", self.on_scroll)
-        if not self.is_mac:
-            c.bind("<Control-MouseWheel>", self.on_zoom_scroll)
-        c.bind("<Configure>", self.on_resize)
-        # Keyboard shortcuts
-        self.root.bind("<Control-z>", lambda e: self._undo())
-        self.root.bind("<Control-y>", lambda e: self._redo())
-        self.root.bind("<Control-s>", lambda e: self._save_shortcut())
-        self.root.bind("<Control-o>", lambda e: self.open_project())
-        self.root.bind("<Control-n>", lambda e: self.new_project())
-        self.root.bind("<Delete>", lambda e: self._delete_current_tile())
-        self._rebind_canvas()
+        self._central_stack.setCurrentIndex(0)
+        self.update_tool_context(False)
+        self.canvas_renderer.redraw()

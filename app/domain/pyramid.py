@@ -109,6 +109,29 @@ class ImagePyramid:
     # Public API
     # ------------------------------------------------------------------
 
+    def get_tile(self, col: int, row: int, zoom: float, tile_size: int = 256):
+        """Return a single square tile of dimension `tile_size` at the given grid coordinates.
+        This provides the backend for OpenSeadragon-style progressive deep zooming.
+        """
+        # Calculate full-res coordinates for this tile
+        cam_x = (col * tile_size) / zoom
+        cam_y = (row * tile_size) / zoom
+        
+        # Out of bounds check
+        from PIL import Image
+        if cam_x >= self.image_width or cam_y >= self.image_height:
+             return Image.new("RGB", (tile_size, tile_size), (20, 20, 20))
+             
+        try:
+            if zoom >= self.TIER_FULLRES:
+                return self._viewport_fullres(cam_x, cam_y, tile_size, tile_size, zoom)
+            elif zoom >= self.TIER_LOSSLESS:
+                return self._viewport_lossless(cam_x, cam_y, tile_size, tile_size, zoom)
+            else:
+                return self._viewport_lossy(cam_x, cam_y, tile_size, tile_size, zoom)
+        except Exception:
+            return Image.new("RGB", (tile_size, tile_size), (20, 20, 20))
+
     def get_viewport(self, cam_x, cam_y, vp_w, vp_h, zoom):
         """Return a PIL Image for the current viewport.
 

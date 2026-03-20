@@ -1,9 +1,6 @@
 # Runtime dependencies
 Pillow>=10.4.0
 openpyxl>=3.1.0
+PyQt6>=6.0.0
+openslide-python>=1.3.1
 
-# Optional: GPU-accelerated image loading (recommended for large images)
-# pyvips>=2.2.0
-
-# Development dependencies (install with: pip install -r requirements-dev.txt)
-# See pyproject.toml [project.optional-dependencies] for the canonical list

@@ -1,6 +1,9 @@
 import os
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Set
 from app.domain.pyramid import ImagePyramid
+
+
+from app.domain.tile import Tile
 
 
 # 10 visually distinct colors for tile overlays
@@ -38,11 +41,11 @@ class ImageSession:
         self.grid_w: int = 1000
         self.grid_h: int = 1000
         self.grid_color: str = "#FFFF00"
-        self.selected_cells: List[Tuple[int, int]] = []
-        self.selected_polygons: List[Optional[List[Tuple[int, int]]]] = []   # parallel to selected_cells: None (grid) or list of (x,y) (brush)
-        self.slice_metadata: List[Dict[str, str]] = []
-        self.slice_exclusions: List[List[Tuple[int, int, int, int]]] = []    # parallel to selected_cells: list of (x1,y1,x2,y2) rects to exclude
-        self.tile_colors: List[str] = []         # parallel to selected_cells: hex color string
+        
+        # New Domain Entity List
+        self.tiles: List[Tile] = []
+        self.segmentations: List[List[Tuple[int, int]]] = []
+
         self.export_dir: Optional[str] = None
         self.export_format: Optional[str] = None
 
@@ -51,22 +54,6 @@ class ImageSession:
         if self._thumbnail is None:
             self._thumbnail = self.pyramid.get_thumbnail(max_size=max_size)
         return self._thumbnail
-
-    def sync_metadata(self) -> None:
-        """Ensure slice_metadata, selected_polygons, and tile_colors stay aligned with selected_cells."""
-        n = len(self.selected_cells)
-        while len(self.slice_metadata) < n:
-            self.slice_metadata.append({"name": "", "description": "", "microns_per_pixel": ""})
-        self.slice_metadata = self.slice_metadata[:n]
-        while len(self.selected_polygons) < n:
-            self.selected_polygons.append(None)
-        self.selected_polygons = self.selected_polygons[:n]
-        while len(self.slice_exclusions) < n:
-            self.slice_exclusions.append([])
-        self.slice_exclusions = self.slice_exclusions[:n]
-        while len(self.tile_colors) < n:
-            self.tile_colors.append(TILE_COLORS[len(self.tile_colors) % len(TILE_COLORS)])
-        self.tile_colors = self.tile_colors[:n]
 
     def set_grid(self, grid_w: int, grid_h: int, grid_color: str) -> None:
         """Set grid dimensions and color."""

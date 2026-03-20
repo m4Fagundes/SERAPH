@@ -1,7 +1,16 @@
+
 .github
 .agent
 .gemini
 .gsd
+.skills
 
 __pycache__/
-*.pyc
+*.pyc
+skills/
+*.pth
+*.zip
+.DS_Store
+.env
+.venv
+venv/

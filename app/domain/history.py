@@ -35,12 +35,7 @@ class UndoManager:
             "type": action_type,
             "session_id": id(session),
             "session": session,
-            "selected_cells": copy.deepcopy(
-                [list(rects) for rects in session.selected_cells]
-            ),
-            "selected_polygons": copy.deepcopy(session.selected_polygons),
-            "slice_metadata": copy.deepcopy(session.slice_metadata),
-            "tile_colors": copy.deepcopy(session.tile_colors),
+            "tiles": [t.serialize() for t in session.tiles],
         }
         self._undo_stack.append(snapshot)
         if len(self._undo_stack) > MAX_HISTORY:
@@ -67,12 +62,7 @@ class UndoManager:
             "type": snapshot["type"],
             "session_id": snapshot["session_id"],
             "session": session,
-            "selected_cells": copy.deepcopy(
-                [list(rects) for rects in session.selected_cells]
-            ),
-            "selected_polygons": copy.deepcopy(session.selected_polygons),
-            "slice_metadata": copy.deepcopy(session.slice_metadata),
-            "tile_colors": copy.deepcopy(session.tile_colors),
+            "tiles": [t.serialize() for t in session.tiles],
         }
         self._redo_stack.append(redo_snapshot)
 
@@ -93,12 +83,7 @@ class UndoManager:
             "type": snapshot["type"],
             "session_id": snapshot["session_id"],
             "session": session,
-            "selected_cells": copy.deepcopy(
-                [list(rects) for rects in session.selected_cells]
-            ),
-            "selected_polygons": copy.deepcopy(session.selected_polygons),
-            "slice_metadata": copy.deepcopy(session.slice_metadata),
-            "tile_colors": copy.deepcopy(session.tile_colors),
+            "tiles": [t.serialize() for t in session.tiles],
         }
         self._undo_stack.append(undo_snapshot)
 
@@ -114,10 +99,5 @@ class UndoManager:
     @staticmethod
     def _restore(session: Any, snapshot: Dict[str, Any]) -> None:
         """Apply a snapshot back to a session."""
-        session.selected_cells = [
-            set(tuple(r) for r in rects) for rects in snapshot["selected_cells"]
-        ]
-        session.selected_polygons = copy.deepcopy(snapshot["selected_polygons"])
-        session.slice_metadata = copy.deepcopy(snapshot["slice_metadata"])
-        session.tile_colors = copy.deepcopy(snapshot.get("tile_colors", []))
-        session.sync_metadata()
+        from app.domain.tile import Tile
+        session.tiles = [Tile.deserialize(t_data) for t_data in snapshot["tiles"]]

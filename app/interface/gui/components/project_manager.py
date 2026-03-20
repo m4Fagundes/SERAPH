@@ -1,283 +1,193 @@
-import logging
-import tkinter as tk
-from tkinter import filedialog, messagebox
 import os
+import logging
+from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget, QHBoxLayout, QLabel, QLineEdit
+from PyQt6.QtGui import QAction
 from app.domain.session import ImageSession
 
 logger = logging.getLogger(__name__)
 
+class ProjectManager:
+    def __init__(self, main_window):
+        self.mw = main_window
+        # Track the currently open .lab file path for auto-save
+        self._current_project_path: str | None = None
 
-class ProjectManagerMixin:
-    """Mixin for project management: new/open/save, sessions, autosave, undo/redo."""
+    def setup_toolbar(self, toolbar):
+        new_action = QAction("📄 New", self.mw)
+        new_action.triggered.connect(self.new_project)
+        toolbar.addAction(new_action)
 
-    def _setup_project_menu(self):
-        f = tk.Frame(self.toolbar, bg=self.colors["toolbar"])
-        f.pack(side=tk.LEFT, padx=5)
+        open_action = QAction("📂 Open", self.mw)
+        open_action.triggered.connect(self.open_project)
+        toolbar.addAction(open_action)
+
+        # 💾 Save — saves to current file if open, otherwise prompts
+        save_action = QAction("💾 Save", self.mw)
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self.save_project)
+        toolbar.addAction(save_action)
+
+        # 💾 Save As — always prompts for a new path
+        saveas_action = QAction("💾 Save As", self.mw)
+        saveas_action.triggered.connect(self.save_project_as)
+        toolbar.addAction(saveas_action)
+
+    def setup_grid_inputs(self, toolbar):
+        lbl_w = QLabel(" W: ")
+        lbl_w.setStyleSheet("color: #aaaaaa; font-weight: bold;")
+        toolbar.addWidget(lbl_w)
         
-        self.project_menubutton = tk.Menubutton(f, text="📁 Project ▾", 
-                                                 bg="#444", fg="white", 
-                                                 relief="flat", 
-                                                 font=("Segoe UI", 10),
-                                                 activebackground="#555",
-                                                 activeforeground="white",
-                                                 padx=10, pady=5)
-        self.project_menubutton.pack(side=tk.LEFT)
+        self.entry_w = QLineEdit("1000")
+        self.entry_w.setFixedWidth(60)
+        self.entry_w.setStyleSheet("background: #3c3c3c; border: 1px solid #555555; border-radius: 4px; padding: 4px; color: white; font-family: 'Segoe UI', Tahoma, sans-serif;")
+        self.entry_w.textChanged.connect(self._grid_changed)
+        toolbar.addWidget(self.entry_w)
         
-        self.project_menu = tk.Menu(self.project_menubutton, tearoff=0,
-                                    bg="#333", fg="white",
-                                    activebackground="#007acc",
-                                    activeforeground="white",
-                                    font=("Segoe UI", 10))
-        self.project_menubutton["menu"] = self.project_menu
+        lbl_h = QLabel("  H: ")
+        lbl_h.setStyleSheet("color: #aaaaaa; font-weight: bold;")
+        toolbar.addWidget(lbl_h)
         
-        self.project_menu.add_command(label="📄 New Project", command=self.new_project)
-        self.project_menu.add_command(label="📂 Open Project...", command=self.open_project)
-        self.project_menu.add_separator()
-        self.project_menu.add_command(label="💾 Save As...", command=self.save_project_as)
+        self.entry_h = QLineEdit("1000")
+        self.entry_h.setFixedWidth(60)
+        self.entry_h.setStyleSheet("background: #3c3c3c; border: 1px solid #555555; border-radius: 4px; padding: 4px; color: white; font-family: 'Segoe UI', Tahoma, sans-serif;")
+        self.entry_h.textChanged.connect(self._grid_changed)
+        toolbar.addWidget(self.entry_h)
 
-    def trigger_modification(self, event=None):
-        if not self.current_project_path:
-            self.save_status_label.config(text="* Unsaved")
-            return
-
-        self.save_status_label.config(text="Modified...")
-        if self.autosave_timer:
-            self.root.after_cancel(self.autosave_timer)
-        self.autosave_timer = self.root.after(2000, self._execute_autosave)
-
-    def _execute_autosave(self):
-        if self.current_project_path:
+    def _grid_changed(self):
+        s = self.mw.current_session
+        if s:
             try:
-                self._write_project_file(self.current_project_path)
-                self.save_status_label.config(text="Auto-saved")
-            except Exception as e:
-                self.save_status_label.config(text="AutoSave Error")
-                logger.error("AutoSave Error: %s", e)
-
-    def _write_project_file(self, path):
-        if self.current_session:
-            try:
-                self.current_session.grid_w = int(self.entry_w.get())
-                self.current_session.grid_h = int(self.entry_h.get())
-            except: pass
-
-        self.project_service.save_project(path, self.sessions)
+                s.grid_w = int(self.entry_w.text())
+                s.grid_h = int(self.entry_h.text())
+                self.mw.canvas_renderer.redraw()
+            except ValueError:
+                pass
 
     def new_project(self):
-        if self.sessions:
-            if not messagebox.askyesno("New Project", "This will close the current project.\nUnsaved changes will be lost.\n\nContinue?"):
-                return
-        
-        self._dismiss_welcome()
-        self.sessions.clear()
-        self.file_list.delete(0, tk.END)
-        self.current_session = None
-        self.current_project_path = None
-        self.canvas.delete("all")
-        self.undo_manager.clear()
-        
-        self.entry_w.delete(0, tk.END)
-        self.entry_w.insert(0, "1000")
-        self.entry_h.delete(0, tk.END)
-        self.entry_h.insert(0, "1000")
-        
-        self.format_var.set("PNG")
-        self.export_format = ".png"
-        
-        self.root.title("Tiles Grid Analyzer - New Project")
-        self.save_status_label.config(text="")
-        self.status_bar.config(text="New project created. Add an image to start.")
-        self.zoom_label.config(text="100%")
-        self._update_slice_previews()
-
-    def save_project_as(self):
-        if not self.sessions:
-            messagebox.showwarning("Warning", "No images to save.")
-            return
-            
-        f = filedialog.asksaveasfilename(defaultextension=".lab", filetypes=[("Lab Project", "*.lab")])
-        if f:
-            self.current_project_path = f
-            self._write_project_file(f)
-            self.root.title(f"Tiles Grid Analyzer - {os.path.basename(f)}")
-            messagebox.showinfo("Success", "Project saved! AutoSave enabled.")
+        self.mw.sessions.clear()
+        self.mw.file_list.clear()
+        self.mw.current_session = None
+        self.mw.canvas_renderer.scene.clear()
+        self._current_project_path = None
+        self.mw.setWindowTitle("Tiles Grid Analyzer")
 
     def open_project(self):
-        f = filedialog.askopenfilename(filetypes=[("Lab Project", "*.lab")])
-        if not f: return
-        
-        try:
-            sessions, missing = self.project_service.load_project(f)
-
-            # Re-link missing images
-            if missing:
-                for entry in missing:
-                    name = os.path.basename(entry["rel_path"])
-                    answer = messagebox.askyesno(
-                        "Image Not Found",
-                        f"Image not found:\n  {entry['rel_path']}\n\n"
-                        f"Would you like to locate \"{name}\" manually?")
-                    if answer:
-                        new_path = filedialog.askopenfilename(
-                            title=f"Locate: {name}",
-                            filetypes=[("All Supported", (
-                                "*.jpg", "*.jpeg", "*.png", "*.tif", "*.tiff", "*.bmp", "*.webp", "*.ndpi", "*.svs", "*.mrxs", "*.scn", "*.vms", "*.vmu", "*.bif",
-                                "*.JPG", "*.JPEG", "*.PNG", "*.TIF", "*.TIFF", "*.BMP", "*.WEBP", "*.NDPI", "*.SVS", "*.MRXS", "*.SCN", "*.VMS", "*.VMU", "*.BIF"
-                            ))])
-                        if new_path and os.path.exists(new_path):
-                            # Build session from the item data with the new path
-                            item = entry["item"]
-                            try:
-                                s = ImageSession(new_path)
-                                s.grid_w = item.get("grid_w", 1000)
-                                s.grid_h = item.get("grid_h", 1000)
-                                s.zoom_level = item.get("zoom_level", 1.0)
-                                s.camera_x = item.get("camera_x", 0)
-                                s.camera_y = item.get("camera_y", 0)
-                                sel = item.get("selected_regions", item.get("selected_cells", []))
-                                if sel and isinstance(sel[0], (list, tuple)):
-                                    if sel[0] and isinstance(sel[0][0], (list, tuple)):
-                                        s.selected_cells = [set(tuple(r) for r in group) for group in sel]
-                                    else:
-                                        s.selected_cells = [{tuple(r)} for r in sel if len(r) == 4]
-                                s.slice_metadata = item.get("slice_metadata", [])
-                                raw_polys = item.get("selected_polygons", [])
-                                s.selected_polygons = [
-                                    [tuple(pt) for pt in poly] if poly else None
-                                    for poly in raw_polys
-                                ]
-                                s.sync_metadata()
-                                s.grid_color = item.get("grid_color", "#FFFF00")
-                                s.export_dir = item.get("export_dir", None)
-                                s.export_format = item.get("export_format", None)
-                                sessions.append(s)
-                            except Exception as ex:
-                                messagebox.showwarning("Warning", f"Could not load image:\n{ex}")
-
-            self.sessions = sessions
-
-            self._dismiss_welcome()
-            self.file_list.delete(0, tk.END)
-            self.current_session = None
-            self.canvas.delete("all")
-            self.undo_manager.clear()
-            
-            for s in self.sessions:
-                self.file_list.insert(tk.END, f" {s.name}")
-
-            # All sessions are immediately ready (on-demand)
-            if self.sessions:
-                self._activate_session(self.sessions[0])
-            
-            self.current_project_path = f
-            self.root.title(f"Tiles Grid Analyzer - {os.path.basename(f)}")
-            self.save_status_label.config(text="Project Loaded")
-            self._update_slice_previews()
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Error opening project: {e}")
-            logger.error("Error opening project '%s': %s", f, e)
-
-    def add_image_btn(self):
-        path = filedialog.askopenfilename(filetypes=[
-            ("All Supported", (
-                "*.jpg", "*.jpeg", "*.png", "*.tif", "*.tiff", "*.bmp", "*.webp", 
-                "*.ndpi", "*.svs", "*.mrxs", "*.scn", "*.vms", "*.vmu", "*.bif",
-                "*.JPG", "*.JPEG", "*.PNG", "*.TIF", "*.TIFF", "*.BMP", "*.WEBP", 
-                "*.NDPI", "*.SVS", "*.MRXS", "*.SCN", "*.VMS", "*.VMU", "*.BIF"
-            )),
-            ("Images", (
-                "*.jpg", "*.jpeg", "*.png", "*.tif", "*.tiff", "*.bmp", "*.webp",
-                "*.JPG", "*.JPEG", "*.PNG", "*.TIF", "*.TIFF", "*.BMP", "*.WEBP"
-            )),
-            ("Whole-Slide Images", (
-                "*.ndpi", "*.svs", "*.mrxs", "*.scn", "*.vms", "*.vmu", "*.bif",
-                "*.NDPI", "*.SVS", "*.MRXS", "*.SCN", "*.VMS", "*.VMU", "*.BIF"
-            ))
-        ])
-        if path:
-            self._add_session(path)
-            self.trigger_modification()
-
-    def _add_session(self, path):
-        if self.current_session:
+        f, _ = QFileDialog.getOpenFileName(self.mw, "Open Project", "", "Lab Project (*.lab)")
+        if f:
             try:
-                self.current_session.grid_w = int(self.entry_w.get())
-                self.current_session.grid_h = int(self.entry_h.get())
-            except: pass
+                sessions, missing = self.mw.project_service.load_project(f)
+                self.mw.sessions = sessions
+                self.mw.file_list.clear()
+                for s in self.mw.sessions:
+                    self.mw.file_list.addItem(f" {s.name}")
+                if self.mw.sessions:
+                    self._activate_session(self.mw.sessions[0])
+                # Remember path for subsequent auto-saves
+                self._current_project_path = f
+                self.mw.setWindowTitle(f"Tiles Grid Analyzer — {os.path.basename(f)}")
+            except Exception as e:
+                QMessageBox.critical(self.mw, "Error", f"Could not load project: {e}")
 
-        try:
-            new_session = ImageSession(path)
-            self.sessions.append(new_session)
-            self.file_list.insert(tk.END, f" {new_session.name}")
-            self.file_list.selection_clear(0, tk.END)
-            self.file_list.selection_set(tk.END)
-            self._activate_session(new_session)
-            self.status_bar.config(text=f"Loaded: {new_session.name} | {new_session.real_width:,}×{new_session.real_height:,} px")
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-
-    def switch_image_tab(self, event):
-        sel = self.file_list.curselection()
-        if not sel: return
-        idx = sel[0]
-        if 0 <= idx < len(self.sessions):
-            if self.current_session:
-                try:
-                    self.current_session.grid_w = int(self.entry_w.get())
-                    self.current_session.grid_h = int(self.entry_h.get())
-                except: pass
-            
-            self._activate_session(self.sessions[idx])
-
-    def _activate_session(self, session):
-        # Unload the outgoing session to free RAM / file handles
-        if self.current_session and self.current_session is not session:
-            self.current_session.unload_image()
-
-        # Re-open the incoming session if it was previously unloaded
-        session.reload_image()
-
-        self.current_session = session
-        
-        self.entry_w.delete(0, tk.END)
-        self.entry_w.insert(0, str(session.grid_w))
-        self.entry_h.delete(0, tk.END)
-        self.entry_h.insert(0, str(session.grid_h))
-        
-        if session.zoom_level == 1.0 and session.camera_x == 0:
-            w_can = self.canvas.winfo_width()
-            if w_can > 10:
-                ratio = min(w_can/session.real_width, self.canvas.winfo_height()/session.real_height)
-                session.zoom_level = ratio * 0.9
-
-        self.status_bar.config(text=f"Image: {session.name} | Size: {session.real_width}x{session.real_height}px")
-        self.redraw()
-        self._update_zoom_label()
-
-
-    def _undo(self):
-        """Undo the last tile action."""
-        session = self.undo_manager.undo()
-        if session:
-            self.redraw()
-            self._update_slice_previews()
-            self.trigger_modification()
-            self.status_bar.config(text="Undo")
-
-    def _redo(self):
-        """Redo the last undone action."""
-        session = self.undo_manager.redo()
-        if session:
-            self.redraw()
-            self._update_slice_previews()
-            self.trigger_modification()
-            self.status_bar.config(text="Redo")
-
-    def _save_shortcut(self):
-        """Ctrl+S: save to current path or prompt Save As."""
-        if self.current_project_path:
-            self._write_project_file(self.current_project_path)
-            self.save_status_label.config(text="Saved")
+    def save_project(self):
+        """Save to the currently open file; if none, prompt for a path."""
+        if self._current_project_path:
+            self.mw.project_service.save_project(self._current_project_path, self.mw.sessions)
+            self.mw.statusBar().showMessage(
+                f"✅ Saved — {os.path.basename(self._current_project_path)}"
+            )
         else:
             self.save_project_as()
+
+    def save_project_as(self):
+        """Always prompt for a new file path."""
+        f, _ = QFileDialog.getSaveFileName(self.mw, "Save As", "", "Lab Project (*.lab)")
+        if f:
+            self.mw.project_service.save_project(f, self.mw.sessions)
+            self._current_project_path = f
+            self.mw.setWindowTitle(f"Tiles Grid Analyzer — {os.path.basename(f)}")
+            self.mw.statusBar().showMessage(f"✅ Saved — {os.path.basename(f)}")
+
+
+    def add_image(self):
+        path, _ = QFileDialog.getOpenFileName(self.mw, "Add Image", "", "Images (*.jpg *.png *.tif *.svs *.ndpi *.mrxs *.tiff *.bmp)")
+        if path:
+            try:
+                s = ImageSession(path)
+                s.grid_w = int(self.entry_w.text())
+                s.grid_h = int(self.entry_h.text())
+                
+                self.mw.sessions.append(s)
+                self.mw.file_list.addItem(s.name)
+                self._activate_session(s)
+            except Exception as e:
+                QMessageBox.warning(self.mw, "Load Error", str(e))
+
+    def switch_image_tab(self, *args):
+        # Triggered when QListWidget row changes or receives click
+        row = self.mw.file_list.currentRow()
+        if 0 <= row < len(self.mw.sessions):
+            self._activate_session(self.mw.sessions[row])
+
+    def _activate_session(self, session):
+        self.mw.current_session = session
+        self.entry_w.setText(str(session.grid_w))
+        self.entry_h.setText(str(session.grid_h))
+
+        # Return to the Macro environment (full image view)
+        self.mw.switch_to_canvas()
+        self.mw.slice_previews.list_widget.clearSelection()
+
+        # Reset camera
+        if session.zoom_level == 1.0 and session.camera_x == 0:
+            view_w = self.mw.canvas_renderer.width()
+            view_h = self.mw.canvas_renderer.height()
+            if view_w > 10:
+                ratio = min(view_w / session.real_width, view_h / session.real_height)
+                # Auto-fit zoom ensuring it's not overly huge
+                session.zoom_level = min(ratio * 0.95, 2.0)
+                # Center the camera coordinates in real pixel space
+                session.camera_x = session.real_width // 2
+                session.camera_y = session.real_height // 2
+
+        # Sync zoom into renderer
+        self.mw.canvas_renderer.viewport_zoom = session.zoom_level
+        
+        # Move camera to center of scene
+        self.mw.canvas_renderer.centerOn(session.camera_x, session.camera_y)
+
+        self.mw.statusBar().showMessage(f"Image: {session.name} | {session.real_width}x{session.real_height}px")
+        self.mw.canvas_renderer.redraw()
+        self.mw.slice_previews.update_previews()
+
+    # ── Tile Import ───────────────────────────────────────────────────────────
+
+    def add_tile(self) -> None:
+        """Open a tile XML descriptor and import it into the current session."""
+        s = self.mw.current_session
+        if not s:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self.mw, "Add Tile", "No image session is active.")
+            return
+
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        path, _ = QFileDialog.getOpenFileName(
+            self.mw, "Open Tile Descriptor", "", "Tile Descriptor (*.xml)"
+        )
+        if not path:
+            return
+
+        try:
+            new_idx = self.mw.tile_import_service.load_tile_xml(path, s)
+        except Exception as exc:
+            QMessageBox.critical(self.mw, "Import Error", str(exc))
+            return
+
+        # Refresh sidebar
+        self.mw.slice_previews.update_previews()
+        self.mw.statusBar().showMessage(
+            f"Tile imported → Slice {new_idx + 1} | {len(s.tiles)} slices total"
+        )
+
+        # Navigate to the newly imported slice using the Micro environment
+        self.mw.switch_to_tile(new_idx)
+
