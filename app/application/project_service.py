@@ -48,6 +48,11 @@ class ProjectService:
             s.camera_y = item.get("camera_y", 0)
             s.camera_y = item.get("camera_y", 0)
             
+            if "segmentations" in item:
+                s.segmentations = [[tuple(pt) for pt in s_poly] for s_poly in item["segmentations"]]
+            else:
+                s.segmentations = []
+
             # --- Schema Migration: Old Parallel Arrays -> unified Tile objects ---
             from app.domain.tile import Tile
             s.tiles = []
@@ -129,6 +134,7 @@ class ProjectService:
                 "grid_w": s.grid_w,
                 "grid_h": s.grid_h,
                 "tiles": [t.serialize() for t in s.tiles],
+                "segmentations": [[list(pt) for pt in s_poly] for s_poly in getattr(s, "segmentations", [])],
                 "grid_color": s.grid_color,
                 "export_dir": rel_export_dir,
                 "export_format": s.export_format,
