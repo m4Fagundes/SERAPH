@@ -2,7 +2,8 @@ import sys
 import platform
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QToolBar, QDockWidget, QListWidget, QPushButton, 
-                             QLabel, QFrame, QScrollArea, QSplitter, QStackedWidget)
+                             QLabel, QFrame, QScrollArea, QSplitter, QStackedWidget,
+                             QDoubleSpinBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QAction, QActionGroup
 
@@ -11,7 +12,9 @@ from app.application.project_service import ProjectService
 from app.application.export_service import ExportService
 from app.application.import_service import TileImportService
 from app.application.interactive_segmentation_service import InteractiveSegmentationService
+from app.application.batch_segmentation_service import BatchSegmentationService
 from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
+from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
 from PyQt6.QtWidgets import QComboBox, QCheckBox
 
 # Import the new PyQt Components (to be rewritten in subsequent steps)
@@ -45,18 +48,36 @@ class SlicerLabApp(QMainWindow):
         self.tile_import_service = TileImportService()
 
         # ── Composition Root: wire infrastructure adapters into services ──
+        import logging as _logging
+        _cr_logger = _logging.getLogger(__name__)
+
+        # Interactive models (click-based)
+        from pathlib import Path
+        _project_root = Path(__file__).resolve().parents[3]  # main_window.py → gui → interface → app → project root
+
         ml_models = []
         try:
             nuclick_adapter = NuClickAdapter(
-                model_path="app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth"
+                model_path=str(_project_root / "app" / "infrastructure" / "ml_models" / "nuclick_torch" / "weights" / "nuclick.pth")
             )
             ml_models.append(nuclick_adapter)
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).error("Failed to load NuClick adapter: %s", e)
+            _cr_logger.error("Failed to load NuClick adapter: %s", e)
 
         self.segmentation_service = InteractiveSegmentationService(
             models=ml_models
+        )
+
+        # Batch models (segment entire tile)
+        batch_models = []
+        try:
+            cellpose_adapter = CellposeAdapter(model_type="nuclei", gpu=True)
+            batch_models.append(cellpose_adapter)
+        except Exception as e:
+            _cr_logger.error("Failed to load Cellpose adapter: %s", e)
+
+        self.batch_segmentation_service = BatchSegmentationService(
+            models=batch_models
         )
         self.undo_manager = UndoManager()
 
@@ -151,8 +172,13 @@ class SlicerLabApp(QMainWindow):
         self.toolbar.addSeparator()
 
         # Model Selector Combobox in Toolbar
+        # Combines both interactive (click) and batch (whole-tile) models
         self.combo_model = QComboBox()
-        self.combo_model.addItems(self.segmentation_service.get_available_models())
+        all_model_names = (
+            self.segmentation_service.get_available_models()
+            + self.batch_segmentation_service.get_available_models()
+        )
+        self.combo_model.addItems(all_model_names)
         self.combo_model.setStyleSheet("""
             QComboBox { 
                 background-color: #3c3c3c; 
@@ -165,7 +191,89 @@ class SlicerLabApp(QMainWindow):
             QComboBox:focus { border: 1px solid #007acc; background-color: #444444; }
             QComboBox::drop-down { border: none; }
         """)
+        self.combo_model.currentTextChanged.connect(self._on_model_changed)
         self.toolbar.addWidget(self.combo_model)
+
+        # "Segment All" button — visible only for batch models
+        self.btn_segment_all = QPushButton("🔬 Segment All")
+        self.btn_segment_all.setToolTip(
+            "Run batch segmentation on the entire tile (Cellpose)"
+        )
+        self.btn_segment_all.setStyleSheet(
+            "QPushButton { background-color: #2d6a4f; color: white; padding: 6px 12px; "
+            "font-weight: bold; border-radius: 4px; border: none; "
+            "font-family: 'Segoe UI', Tahoma, sans-serif; } "
+            "QPushButton:hover { background-color: #40916c; } "
+            "QPushButton:pressed { background-color: #1b4332; }"
+        )
+        self.btn_segment_all.clicked.connect(self._run_batch_segmentation)
+        self.btn_segment_all.setVisible(False)  # hidden until a batch model is selected
+        self.toolbar.addWidget(self.btn_segment_all)
+
+        # ── Cellpose parameter controls (visible only for batch models) ────
+        _param_style = (
+            "QDoubleSpinBox { background-color: #3c3c3c; color: #ffffff; "
+            "border: 1px solid #555; border-radius: 3px; padding: 2px 4px; "
+            "font-family: 'Segoe UI', Tahoma, sans-serif; } "
+            "QDoubleSpinBox:focus { border: 1px solid #007acc; }"
+        )
+        _lbl_style = (
+            "QLabel { color: #aaaaaa; font-size: 7pt; font-family: 'Segoe UI', "
+            "Tahoma, sans-serif; margin-left: 6px; }"
+        )
+
+        self.lbl_diameter = QLabel("⌀ Diameter")
+        self.lbl_diameter.setStyleSheet(_lbl_style)
+        self.lbl_diameter.setToolTip(
+            "Expected nucleus diameter in pixels. 0 = auto-detect."
+        )
+        self.spin_diameter = QDoubleSpinBox()
+        self.spin_diameter.setRange(0.0, 500.0)
+        self.spin_diameter.setValue(30.0)   # ~30px for 40x H&E, 0 = auto
+        self.spin_diameter.setSingleStep(5.0)
+        self.spin_diameter.setDecimals(1)
+        self.spin_diameter.setSpecialValueText("Auto")
+        self.spin_diameter.setToolTip("0 = Cellpose auto-estimates the diameter")
+        self.spin_diameter.setStyleSheet(_param_style)
+        self.spin_diameter.setFixedWidth(70)
+
+        self.lbl_flow = QLabel("Flow")
+        self.lbl_flow.setStyleSheet(_lbl_style)
+        self.lbl_flow.setToolTip(
+            "Flow threshold: lower = stricter mask quality (0.0–1.0)"
+        )
+        self.spin_flow = QDoubleSpinBox()
+        self.spin_flow.setRange(0.0, 1.0)
+        self.spin_flow.setValue(0.4)
+        self.spin_flow.setSingleStep(0.05)
+        self.spin_flow.setDecimals(2)
+        self.spin_flow.setToolTip("Flow error threshold (default 0.4)")
+        self.spin_flow.setStyleSheet(_param_style)
+        self.spin_flow.setFixedWidth(60)
+
+        self.lbl_cellprob = QLabel("CellProb")
+        self.lbl_cellprob.setStyleSheet(_lbl_style)
+        self.lbl_cellprob.setToolTip(
+            "Cell probability threshold: lower = more detections (−6 to +6)"
+        )
+        self.spin_cellprob = QDoubleSpinBox()
+        self.spin_cellprob.setRange(-6.0, 6.0)
+        self.spin_cellprob.setValue(0.0)
+        self.spin_cellprob.setSingleStep(0.5)
+        self.spin_cellprob.setDecimals(1)
+        self.spin_cellprob.setToolTip("Cell probability threshold (default 0.0)")
+        self.spin_cellprob.setStyleSheet(_param_style)
+        self.spin_cellprob.setFixedWidth(60)
+
+        # Group all batch param widgets for show/hide
+        self._batch_param_widgets = [
+            self.lbl_diameter, self.spin_diameter,
+            self.lbl_flow, self.spin_flow,
+            self.lbl_cellprob, self.spin_cellprob,
+        ]
+        for w in self._batch_param_widgets:
+            w.setVisible(False)
+            self.toolbar.addWidget(w)
         
         # Checkbox for Segmentation Membrane Overlay
         self.chk_show_membrane = QCheckBox("Show Membrane")
@@ -266,12 +374,52 @@ class SlicerLabApp(QMainWindow):
         
         # 4. Status Bar
         self.statusBar().showMessage("Ready. Add an image to start.")
+
+        # Initial model button visibility
+        self._on_model_changed(self.combo_model.currentText())
         self.statusBar().setStyleSheet("background-color: #007acc; color: white;")
 
     def _activate_tool(self, tool_name):
         self.active_tool = tool_name
         self.statusBar().showMessage(f"Tool selected: {tool_name}")
         self.canvas_renderer.set_tool(tool_name)
+
+    def _on_model_changed(self, model_name: str) -> None:
+        """Show/hide the 'Segment All' button and parameter controls
+        based on whether the selected model is a batch model."""
+        is_batch = self.batch_segmentation_service.is_batch_model(model_name)
+        self.btn_segment_all.setVisible(is_batch)
+        for w in self._batch_param_widgets:
+            w.setVisible(is_batch)
+
+    def _run_batch_segmentation(self) -> None:
+        """Trigger batch segmentation on the current isolated tile."""
+        s = self.current_session
+        idx = self.tile_renderer.slice_idx
+        if s is None or idx is None:
+            self.statusBar().showMessage("No tile is currently isolated.")
+            return
+
+        model_name = self.combo_model.currentText()
+        if not model_name:
+            return
+
+        # Read parameters from UI spinboxes
+        diameter = self.spin_diameter.value()
+        if diameter == 0.0:
+            diameter = None  # auto-detect
+        flow_threshold = self.spin_flow.value()
+        cellprob_threshold = self.spin_cellprob.value()
+
+        self.statusBar().showMessage(
+            f"Running batch segmentation with {model_name}... (this may take a moment)"
+        )
+        self.tile_renderer.run_batch_segmentation(
+            model_name, s, idx, self.batch_segmentation_service,
+            diameter=diameter,
+            flow_threshold=flow_threshold,
+            cellprob_threshold=cellprob_threshold,
+        )
 
     def update_tool_context(self, is_isolated: bool):
         """Enable/Disable tools based on whether the user is in global view or inside an isolated tile."""

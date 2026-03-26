@@ -23,6 +23,9 @@ dev = [
 vips = [
     "pyvips>=2.2.0",
 ]
+cellpose = [
+    "cellpose>=3.0",
+]
 
 [project.scripts]
 grid-analyzer = "main:main"

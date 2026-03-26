@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtGui import (
     QPainter, QPixmap, QImage, QWheelEvent, QMouseEvent,
-    QPen, QColor, QBrush, QPolygonF,
+    QPen, QColor, QBrush, QPolygonF, QFont,
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF, QObject, QRunnable, QThreadPool, pyqtSignal
 
@@ -59,6 +59,42 @@ class _SegWorker(QRunnable):
                 self.model_name, self.session, self.slice_idx, self.gx, self.gy
             )
             self.signals.finished.emit(polygon)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.signals.error.emit(str(e))
+
+
+class _BatchSegSignals(QObject):
+    """Signals for batch segmentation worker."""
+    finished = pyqtSignal(list)   # list of polygons
+    error = pyqtSignal(str)
+
+
+class _BatchSegWorker(QRunnable):
+    """Off-thread batch inference — segments the entire tile at once."""
+
+    def __init__(self, service, model_name, session, slice_idx,
+                 diameter=None, flow_threshold=None, cellprob_threshold=None):
+        super().__init__()
+        self.service = service
+        self.model_name = model_name
+        self.session = session
+        self.slice_idx = slice_idx
+        self.diameter = diameter
+        self.flow_threshold = flow_threshold
+        self.cellprob_threshold = cellprob_threshold
+        self.signals = _BatchSegSignals()
+
+    def run(self):
+        try:
+            polygons = self.service.segment_tile(
+                self.model_name, self.session, self.slice_idx,
+                diameter=self.diameter,
+                flow_threshold=self.flow_threshold,
+                cellprob_threshold=self.cellprob_threshold,
+            )
+            self.signals.finished.emit(polygons)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -114,6 +150,9 @@ class TileRenderer(QGraphicsView):
         self._pms = PixelMaskService()
         self._threadpool = QThreadPool()
         self._threadpool.setMaxThreadCount(2)
+
+        # Processing state (loading overlay)
+        self._processing = False
 
     # ----- public API -------------------------------------------------------
 
@@ -253,6 +292,9 @@ class TileRenderer(QGraphicsView):
     def drawForeground(self, painter: QPainter, rect):
         s = self.main_window.current_session
         if not s or self._slice_idx is None:
+            # Still draw loading overlay if processing
+            if self._processing:
+                self._draw_loading_overlay(painter, rect)
             return
 
         tile = s.tiles[self._slice_idx]
@@ -312,6 +354,10 @@ class TileRenderer(QGraphicsView):
                 for y in range(px_top, px_bottom + 1):
                     painter.drawLine(QPointF(float(px_left), y), QPointF(float(px_right), y))
 
+        # ── Loading overlay (drawn on top of everything) ──────────────────
+        if self._processing:
+            self._draw_loading_overlay(painter, rect)
+
     # ----- Input: Zoom -------------------------------------------------------
 
     def wheelEvent(self, event: QWheelEvent):
@@ -337,6 +383,10 @@ class TileRenderer(QGraphicsView):
         s = self.main_window.current_session
         if not s or self._slice_idx is None:
             super().mousePressEvent(event)
+            return
+
+        # Block all interaction while processing
+        if self._processing:
             return
 
         idx = self._slice_idx
@@ -367,6 +417,24 @@ class TileRenderer(QGraphicsView):
 
             model_name = self.main_window.combo_model.currentText()
             if not model_name:
+                return
+
+            # Route to the correct service based on model type
+            batch_service = self.main_window.batch_segmentation_service
+            if batch_service.is_batch_model(model_name):
+                # Read parameters from main_window spinboxes
+                diameter = self.main_window.spin_diameter.value()
+                if diameter == 0.0:
+                    diameter = None
+                flow_threshold = self.main_window.spin_flow.value()
+                cellprob_threshold = self.main_window.spin_cellprob.value()
+                # Batch model: segment the entire tile at once
+                self.run_batch_segmentation(
+                    model_name, s, idx, batch_service,
+                    diameter=diameter,
+                    flow_threshold=flow_threshold,
+                    cellprob_threshold=cellprob_threshold,
+                )
                 return
 
             sb = getattr(self.main_window, "statusBar", lambda: None)()
@@ -457,7 +525,83 @@ class TileRenderer(QGraphicsView):
 
     def _on_seg_error(self, error_msg: str):
         logger.error("Inference failed: %s", error_msg)
+        self._processing = False
         sb = getattr(self.main_window, "statusBar", lambda: None)()
         if sb:
             sb.showMessage("Inference failed.")
         self.viewport().update()
+
+    # ----- Batch segmentation ------------------------------------------------
+
+    def run_batch_segmentation(
+        self, model_name: str, session, slice_idx: int, service,
+        diameter=None, flow_threshold=None, cellprob_threshold=None,
+    ) -> None:
+        """Launch batch segmentation on the entire tile in a background thread.
+
+        Called from the MainWindow when the user clicks 'Segment All'.
+        """
+        if self._processing:
+            return  # prevent double-clicks
+
+        self._processing = True
+        self.viewport().update()  # trigger overlay redraw
+
+        sb = getattr(self.main_window, "statusBar", lambda: None)()
+        if sb:
+            sb.showMessage(
+                f"Running batch segmentation ({model_name})... please wait."
+            )
+
+        worker = _BatchSegWorker(
+            service, model_name, session, slice_idx,
+            diameter=diameter,
+            flow_threshold=flow_threshold,
+            cellprob_threshold=cellprob_threshold,
+        )
+        worker.signals.finished.connect(
+            lambda polys, _s=session, _idx=slice_idx: self._on_batch_seg_done(
+                polys, _s, _idx
+            )
+        )
+        worker.signals.error.connect(self._on_seg_error)
+        self._threadpool.start(worker)
+
+    def _on_batch_seg_done(
+        self, polygons: list, session, slice_idx: int
+    ) -> None:
+        """Callback when batch segmentation finishes successfully."""
+        self._processing = False
+        sb = getattr(self.main_window, "statusBar", lambda: None)()
+        if polygons:
+            if not hasattr(session, "segmentations"):
+                session.segmentations = []
+            session.segmentations.extend(polygons)
+            if sb:
+                sb.showMessage(
+                    f"Batch segmentation: {len(polygons)} nuclei detected."
+                )
+        else:
+            if sb:
+                sb.showMessage("Batch segmentation returned no results.")
+        self.viewport().update()
+
+    # ----- Loading overlay ---------------------------------------------------
+
+    def _draw_loading_overlay(self, painter: QPainter, rect) -> None:
+        """Draw a semi-transparent overlay with a 'Processing...' message."""
+        # Semi-transparent dark background
+        overlay_color = QColor(0, 0, 0, 160)
+        painter.fillRect(rect, overlay_color)
+
+        # Text
+        painter.setPen(QPen(QColor(255, 255, 255, 230)))
+        font = QFont("Segoe UI", 14, QFont.Weight.Bold)
+        painter.setFont(font)
+
+        # Center text in visible viewport (use viewport rect, not scene rect)
+        vp_rect = self.mapToScene(self.viewport().rect()).boundingRect()
+        painter.drawText(
+            vp_rect, Qt.AlignmentFlag.AlignCenter,
+            "🔬 Processing...\nPlease wait",
+        )

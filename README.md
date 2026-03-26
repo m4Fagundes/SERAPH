@@ -1,3 +1,9 @@
+---
+tags:
+  - IC
+  - readme
+  - grid-image-analyzer
+---
 # 🔬 Cell Nuclei Segmentation & Grid Analyzer
 **Image and Multimedia Data Science Laboratory (IMSCIENCE)**
 
