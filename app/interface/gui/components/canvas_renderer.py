@@ -450,16 +450,24 @@ class CanvasRenderer(QGraphicsView):
 
             # 2. Draw the membrane for all active segmentations if toggled ON
             if show_membrane and hasattr(s, "segmentations"):
-                base_color = QColor("#00FFFF")
-                membrane_color = QColor(base_color)
-                membrane_color.setAlpha(120) # Semi-transparent fill
-                
-                painter.setBrush(QBrush(membrane_color))
-                border_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
-                border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(border_pen)
-                
-                for poly in s.segmentations:
+                for seg in s.segmentations:
+                    poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
+                    model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
+                    
+                    base_color = QColor("#FFFF00") # Default / Imported
+                    if "nuclick" in model.lower():
+                        base_color = QColor("#00FFFF") # Cyan
+                    elif "cellpose" in model.lower():
+                        base_color = QColor("#FF00FF") # Magenta
+
+                    membrane_color = QColor(base_color)
+                    membrane_color.setAlpha(120) # Semi-transparent fill
+                    
+                    painter.setBrush(QBrush(membrane_color))
+                    border_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
+                    border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    painter.setPen(border_pen)
+                    
                     if len(poly) >= 3:
                         poly_f = QPolygonF()
                         for pt in poly:
@@ -506,15 +514,23 @@ class CanvasRenderer(QGraphicsView):
         
         # Draw Selections (Normal Mode)
         if hasattr(s, "segmentations"):
-            color = QColor("#00FFFF")
-            fill_color = QColor(color)
-            fill_color.setAlpha(80)
-            painter.setBrush(QBrush(fill_color))
-            poly_pen = QPen(color, max(2.0 / self.viewport_zoom, 1.0))
-            poly_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(poly_pen)
-            
-            for poly in s.segmentations:
+            for seg in s.segmentations:
+                poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
+                model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
+                
+                base_color = QColor("#FFFF00") # Default / Imported
+                if "nuclick" in model.lower():
+                    base_color = QColor("#00FFFF") # Cyan
+                elif "cellpose" in model.lower():
+                    base_color = QColor("#FF00FF") # Magenta
+
+                fill_color = QColor(base_color)
+                fill_color.setAlpha(80)
+                painter.setBrush(QBrush(fill_color))
+                poly_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
+                poly_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(poly_pen)
+                
                 if len(poly) >= 3:
                     poly_f = QPolygonF()
                     for pt in poly:
@@ -606,7 +622,7 @@ class CanvasRenderer(QGraphicsView):
         
         self.redraw()
 
-    def _on_segmentation_done(self, polygon: list, session, slice_idx: int):
+    def _on_segmentation_done(self, polygon: list, session, slice_idx: int, model_name: str = "Unknown"):
         """Callback invoked on the main thread when background segmentation finishes."""
         self.setStyleSheet("")
         sb = getattr(self.main_window, 'statusBar', lambda: None)()
@@ -614,7 +630,7 @@ class CanvasRenderer(QGraphicsView):
         if polygon:
             if not hasattr(session, "segmentations"):
                 session.segmentations = []
-            session.segmentations.append(polygon)
+            session.segmentations.append({"polygon": polygon, "model": model_name})
             if sb:
                 sb.showMessage(f"Segmentation successful: {len(polygon)} points.")
         else:
@@ -644,7 +660,8 @@ class CanvasRenderer(QGraphicsView):
 
                 # Check if clicked inside an existing segmentation to remove it
                 if hasattr(s, "segmentations"):
-                    for idx_seg, poly in enumerate(s.segmentations):
+                    for idx_seg, seg in enumerate(s.segmentations):
+                        poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
                         if is_point_in_polygon(px, py, poly):
                             s.segmentations.pop(idx_seg)
                             sb = getattr(self.main_window, 'statusBar', lambda: None)()
@@ -671,7 +688,7 @@ class CanvasRenderer(QGraphicsView):
                 seg_service = self.main_window.segmentation_service
                 worker = SegmentationWorker(seg_service, model_name, s, idx, px, py)
                 worker.signals.finished.connect(
-                    lambda poly, _s=s, _idx=idx: self._on_segmentation_done(poly, _s, _idx)
+                    lambda poly, _s=s, _idx=idx, _m=model_name: self._on_segmentation_done(poly, _s, _idx, _m)
                 )
                 worker.signals.error.connect(
                     lambda err: self._on_segmentation_error(err)

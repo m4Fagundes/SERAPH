@@ -92,12 +92,22 @@ class TileImportService:
         session.tiles.append(tile)
         new_idx = len(session.tiles) - 1
 
+        # Restore segmentations
+        segmentations = sl.get("segmentations", [])
+        for seg in segmentations:
+            poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
+            model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
+            # Reconstruct polygon as int coords
+            int_poly = [(int(pt[0]), int(pt[1])) for pt in poly]
+            session.segmentations.append({"polygon": int_poly, "model": model})
+
         logger.info(
-            "Tile XML imported: type=%s, rect=%s, polygon=%s, %d removed pixels → slice idx %d",
+            "Tile XML imported: type=%s, rect=%s, polygon=%s, %d removed pixels, %d nuclei → slice idx %d",
             slice_type,
             list(rects),
             f"{len(raw_polygon)} pts" if raw_polygon else "none",
-            len(pixel_mask),
+            len(tile.pixel_mask),
+            len(segmentations),
             new_idx,
         )
         return new_idx

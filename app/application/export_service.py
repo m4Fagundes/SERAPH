@@ -172,3 +172,32 @@ class ExportService:
         json_path = os.path.join(output_dir, f"{base}_metadata.json")
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(rows, f, indent=2, ensure_ascii=False)
+
+    def export_nuclei_from_slice(self, session, tile_idx, output_dir, format_ext=".png"):
+        """
+        Extracts and exports all nuclei inside a specific slice as individual image files.
+        """
+        from app.application.nuclei_extraction_service import NucleiExtractionService
+        
+        extractor = NucleiExtractionService()
+        nuclei_data = extractor.extract_nuclei_from_tile(session, tile_idx)
+        
+        count = 0
+        base = os.path.splitext(session.name)[0]
+        for img, meta in nuclei_data:
+            nucleus_id = meta["nucleus_id"]
+            
+            # Use format_ext or default to .png to support transparency
+            if format_ext not in ('.png', '.webp', '.tiff', '.tif'):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                # Paste the cutout image on top of the solid white background 
+                bg.paste(img, mask=img.split()[3])
+                img = bg
+                
+            filename = f"{base}_slice{tile_idx + 1}_nucleus{nucleus_id}{format_ext}"
+            full_path = os.path.join(output_dir, filename)
+            
+            if save_image_tile(img, full_path, format_ext):
+                count += 1
+                
+        return count

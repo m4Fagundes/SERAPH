@@ -307,16 +307,25 @@ class TileRenderer(QGraphicsView):
             show_membrane = self.main_window.chk_show_membrane.isChecked()
 
         if show_membrane and hasattr(s, "segmentations"):
-            base_color = QColor("#00FFFF") # Default color for segmentations
-            membrane_color = QColor(base_color)
-            membrane_color.setAlpha(120)
-            painter.setBrush(QBrush(membrane_color))
-            border_pen = QPen(base_color, 0)
-            border_pen.setCosmetic(True)
-            border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(border_pen)
-            
-            for poly in s.segmentations:
+            for seg in s.segmentations:
+                poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
+                model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
+                
+                base_color = QColor("#FFFF00") # Default / Imported
+                if "nuclick" in model.lower():
+                    base_color = QColor("#00FFFF") # Cyan
+                elif "cellpose" in model.lower():
+                    base_color = QColor("#FF00FF") # Magenta
+
+                membrane_color = QColor(base_color)
+                membrane_color.setAlpha(120)
+                painter.setBrush(QBrush(membrane_color))
+                
+                border_pen = QPen(base_color, 0)
+                border_pen.setCosmetic(True)
+                border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(border_pen)
+                
                 if len(poly) >= 3:
                     poly_f = QPolygonF()
                     for pt in poly:
@@ -400,7 +409,8 @@ class TileRenderer(QGraphicsView):
 
             # Check if clicked inside an existing segmentation to remove it
             if hasattr(s, "segmentations"):
-                for idx_seg, poly in enumerate(s.segmentations):
+                for idx_seg, seg in enumerate(s.segmentations):
+                    poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
                     if is_point_in_polygon(gx, gy, poly):
                         s.segmentations.pop(idx_seg)
                         sb = getattr(self.main_window, "statusBar", lambda: None)()
@@ -444,7 +454,7 @@ class TileRenderer(QGraphicsView):
             seg_service = self.main_window.segmentation_service
             worker = _SegWorker(seg_service, model_name, s, idx, gx, gy)
             worker.signals.finished.connect(
-                lambda poly, _s=s, _idx=idx: self._on_seg_done(poly, _s, _idx)
+                lambda poly, _s=s, _idx=idx, _m=model_name: self._on_seg_done(poly, _s, _idx, _m)
             )
             worker.signals.error.connect(self._on_seg_error)
             self._threadpool.start(worker)
@@ -510,12 +520,12 @@ class TileRenderer(QGraphicsView):
 
     # ----- Segmentation callbacks --------------------------------------------
 
-    def _on_seg_done(self, polygon: list, session, slice_idx: int):
+    def _on_seg_done(self, polygon: list, session, slice_idx: int, model_name: str = "Unknown"):
         sb = getattr(self.main_window, "statusBar", lambda: None)()
         if polygon:
             if not hasattr(session, "segmentations"):
                 session.segmentations = []
-            session.segmentations.append(polygon)
+            session.segmentations.append({"polygon": polygon, "model": model_name})
             if sb:
                 sb.showMessage(f"Segmentation successful: {len(polygon)} points.")
         else:
@@ -560,15 +570,15 @@ class TileRenderer(QGraphicsView):
             cellprob_threshold=cellprob_threshold,
         )
         worker.signals.finished.connect(
-            lambda polys, _s=session, _idx=slice_idx: self._on_batch_seg_done(
-                polys, _s, _idx
+            lambda polys, _s=session, _idx=slice_idx, _m=model_name: self._on_batch_seg_done(
+                polys, _s, _idx, _m
             )
         )
         worker.signals.error.connect(self._on_seg_error)
         self._threadpool.start(worker)
 
     def _on_batch_seg_done(
-        self, polygons: list, session, slice_idx: int
+        self, polygons: list, session, slice_idx: int, model_name: str = "Unknown"
     ) -> None:
         """Callback when batch segmentation finishes successfully."""
         self._processing = False
@@ -576,7 +586,7 @@ class TileRenderer(QGraphicsView):
         if polygons:
             if not hasattr(session, "segmentations"):
                 session.segmentations = []
-            session.segmentations.extend(polygons)
+            session.segmentations.extend([{"polygon": p, "model": model_name} for p in polygons])
             if sb:
                 sb.showMessage(
                     f"Batch segmentation: {len(polygons)} nuclei detected."

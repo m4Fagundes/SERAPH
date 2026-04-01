@@ -34,7 +34,7 @@ class ExportHandler:
         spacing.setFixedWidth(15)
         toolbar.addWidget(spacing)
         
-        export_btn = QPushButton("🚀 Export Selected")
+        export_btn = QPushButton("🚀 Export Slices")
         export_btn.clicked.connect(self.export_slices)
         export_btn.setStyleSheet("""
             QPushButton {
@@ -54,6 +54,28 @@ class ExportHandler:
             }
         """)
         toolbar.addWidget(export_btn)
+
+        export_nuc_btn = QPushButton("🦠 Export Nuclei")
+        export_nuc_btn.clicked.connect(self.export_nuclei)
+        export_nuc_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #d81b60; 
+                color: white; 
+                border: none; 
+                border-radius: 4px; 
+                padding: 6px 15px;
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+                font-weight: bold;
+                margin-left: 5px;
+            }
+            QPushButton:hover {
+                background-color: #e91e63;
+            }
+            QPushButton:pressed {
+                background-color: #c2185b;
+            }
+        """)
+        toolbar.addWidget(export_nuc_btn)
 
     def _format_changed(self, text):
         formats = {"PNG": ".png", "JPEG": ".jpg", "TIFF": ".tiff", "BMP": ".bmp", "WebP": ".webp"}
@@ -84,5 +106,39 @@ class ExportHandler:
             )
             QMessageBox.information(self.mw, "Export Complete", f"Successfully exported {total_exported} images.")
             self.mw.statusBar().showMessage("Export complete.")
+        except Exception as e:
+            QMessageBox.critical(self.mw, "Export Error", str(e))
+
+    def export_nuclei(self):
+        s = self.mw.current_session
+        if not s:
+            QMessageBox.warning(self.mw, "Export Nuclei", "No image loaded.")
+            return
+            
+        if not s.tiles:
+            QMessageBox.warning(self.mw, "Export Nuclei", "No slices available (please select slices first).")
+            return
+
+        export_dir = QFileDialog.getExistingDirectory(self.mw, "Select Output Folder for Nuclei")
+        if not export_dir:
+            return
+            
+        fmt = getattr(self.mw, 'export_format', '.png')
+
+        try:
+            total_exported = 0
+            
+            # Check if we are inside a specific slice context (Micro environment)
+            if hasattr(self.mw, '_central_stack') and self.mw._central_stack.currentIndex() == 1:
+                idx = self.mw.tile_renderer.slice_idx
+                if idx is not None:
+                    total_exported = self.mw.export_service.export_nuclei_from_slice(s, idx, export_dir, fmt)
+            else:
+                # Iterate through all tiles if in global view
+                for i in range(len(s.tiles)):
+                    total_exported += self.mw.export_service.export_nuclei_from_slice(s, i, export_dir, fmt)
+            
+            QMessageBox.information(self.mw, "Export Complete", f"Successfully exported {total_exported} nuclei images.")
+            self.mw.statusBar().showMessage("Nuclei export complete.")
         except Exception as e:
             QMessageBox.critical(self.mw, "Export Error", str(e))

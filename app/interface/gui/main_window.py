@@ -283,7 +283,14 @@ class SlicerLabApp(QMainWindow):
             QCheckBox::indicator { width: 14px; height: 14px; background-color: #3c3c3c; border: 1px solid #555; border-radius: 3px; }
             QCheckBox::indicator:checked { background-color: #0e639c; border: 1px solid #0e639c; }
         """)
-        self.chk_show_membrane.stateChanged.connect(lambda: self.canvas_renderer.viewport().update() if self.canvas_renderer else None)
+        
+        def _on_membrane_toggled():
+            if hasattr(self, 'canvas_renderer') and self.canvas_renderer:
+                self.canvas_renderer.viewport().update()
+            if hasattr(self, 'tile_renderer') and self.tile_renderer:
+                self.tile_renderer.viewport().update()
+                
+        self.chk_show_membrane.stateChanged.connect(_on_membrane_toggled)
         self.toolbar.addWidget(self.chk_show_membrane)
 
         self.toolbar.addSeparator()

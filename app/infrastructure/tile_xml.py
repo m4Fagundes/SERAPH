@@ -34,6 +34,8 @@ import os
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Set, Tuple
 
+from app.domain.geometry import get_polygon_bounding_box, is_rect_overlapping
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = "1"
@@ -106,6 +108,17 @@ def write_tile_xml(path: str, descriptor: dict) -> None:
     for (px, py) in sl.get("pixel_mask", []):
         ET.SubElement(mask_el, "pixel", x=str(px), y=str(py))
 
+    # <segmentations>
+    segmentations = sl.get("segmentations", [])
+    if segmentations:
+        segs_el = ET.SubElement(slice_el, "segmentations")
+        for i, seg in enumerate(segmentations):
+            poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
+            model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
+            nuc_el = ET.SubElement(segs_el, "nucleus", id=str(i), source=model)
+            for (px, py) in poly:
+                ET.SubElement(nuc_el, "point", x=str(px), y=str(py))
+
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
     try:
@@ -157,6 +170,17 @@ def build_tile_descriptor(
     except ValueError:
         rel_src = abs_src  # cross-drive on Windows
 
+    tile_rect = (bx1, by1, bx2, by2)
+    segmentations = []
+    if hasattr(session, "segmentations"):
+        for seg in session.segmentations:
+            poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
+            if not poly or len(poly) < 3:
+                continue
+            poly_rect = get_polygon_bounding_box(poly)
+            if is_rect_overlapping(tile_rect, poly_rect):
+                segmentations.append(seg if isinstance(seg, dict) else {"polygon": list(poly), "model": "Imported"})
+
     return {
         "source": {
             "abs_path": abs_src,
@@ -177,6 +201,7 @@ def build_tile_descriptor(
             "rects": sorted(slice_rects),
             "polygon": list(polygon) if polygon and len(polygon) >= 3 else None,
             "pixel_mask": sorted(pixel_mask),
+            "segmentations": segmentations,
         },
     }
 
@@ -280,5 +305,17 @@ def read_tile_xml(path: str) -> dict:
             for p in mask_el.findall("pixel"):
                 mask.append((int(p.get("x", 0)), int(p.get("y", 0))))
         slice_data["pixel_mask"] = mask
+
+        segs_el = sl_el.find("segmentations")
+        segmentations: List[dict] = []
+        if segs_el is not None:
+            for nuc_el in segs_el.findall("nucleus"):
+                model = nuc_el.get("source", "Imported")
+                poly = []
+                for pt in nuc_el.findall("point"):
+                    poly.append((float(pt.get("x", 0)), float(pt.get("y", 0))))
+                if poly:
+                    segmentations.append({"polygon": poly, "model": model})
+        slice_data["segmentations"] = segmentations
 
     return {"source": source, "grid": grid, "slice": slice_data}

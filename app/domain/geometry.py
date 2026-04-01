@@ -31,3 +31,46 @@ def is_point_in_polygon(x: float, y: float, polygon: List[Tuple[int, int]]) -> b
         p1x, p1y = p2x, p2y
         
     return inside
+
+def get_polygon_bounding_box(polygon: List[Tuple[int, int]]) -> Tuple[int, int, int, int]:
+    """
+    Computes the bounding box for a given polygon.
+    
+    Args:
+        polygon: List of (x, y) coordinates.
+        
+    Returns:
+        A tuple of (min_x, min_y, max_x, max_y).
+    """
+    if not polygon:
+        return (0, 0, 0, 0)
+    
+    min_x = min(pt[0] for pt in polygon)
+    min_y = min(pt[1] for pt in polygon)
+    max_x = max(pt[0] for pt in polygon)
+    max_y = max(pt[1] for pt in polygon)
+    return (min_x, min_y, max_x, max_y)
+
+def is_rect_overlapping(rect1: Tuple[int, int, int, int], rect2: Tuple[int, int, int, int]) -> bool:
+    """
+    Checks if two rectangles are overlapping.
+    
+    Args:
+        rect1: (min_x, min_y, max_x, max_y)
+        rect2: (min_x, min_y, max_x, max_y)
+        
+    Returns:
+        True if overlapping, False otherwise.
+    """
+    r1_x1, r1_y1, r1_x2, r1_y2 = rect1
+    r2_x1, r2_y1, r2_x2, r2_y2 = rect2
+    
+    # If one rectangle is on left side of other
+    if r1_x1 >= r2_x2 or r2_x1 >= r1_x2:
+        return False
+        
+    # If one rectangle is above other
+    if r1_y1 >= r2_y2 or r2_y1 >= r1_y2:
+        return False
+        
+    return True
