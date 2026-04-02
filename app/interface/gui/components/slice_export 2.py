@@ -1,0 +1,73 @@
+import logging
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QComboBox, QPushButton, QMessageBox, QFileDialog
+
+logger = logging.getLogger(__name__)
+
+class ExportHandler:
+    def __init__(self, main_window):
+        self.mw = main_window
+
+    def setup_toolbar(self, toolbar):
+        lbl_fmt = QLabel(" Format: ")
+        lbl_fmt.setStyleSheet("color: #aaaaaa; font-weight: bold;")
+        toolbar.addWidget(lbl_fmt)
+        
+        self.format_combo = QComboBox()
+        self.format_combo.addItems(["PNG", "JPEG", "TIFF", "BMP", "WebP"])
+        self.format_combo.setStyleSheet("background: #2a2a2a; border: 1px solid #444; border-radius: 4px; padding: 3px; color: white;")
+        self.format_combo.currentTextChanged.connect(self._format_changed)
+        toolbar.addWidget(self.format_combo)
+        
+        # Spacer before export button
+        spacing = QWidget()
+        spacing.setFixedWidth(15)
+        toolbar.addWidget(spacing)
+        
+        export_btn = QPushButton("🚀 Export Selected")
+        export_btn.clicked.connect(self.export_slices)
+        export_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007acc; 
+                color: white; 
+                border: none; 
+                border-radius: 4px; 
+                padding: 5px 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0098ff;
+            }
+        """)
+        toolbar.addWidget(export_btn)
+
+    def _format_changed(self, text):
+        formats = {"PNG": ".png", "JPEG": ".jpg", "TIFF": ".tiff", "BMP": ".bmp", "WebP": ".webp"}
+        self.mw.export_format = formats.get(text, ".png")
+
+    def export_slices(self):
+        s = self.mw.current_session
+        if not s:
+            QMessageBox.warning(self.mw, "Export", "No image loaded.")
+            return
+            
+        if not s.tiles:
+            QMessageBox.warning(self.mw, "Export", "No slices selected to export.")
+            return
+
+        export_dir = QFileDialog.getExistingDirectory(self.mw, "Select Output Folder for Slices")
+        if not export_dir:
+            return
+            
+        fmt = getattr(self.mw, 'export_format', '.png')
+
+        try:
+            total_exported = self.mw.export_service.save_selected_cells(
+                s, 
+                export_dir,
+                fmt,
+                lambda i, count: self.mw.statusBar().showMessage(f"Exporting: {i}/{count}")
+            )
+            QMessageBox.information(self.mw, "Export Complete", f"Successfully exported {total_exported} images.")
+            self.mw.statusBar().showMessage("Export complete.")
+        except Exception as e:
+            QMessageBox.critical(self.mw, "Export Error", str(e))

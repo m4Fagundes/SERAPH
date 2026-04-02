@@ -164,14 +164,27 @@ class CellposeAdapter(IBatchSegmentationModel):
         try:
             from cellpose import models as cp_models
 
-            self._model = cp_models.CellposeModel(
-                model_type=self._model_type,
-                gpu=self._gpu,
-            )
-            logger.info(
-                "Cellpose model '%s' loaded (gpu=%s).",
-                self._model_type, self._gpu,
-            )
+            try:
+                self._model = cp_models.CellposeModel(
+                    model_type=self._model_type,
+                    gpu=self._gpu,
+                )
+                logger.info(
+                    "Cellpose model '%s' loaded (gpu=%s).",
+                    self._model_type, self._gpu,
+                )
+            except Exception as e:
+                # Se falhar porque a GPU (MPS no Mac) não suporta BFloat16 do modelo novo, faz um fallback pra CPU
+                if self._gpu and ("BFloat16" in str(e) or "MPS" in str(e)):
+                    logger.warning("Failed to load Cellpose on GPU (%s). Retrying on CPU (gpu=False)...", e)
+                    self._gpu = False
+                    self._model = cp_models.CellposeModel(
+                        model_type=self._model_type,
+                        gpu=False,
+                    )
+                    logger.info("Cellpose model '%s' loaded successfully using CPU fallback.", self._model_type)
+                else:
+                    raise e
         except Exception as e:
             logger.error("Failed to load Cellpose model: %s", e)
             self._model = None
