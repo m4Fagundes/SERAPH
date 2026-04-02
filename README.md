@@ -104,11 +104,15 @@ cd grid-image-analyzer
 # 2. Install the raw C-engines via Homebrew (Mandatory step)
 brew install vips openslide
 
-# 3. Install the Python Wrappers
-pip install Pillow pyvips openslide-python
+# 3. Create and activate a Virtual Environment (.venv)
+python3 -m venv .venv
+source .venv/bin/activate
 
-# 4. Launch the App (Use python3 explicitly)
-python3 main.py
+# 4. Install all Python dependencies
+pip install -r requirements.txt
+
+# 5. Launch the App (Always ensure the .venv is activated before running)
+python main.py
 ```
 
 ### 🐧 Linux Setup (Debian/Ubuntu)
