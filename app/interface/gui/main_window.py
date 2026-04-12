@@ -463,13 +463,27 @@ class SlicerLabApp(QMainWindow):
         self.update_tool_context(True)
 
     def switch_to_canvas(self) -> None:
-        """Transition from Micro (isolated tile) back to Macro (full image)."""
+        """Transition from Micro (isolated tile) back to Macro (full image).
+
+        Memory contract: every tile pixel buffer is released here so the
+        CanvasRenderer pyramid tile loader gets the full memory budget.
+        Tiles will lazily reload their pixels on next user click.
+        """
         self.tile_renderer.unload()
-        
+
+        # Evict ALL tile pixel caches — not just the active tile.
+        # Previously-visited tiles may still hold PIL Images in RAM,
+        # consuming the pyramid cache budget and blocking canvas rendering.
+        # evict_all_tile_caches() calls Tile.clear_cache() on every tile;
+        # pixels are lazily reloaded on the next switch_to_tile() call.
+        s = self.current_session
+        if s:
+            s.evict_all_tile_caches()
+
         # Hide properties pane
         self.properties_dock.clear()
         self.properties_dock.hide()
-        
+
         self._central_stack.setCurrentIndex(0)
         self.update_tool_context(False)
         self.canvas_renderer.redraw()

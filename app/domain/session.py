@@ -95,3 +95,18 @@ class ImageSession:
         if not self.pyramid_ready:
             self.pyramid = ImagePyramid(self.path)
             self.pyramid_ready = True
+
+    def evict_all_tile_caches(self) -> None:
+        """Release pixel buffers for ALL tiles.
+
+        Called when returning to the main canvas view to free RAM so the
+        pyramid tile loader (CanvasRenderer) can use the full memory budget.
+        Each tile will lazily reload its pixels on the next ``load_pixels()``
+        call — i.e. when the user clicks the tile again in the sidebar.
+
+        Design principle (python-patterns §4 — Separate concerns):
+          Only pixel data is evicted. Segmentations, polygon geometry, pixel
+          masks and all other metadata are preserved in the Tile entity.
+        """
+        for tile in self.tiles:
+            tile.clear_cache()

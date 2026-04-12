@@ -6,6 +6,7 @@
 .skills/
 .vscode/
 .cline/
+.claude/
 
 __pycache__/
 *.pyc
@@ -22,3 +23,6 @@ dist/
 build/
 skills/
 *.exe
+.gitnexus
+AGENTS.md
+CLAUDE.md
