@@ -13,6 +13,7 @@ from app.application.export_service import ExportService
 from app.application.import_service import TileImportService
 from app.application.interactive_segmentation_service import InteractiveSegmentationService
 from app.application.batch_segmentation_service import BatchSegmentationService
+from app.application.manual_adjustment_service import ManualAdjustmentService
 from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
 from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
 from PyQt6.QtWidgets import QComboBox, QCheckBox
@@ -79,6 +80,7 @@ class SlicerLabApp(QMainWindow):
         self.batch_segmentation_service = BatchSegmentationService(
             models=batch_models
         )
+        self.manual_adjustment_service = ManualAdjustmentService()
         self.undo_manager = UndoManager()
 
         self._setup_ui()
@@ -163,11 +165,6 @@ class SlicerLabApp(QMainWindow):
         self.tool_group.addAction(self.action_segment)
         self.toolbar.addAction(self.action_segment)
 
-        self.action_erase = QAction("🧽 Erase Pixels", self)
-        self.action_erase.setCheckable(True)
-        self.action_erase.triggered.connect(lambda: self._activate_tool("erase"))
-        self.tool_group.addAction(self.action_erase)
-        self.toolbar.addAction(self.action_erase)
 
         self.toolbar.addSeparator()
 
@@ -178,6 +175,8 @@ class SlicerLabApp(QMainWindow):
             self.segmentation_service.get_available_models()
             + self.batch_segmentation_service.get_available_models()
         )
+        # Add Manual Fine Tune option
+        all_model_names = list(all_model_names) + ["🖌️ Manual Fine Tune"]
         self.combo_model.addItems(all_model_names)
         self.combo_model.setStyleSheet("""
             QComboBox { 
@@ -433,14 +432,13 @@ class SlicerLabApp(QMainWindow):
         self.action_grid.setEnabled(not is_isolated)
         self.action_brush.setEnabled(not is_isolated)
         self.action_segment.setEnabled(is_isolated)
-        self.action_erase.setEnabled(is_isolated)
         self.combo_model.setEnabled(is_isolated)
 
         # Auto-switch to an available tool safely to avoid undefined states
         if is_isolated and self.active_tool in ("grid", "brush"):
             self.action_segment.setChecked(True)
             self._activate_tool("segment")
-        elif not is_isolated and self.active_tool in ("segment", "erase"):
+        elif not is_isolated and self.active_tool == "segment":
             self.action_grid.setChecked(True)
             self._activate_tool("grid")
 

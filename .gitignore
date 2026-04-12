@@ -1,9 +1,11 @@
 
-.github
-.agent
-.gemini
-.gsd
-.skills
+.github/
+.agent/
+.gemini/
+.gsd/
+.skills/
+.vscode/
+.cline/
 
 __pycache__/
 *.pyc
@@ -12,8 +14,11 @@ skills/
 *.zip
 .DS_Store
 .env
-.venv
+.venv/
 venv/
-
-
-.icloud
+.icloud/
+hooks/
+dist/
+build/
+skills/
+*.exe
