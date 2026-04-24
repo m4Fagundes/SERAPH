@@ -448,31 +448,23 @@ class CanvasRenderer(QGraphicsView):
             if hasattr(self.main_window, 'chk_show_membrane'):
                 show_membrane = self.main_window.chk_show_membrane.isChecked()
 
-            # 2. Draw the membrane for all active segmentations if toggled ON
-            if show_membrane and hasattr(s, "segmentations"):
-                for seg in s.segmentations:
-                    poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
-                    model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
-                    
-                    base_color = QColor("#FFFF00") # Default / Imported
-                    if "nuclick" in model.lower():
-                        base_color = QColor("#00FFFF") # Cyan
-                    elif "cellpose" in model.lower():
-                        base_color = QColor("#FF00FF") # Magenta
-
+            # 2. Draw the membrane for all visible layers if toggled ON
+            if show_membrane and self.isolated_slice_idx < len(s.tiles):
+                tile = s.tiles[self.isolated_slice_idx]
+                for poly, color_hex in tile.get_visible_polygons():
+                    base_color = QColor(color_hex)
                     membrane_color = QColor(base_color)
-                    membrane_color.setAlpha(120) # Semi-transparent fill
+                    membrane_color.setAlpha(120)
                     
                     painter.setBrush(QBrush(membrane_color))
                     border_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
                     border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                     painter.setPen(border_pen)
                     
-                    if len(poly) >= 3:
-                        poly_f = QPolygonF()
-                        for pt in poly:
-                            poly_f.append(QPointF(pt[0], pt[1]))
-                        painter.drawPolygon(poly_f)
+                    poly_f = QPolygonF()
+                    for pt in poly:
+                        poly_f.append(QPointF(pt[0], pt[1]))
+                    painter.drawPolygon(poly_f)
 
             # ── Pixel removal borders (thin red outline only) ────────────────
             # The fill is handled by _rebuild_pixel_overlay() via QGraphicsRectItem
@@ -512,26 +504,22 @@ class CanvasRenderer(QGraphicsView):
 
             return
         
-        # Draw Selections (Normal Mode)
-        if hasattr(s, "segmentations"):
-            for seg in s.segmentations:
-                poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
-                model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
-                
-                base_color = QColor("#FFFF00") # Default / Imported
-                if "nuclick" in model.lower():
-                    base_color = QColor("#00FFFF") # Cyan
-                elif "cellpose" in model.lower():
-                    base_color = QColor("#FF00FF") # Magenta
+        # Draw Selections (Normal Mode) — iterate all tiles for visible layers
+        show_membrane = True
+        if hasattr(self.main_window, 'chk_show_membrane'):
+            show_membrane = self.main_window.chk_show_membrane.isChecked()
 
-                fill_color = QColor(base_color)
-                fill_color.setAlpha(80)
-                painter.setBrush(QBrush(fill_color))
-                poly_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
-                poly_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(poly_pen)
-                
-                if len(poly) >= 3:
+        if show_membrane:
+            for tile in s.tiles:
+                for poly, color_hex in tile.get_visible_polygons():
+                    base_color = QColor(color_hex)
+                    fill_color = QColor(base_color)
+                    fill_color.setAlpha(80)
+                    painter.setBrush(QBrush(fill_color))
+                    poly_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
+                    poly_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    painter.setPen(poly_pen)
+                    
                     poly_f = QPolygonF()
                     for pt in poly:
                         poly_f.append(QPointF(pt[0], pt[1]))
@@ -628,11 +616,22 @@ class CanvasRenderer(QGraphicsView):
         sb = getattr(self.main_window, 'statusBar', lambda: None)()
 
         if polygon:
-            if not hasattr(session, "segmentations"):
-                session.segmentations = []
-            session.segmentations.append({"polygon": polygon, "model": model_name})
+            tile = session.tiles[slice_idx]
+            # Find existing layer for this model or create new
+            layer_found = False
+            for layer in tile.segmentation_layers:
+                if layer.get("model", "").lower() == model_name.lower():
+                    layer["polygons"].append(polygon)
+                    layer_found = True
+                    break
+            if not layer_found:
+                tile.add_layer(model_name, model_name, [polygon])
             if sb:
                 sb.showMessage(f"Segmentation successful: {len(polygon)} points.")
+            # Refresh layer dropdown
+            dropdown = getattr(self.main_window, 'layer_dropdown', None)
+            if dropdown:
+                dropdown.set_tile(tile)
         else:
             if sb:
                 sb.showMessage("Failed to find nucleus at coordinates.")
@@ -659,14 +658,19 @@ class CanvasRenderer(QGraphicsView):
                 idx = self.isolated_slice_idx
 
                 # Check if clicked inside an existing segmentation to remove it
-                if hasattr(s, "segmentations"):
-                    for idx_seg, seg in enumerate(s.segmentations):
-                        poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
+                tile = s.tiles[idx]
+                for layer in tile.segmentation_layers:
+                    for pi, poly in enumerate(layer.get("polygons", [])):
                         if is_point_in_polygon(px, py, poly):
-                            s.segmentations.pop(idx_seg)
+                            layer["polygons"].pop(pi)
+                            if not layer["polygons"]:
+                                tile.segmentation_layers.remove(layer)
                             sb = getattr(self.main_window, 'statusBar', lambda: None)()
                             if sb:
                                 sb.showMessage("Segmentation removed.")
+                            dropdown = getattr(self.main_window, 'layer_dropdown', None)
+                            if dropdown:
+                                dropdown.set_tile(tile)
                             self.viewport().update()
                             return
 
@@ -829,15 +833,9 @@ class CanvasRenderer(QGraphicsView):
                 self.redraw()
                 self.main_window.slice_previews.update_previews()
             else:
-                # Drag Select Cells
+                # Drag Select Area (independent of grids)
                 from app.domain.tile import Tile
-                sc, ec = int(rx1 // s.grid_w), int((rx2 - 1) // s.grid_w)
-                sr, er = int(ry1 // s.grid_h), int((ry2 - 1) // s.grid_h)
-                rects = set()
-                for c in range(sc, ec + 1):
-                    for r in range(sr, er + 1):
-                        rects.add((c * s.grid_w, r * s.grid_h, (c+1)*s.grid_w, (r+1)*s.grid_h))
-                s.tiles.append(Tile(rects=list(rects)))
+                s.tiles.append(Tile(rects=[(int(rx1), int(ry1), int(rx2), int(ry2))]))
                 self.redraw()
                 self.main_window.slice_previews.update_previews()
             return
@@ -861,26 +859,14 @@ class CanvasRenderer(QGraphicsView):
                 stroke_path.addPolygon(poly_f)
                 stroke_path.closeSubpath()
 
-                sc = int(bbox.left() // s.grid_w)
-                ec = int(bbox.right() // s.grid_w)
-                sr = int(bbox.top() // s.grid_h)
-                er = int(bbox.bottom() // s.grid_h)
+                # Use the precise bounding box of the brush stroke instead of snapping to grid cells
+                x1 = max(0, int(bbox.left()))
+                y1 = max(0, int(bbox.top()))
+                x2 = min(s.real_width, int(bbox.right()))
+                y2 = min(s.real_height, int(bbox.bottom()))
 
-                intersecting_rects = set()
-                for c in range(sc, ec + 1):
-                    for r in range(sr, er + 1):
-                        x1 = c * s.grid_w
-                        y1 = r * s.grid_h
-                        x2 = min(x1 + s.grid_w, s.real_width)
-                        y2 = min(y1 + s.grid_h, s.real_height)
-                        cell_rect = QRectF(x1, y1, x2 - x1, y2 - y1)
-                        cell_path = _QPainterPath()
-                        cell_path.addRect(cell_rect)
-                        if stroke_path.intersects(cell_path):
-                            intersecting_rects.add((x1, y1, x2, y2))
-
-                if intersecting_rects:
-                    new_tile.rects = list(intersecting_rects)
+                if x2 > x1 and y2 > y1:
+                    new_tile.rects = [(x1, y1, x2, y2)]
                     s.tiles.append(new_tile)
             
             self._brush_points = []

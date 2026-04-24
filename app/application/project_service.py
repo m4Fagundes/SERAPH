@@ -48,10 +48,14 @@ class ProjectService:
             s.camera_y = item.get("camera_y", 0)
             s.camera_y = item.get("camera_y", 0)
             
+            # Legacy session-level segmentations → migrate to tiles
+            legacy_segs = []
             if "segmentations" in item:
-                s.segmentations = [[tuple(pt) for pt in s_poly] for s_poly in item["segmentations"]]
-            else:
-                s.segmentations = []
+                for s_poly in item["segmentations"]:
+                    if isinstance(s_poly, dict):
+                        legacy_segs.append(s_poly)
+                    elif isinstance(s_poly, list):
+                        legacy_segs.append({"polygon": [tuple(pt) for pt in s_poly], "model": "Imported", "visible": True})
 
             # --- Schema Migration: Old Parallel Arrays -> unified Tile objects ---
             from app.domain.tile import Tile
@@ -88,6 +92,20 @@ class ProjectService:
                     if i < len(raw_masks) and raw_masks[i]:
                         t.pixel_mask = {tuple(p) for p in raw_masks[i]}
                     s.tiles.append(t)
+
+            # Migrate legacy session-level segmentations to the first tile as layers
+            if legacy_segs and s.tiles:
+                from collections import defaultdict
+                from app.domain.tile import LAYER_COLORS
+                grouped = defaultdict(list)
+                for seg in legacy_segs:
+                    model = seg.get("model", "Imported")
+                    poly = seg.get("polygon", [])
+                    if poly:
+                        grouped[model].append(poly)
+                for i, (model, polys) in enumerate(grouped.items()):
+                    color = LAYER_COLORS[i % len(LAYER_COLORS)]
+                    s.tiles[0].add_layer(model, model, polys, color)
             
             s.grid_color = item.get("grid_color", "#FFFF00")
             # Resolve export_dir relative path
@@ -134,7 +152,7 @@ class ProjectService:
                 "grid_w": s.grid_w,
                 "grid_h": s.grid_h,
                 "tiles": [t.serialize() for t in s.tiles],
-                "segmentations": [[list(pt) for pt in s_poly] for s_poly in getattr(s, "segmentations", [])],
+                "segmentations": [],  # kept empty for backward compat; actual data is in tiles
                 "grid_color": s.grid_color,
                 "export_dir": rel_export_dir,
                 "export_format": s.export_format,

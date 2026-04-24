@@ -189,7 +189,7 @@ class SelectionToolsMixin:
         ix2 = s.camera_x + e.x / s.zoom_level
         iy2 = s.camera_y + e.y / s.zoom_level
 
-        # Normalize
+        # Normalize to image bounds
         rx1 = max(0, min(ix1, ix2))
         ry1 = max(0, min(iy1, iy2))
         rx2 = min(s.real_width, max(ix1, ix2))
@@ -198,20 +198,8 @@ class SelectionToolsMixin:
         if rx2 <= rx1 or ry2 <= ry1:
             return
 
-        # Find all grid cells inside the rectangle
-        col_start = int(rx1 // s.grid_w)
-        row_start = int(ry1 // s.grid_h)
-        col_end = int((rx2 - 1) // s.grid_w)
-        row_end = int((ry2 - 1) // s.grid_h)
-
-        rects = set()
-        for c in range(col_start, col_end + 1):
-            for r in range(row_start, row_end + 1):
-                x1 = c * s.grid_w
-                y1 = r * s.grid_h
-                x2 = min(x1 + s.grid_w, s.real_width)
-                y2 = min(y1 + s.grid_h, s.real_height)
-                rects.add((x1, y1, x2, y2))
+        # Independent rectangle selection (does not snap to grid)
+        rects = {(int(rx1), int(ry1), int(rx2), int(ry2))}
 
         if rects:
             self.undo_manager.push(s, "rect_select")

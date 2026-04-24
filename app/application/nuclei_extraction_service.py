@@ -41,57 +41,63 @@ class NucleiExtractionService:
         tile_rect = (bx1, by1, bx2, by2)
         extracted_nuclei = []
 
-        # Find overlapping nuclei
-        for idx, seg in enumerate(session.segmentations):
-            poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
-            if not poly or len(poly) < 3:
-                continue
+        # Find overlapping nuclei from per-tile segmentation layers
+        nucleus_id = 0
+        for layer in tile.segmentation_layers:
+            for poly in layer.get("polygons", []):
+                if not poly or len(poly) < 3:
+                    nucleus_id += 1
+                    continue
 
-            poly_rect = get_polygon_bounding_box(poly)
-            
-            # Check overlap mathematically first
-            if not is_rect_overlapping(tile_rect, poly_rect):
-                continue
-            
-            # The nucleus intersects the tile.
-            # We crop the exact bounding box of the polygon from the pyramid
-            # so we only load what we need, not the entire tile.
-            crop_x1, crop_y1, crop_x2, crop_y2 = poly_rect
-            
-            crop_w = crop_x2 - crop_x1
-            crop_h = crop_y2 - crop_y1
-            
-            if crop_w <= 0 or crop_h <= 0:
-                continue
+                poly_rect = get_polygon_bounding_box(poly)
+                
+                # Check overlap mathematically first
+                if not is_rect_overlapping(tile_rect, poly_rect):
+                    nucleus_id += 1
+                    continue
+                
+                # The nucleus intersects the tile.
+                # We crop the exact bounding box of the polygon from the pyramid
+                # so we only load what we need, not the entire tile.
+                crop_x1, crop_y1, crop_x2, crop_y2 = poly_rect
+                
+                crop_w = crop_x2 - crop_x1
+                crop_h = crop_y2 - crop_y1
+                
+                if crop_w <= 0 or crop_h <= 0:
+                    nucleus_id += 1
+                    continue
 
-            try:
-                # 1. Fetch exact high-res pixels
-                nucleus_img = session.pyramid.get_region_fullres(crop_x1, crop_y1, crop_w, crop_h)
-                nucleus_img = nucleus_img.convert("RGBA")
-                
-                # 2. Apply polygon mask
-                mask = Image.new("L", (crop_w, crop_h), 0)
-                draw = ImageDraw.Draw(mask)
-                
-                # Translate global coords to local crop coords
-                local_poly = [(px - crop_x1, py - crop_y1) for px, py in poly]
-                draw.polygon(local_poly, fill=255)
-                
-                # Optional: Handle pixels outside the polygon
-                nucleus_img.putalpha(mask)
-                
-                # 3. Save to output list
-                metadata = {
-                    "nucleus_id": idx,
-                    "global_bbox": poly_rect,
-                    "tile_intersection": tile_idx
-                }
-                
-                extracted_nuclei.append((nucleus_img, metadata))
-                
-            except Exception as e:
-                logger.error("Error extracting nucleus %d at %s: %s", idx, poly_rect, e)
-                # We do not fail the whole process for one bad cell.
+                try:
+                    # 1. Fetch exact high-res pixels
+                    nucleus_img = session.pyramid.get_region_fullres(crop_x1, crop_y1, crop_w, crop_h)
+                    nucleus_img = nucleus_img.convert("RGBA")
+                    
+                    # 2. Apply polygon mask
+                    mask = Image.new("L", (crop_w, crop_h), 0)
+                    draw = ImageDraw.Draw(mask)
+                    
+                    # Translate global coords to local crop coords
+                    local_poly = [(px - crop_x1, py - crop_y1) for px, py in poly]
+                    draw.polygon(local_poly, fill=255)
+                    
+                    # Optional: Handle pixels outside the polygon
+                    nucleus_img.putalpha(mask)
+                    
+                    # 3. Save to output list
+                    metadata = {
+                        "nucleus_id": nucleus_id,
+                        "global_bbox": poly_rect,
+                        "tile_intersection": tile_idx
+                    }
+                    
+                    extracted_nuclei.append((nucleus_img, metadata))
+                    
+                except Exception as e:
+                    logger.error("Error extracting nucleus %d at %s: %s", nucleus_id, poly_rect, e)
+                    # We do not fail the whole process for one bad cell.
+
+                nucleus_id += 1
 
         logger.info("Extracted %d nuclei from tile %d.", len(extracted_nuclei), tile_idx)
         return extracted_nuclei

@@ -91,8 +91,9 @@ class InteractiveSegmentationService:
                      bx1, by1, bx2, by2, global_x, global_y)
 
         pil_img = session.pyramid.get_region_fullres(bx1, by1, bx2 - bx1, by2 - by1)
-        if pil_img.mode != "RGB":
-            pil_img = pil_img.convert("RGB")
+        
+        # Apply tile masks (polygon and pixel_mask) by blacking out excluded regions
+        pil_img = tile.get_ml_ready_image(pil_img)
 
         local_x = global_x - bx1
         local_y = global_y - by1

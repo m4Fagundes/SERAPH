@@ -2,7 +2,7 @@ import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QAbstractItemView, QMenu, QPushButton, QDialog, QFormLayout, QLineEdit,
-    QTextEdit, QDialogButtonBox,
+    QTextEdit, QDialogButtonBox, QStackedWidget
 )
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtCore import Qt
@@ -12,51 +12,128 @@ logger = logging.getLogger(__name__)
 
 
 class _SliceRow(QWidget):
-    """Custom row widget: [colour swatch] [name / tile count] ... [✕ delete]"""
+    """Custom row widget: [colour swatch] [name / tile count] ... [✏️ edit] [✕ delete]"""
 
-    def __init__(self, name: str, tile_count: int, color_hex: str, on_delete):
+    def __init__(self, name: str, tile_count: int, color_hex: str, on_delete, on_rename):
         super().__init__()
         self.setStyleSheet("background: transparent;")
-        self.setMinimumHeight(32)
+        self.setMinimumHeight(38)
+
+        self.on_rename = on_rename
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(6, 4, 4, 4)
-        row.setSpacing(6)
+        row.setContentsMargins(10, 6, 10, 6)
+        row.setSpacing(8)
+        row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         # Colour swatch
         swatch = QLabel()
-        pix = QPixmap(12, 12)
-        pix.fill(QColor(color_hex))
-        swatch.setPixmap(pix)
-        swatch.setFixedSize(12, 12)
+        swatch.setFixedSize(14, 14)
+        swatch.setStyleSheet(f"""
+            background-color: {color_hex};
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.15);
+        """)
         row.addWidget(swatch)
 
-        # Name + tile count
-        lbl = QLabel(
-            f"<b>{name}</b>  <span style='color:#a0a0a0;font-size:8pt;'>({tile_count} tiles)</span>"
-        )
-        lbl.setTextFormat(Qt.TextFormat.RichText)
-        lbl.setStyleSheet("color: #eeeeee; font-size: 9pt; font-family: 'Segoe UI', Tahoma, sans-serif; background: transparent;")
-        row.addWidget(lbl, stretch=1)
+        # Name Edit (Acts as a Label when read-only)
+        from PyQt6.QtWidgets import QSizePolicy
+        self.name_edit = QLineEdit(name)
+        self.name_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.name_edit.setMinimumWidth(20)
+        self.name_edit.setReadOnly(True)
+        self.name_edit.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.name_edit.setCursorPosition(0)
+        self.name_edit.setStyleSheet("""
+            QLineEdit[readOnly="true"] {
+                background: transparent;
+                color: #ffffff;
+                border: none;
+                font-weight: bold;
+                font-size: 10pt;
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+            QLineEdit[readOnly="false"] {
+                background: #1e1e1e;
+                color: #ffffff;
+                border: 1px solid #0e639c;
+                border-radius: 3px;
+                padding: 2px 4px;
+                font-size: 10pt;
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+        """)
+        self.name_edit.editingFinished.connect(self.finish_edit)
+        row.addWidget(self.name_edit, stretch=1)
 
-        # Delete button
-        btn = QPushButton("✕")
-        btn.setFixedSize(20, 20)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setToolTip("Delete this slice")
-        btn.setStyleSheet("""
+        # Tile count
+        count_lbl = QLabel(f"({tile_count} tiles)")
+        count_lbl.setStyleSheet("color: #aaaaaa; font-size: 8pt; font-family: 'Segoe UI', Tahoma, sans-serif;")
+        row.addWidget(count_lbl)
+
+        # Edit button
+        edit_btn = QPushButton("✏️")
+        edit_btn.setFixedSize(24, 24)
+        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit_btn.setToolTip("Rename slice")
+        edit_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
-                color: #888;
+                color: #cccccc;
                 border: none;
-                font-size: 10pt;
-                padding: 0;
+                font-size: 11pt;
+                border-radius: 4px;
             }
-            QPushButton:hover  { color: #ff5555; }
-            QPushButton:pressed { color: #cc0000; }
+            QPushButton:hover { background: #3e3e42; }
+            QPushButton:pressed { background: #252526; }
         """)
-        btn.clicked.connect(on_delete)
-        row.addWidget(btn)
+        edit_btn.clicked.connect(self.start_edit)
+        row.addWidget(edit_btn)
+
+        # Delete button
+        del_btn = QPushButton("✕")
+        del_btn.setFixedSize(24, 24)
+        del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        del_btn.setToolTip("Delete this slice")
+        del_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #bbbbbb;
+                border: none;
+                font-size: 12pt;
+                font-weight: bold;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background: #e81123; color: white; }
+            QPushButton:pressed { background: #b00b1b; }
+        """)
+        del_btn.clicked.connect(on_delete)
+        row.addWidget(del_btn)
+
+    def mouseDoubleClickEvent(self, event):
+        self.start_edit()
+        super().mouseDoubleClickEvent(event)
+
+    def start_edit(self):
+        self.name_edit.setReadOnly(False)
+        self.name_edit.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.name_edit.style().unpolish(self.name_edit)
+        self.name_edit.style().polish(self.name_edit)
+        self.name_edit.setFocus()
+        self.name_edit.selectAll()
+
+    def finish_edit(self):
+        new_name = self.name_edit.text().strip()
+        if new_name:
+            self.on_rename(new_name)
+            self.name_edit.setText(new_name)
+        
+        self.name_edit.setReadOnly(True)
+        self.name_edit.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.name_edit.setCursorPosition(0)
+        self.name_edit.style().unpolish(self.name_edit)
+        self.name_edit.style().polish(self.name_edit)
+        self.clearFocus()
 
 
 class SlicePreviews(QWidget):
@@ -77,6 +154,7 @@ class SlicePreviews(QWidget):
         self.layout.addWidget(lbl)
 
         self.list_widget = QListWidget()
+        self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list_widget.setStyleSheet("""
             QListWidget {
                 background-color: transparent;
@@ -85,15 +163,18 @@ class SlicePreviews(QWidget):
                 outline: none;
             }
             QListWidget::item {
-                padding: 4px 0px; 
-                border-radius: 4px;
-                margin-bottom: 2px;
+                background-color: rgba(255, 255, 255, 0.03);
+                border-radius: 6px;
+                margin-bottom: 6px;
+                border: 1px solid transparent;
             }
             QListWidget::item:hover {
-                background-color: #3e3e42;
+                background-color: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.1);
             }
             QListWidget::item:selected {
-                background-color: #0e639c;
+                background-color: rgba(14, 99, 156, 0.3);
+                border: 1px solid #0e639c;
             }
         """)
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -119,7 +200,10 @@ class SlicePreviews(QWidget):
             def make_delete(idx=i):
                 return lambda: self._delete_slice(idx)
 
-            row_widget = _SliceRow(name, tile_count, color_hex, on_delete=make_delete())
+            def make_rename(idx=i):
+                return lambda new_name: self._rename_slice_inline(idx, new_name)
+
+            row_widget = _SliceRow(name, tile_count, color_hex, on_delete=make_delete(), on_rename=make_rename())
 
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, i)
@@ -129,6 +213,13 @@ class SlicePreviews(QWidget):
             self.list_widget.setItemWidget(item, row_widget)
 
     # ── Slice actions ─────────────────────────────────────────────────────────
+
+    def _rename_slice_inline(self, idx: int, new_name: str) -> None:
+        """Inline rename handler from the list item."""
+        s = self.mw.current_session
+        if not s or idx >= len(s.tiles):
+            return
+        s.tiles[idx].metadata["name"] = new_name
 
     def _delete_slice(self, idx: int) -> None:
         """Remove slice *idx* from the session and refresh the UI."""

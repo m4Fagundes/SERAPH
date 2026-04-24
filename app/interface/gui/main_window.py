@@ -25,7 +25,8 @@ from .components import (
     ProjectManager,
     SlicePreviews,
     ExportHandler,
-    PropertiesPanel
+    PropertiesPanel,
+    LayerDropdown
 )
 
 class SlicerLabApp(QMainWindow):
@@ -165,8 +166,19 @@ class SlicerLabApp(QMainWindow):
         self.tool_group.addAction(self.action_segment)
         self.toolbar.addAction(self.action_segment)
 
+        self.action_brush_eraser = QAction("🧼 Eraser Brush", self)
+        self.action_brush_eraser.setCheckable(True)
+        self.action_brush_eraser.triggered.connect(lambda: self._activate_tool("brush_eraser"))
+        self.tool_group.addAction(self.action_brush_eraser)
+        self.toolbar.addAction(self.action_brush_eraser)
 
-        self.toolbar.addSeparator()
+        self.action_brush_select = QAction("🖌️ Selection Brush", self)
+        self.action_brush_select.setCheckable(True)
+        self.action_brush_select.triggered.connect(lambda: self._activate_tool("brush_select"))
+        self.tool_group.addAction(self.action_brush_select)
+        self.toolbar.addAction(self.action_brush_select)
+
+        # Brush size UI moved to PropertiesPanel side bar
 
         # Model Selector Combobox in Toolbar
         # Combines both interactive (click) and batch (whole-tile) models
@@ -292,6 +304,11 @@ class SlicerLabApp(QMainWindow):
         self.chk_show_membrane.stateChanged.connect(_on_membrane_toggled)
         self.toolbar.addWidget(self.chk_show_membrane)
 
+        # ── Layer Visibility Dropdown ──────────────────────────────────────────
+        self.layer_dropdown = LayerDropdown(parent=self)
+        self.layer_dropdown.layerVisibilityChanged.connect(_on_membrane_toggled)
+        self.toolbar.addWidget(self.layer_dropdown)
+
         self.toolbar.addSeparator()
         
         # Grid Size Inputs (Moved to ProjectManager or Toolbar)
@@ -356,7 +373,7 @@ class SlicerLabApp(QMainWindow):
         # "Add Tile" button sits inside the SlicePreviews widget layout
         # so it's always visible regardless of splitter sizing
         add_tile_btn = QPushButton("＋ Add Tile")
-        add_tile_btn.setToolTip("Import a saved tile XML descriptor into the current session")
+        add_tile_btn.setToolTip("Import a tile descriptor (XML or GeoJSON) into the current session")
         add_tile_btn.setStyleSheet(
             "background-color: #2d6a4f; color: white; padding: 6px; "
             "font-weight: bold; border-radius: 3px; margin-top: 4px;"
@@ -389,6 +406,8 @@ class SlicerLabApp(QMainWindow):
         self.active_tool = tool_name
         self.statusBar().showMessage(f"Tool selected: {tool_name}")
         self.canvas_renderer.set_tool(tool_name)
+        
+        is_isolated = self._central_stack.currentIndex() == 1
 
     def _on_model_changed(self, model_name: str) -> None:
         """Show/hide the 'Segment All' button and parameter controls
@@ -432,13 +451,15 @@ class SlicerLabApp(QMainWindow):
         self.action_grid.setEnabled(not is_isolated)
         self.action_brush.setEnabled(not is_isolated)
         self.action_segment.setEnabled(is_isolated)
+        self.action_brush_eraser.setEnabled(is_isolated)
+        self.action_brush_select.setEnabled(is_isolated)
         self.combo_model.setEnabled(is_isolated)
 
         # Auto-switch to an available tool safely to avoid undefined states
         if is_isolated and self.active_tool in ("grid", "brush"):
             self.action_segment.setChecked(True)
             self._activate_tool("segment")
-        elif not is_isolated and self.active_tool == "segment":
+        elif not is_isolated and self.active_tool in ("segment", "brush_eraser", "brush_select"):
             self.action_grid.setChecked(True)
             self._activate_tool("grid")
 

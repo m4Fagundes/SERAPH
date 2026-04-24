@@ -170,16 +170,12 @@ def build_tile_descriptor(
     except ValueError:
         rel_src = abs_src  # cross-drive on Windows
 
-    tile_rect = (bx1, by1, bx2, by2)
+    # Flatten segmentation layers into individual segmentation dicts for XML compat
     segmentations = []
-    if hasattr(session, "segmentations"):
-        for seg in session.segmentations:
-            poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
-            if not poly or len(poly) < 3:
-                continue
-            poly_rect = get_polygon_bounding_box(poly)
-            if is_rect_overlapping(tile_rect, poly_rect):
-                segmentations.append(seg if isinstance(seg, dict) else {"polygon": list(poly), "model": "Imported"})
+    for layer in tile.segmentation_layers:
+        model = layer.get("model", "Imported")
+        for poly in layer.get("polygons", []):
+            segmentations.append({"polygon": list(poly), "model": model})
 
     return {
         "source": {

@@ -14,7 +14,10 @@ Design Decision (python-patterns §4 — Separate concerns):
 import logging
 import math
 import io
+import time
 from typing import Optional
+
+import numpy as np
 
 from PyQt6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem,
@@ -139,6 +142,10 @@ class TileRenderer(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setStyleSheet("QGraphicsView { background-color: #1a1a1a; }")
 
+        # Track mouse for brush preview
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+
         # Internal state
         self._slice_idx: Optional[int] = None
         self._pixmap_item: Optional[QGraphicsPixmapItem] = None
@@ -262,6 +269,83 @@ class TileRenderer(QGraphicsView):
                 self.scene.removeItem(item)
         self._pixel_overlay_items.clear()
 
+    def _apply_circular_brush(self, event: QMouseEvent, is_erase: bool):
+        """Apply brush stroke using numpy vectorized circular mask.
+
+        Performance: O(1) mask computation via meshgrid instead of O(r²) Python loop.
+        The old implementation iterated pixel-by-pixel causing CPU saturation and
+        fan noise. This version generates the entire circular region as a numpy
+        boolean mask, then batch-updates the pixel_mask set.
+        """
+        s = self.main_window.current_session
+        if not s or self._slice_idx is None:
+            return
+
+        # Throttle to ~60 fps to prevent event-loop congestion
+        now = time.monotonic()
+        if now - getattr(self, '_last_brush_time', 0.0) < 0.016:
+            return
+        self._last_brush_time = now
+
+        idx = self._slice_idx
+        tile = s.tiles[idx]
+
+        scene_pt = self.mapToScene(event.position().toPoint())
+        gx, gy = self._scene_to_global(scene_pt.x(), scene_pt.y())
+
+        radius = self.main_window.properties_dock.slider_brush_size.value()
+
+        # Compute iteration bounds clipped to tile bounding box
+        tbx1, tby1, tbx2, tby2 = tile.bounding_box
+        bx1 = max(int(gx - radius), tbx1)
+        by1 = max(int(gy - radius), tby1)
+        bx2 = min(int(gx + radius) + 1, tbx2)
+        by2 = min(int(gy + radius) + 1, tby2)
+
+        if bx1 >= bx2 or by1 >= by2:
+            return
+
+        # ── Vectorized circular mask via numpy ────────────────────────────────
+        xs = np.arange(bx1, bx2)
+        ys = np.arange(by1, by2)
+        xx, yy = np.meshgrid(xs, ys)
+        dist_sq = (xx - gx) ** 2 + (yy - gy) ** 2
+        circle_mask = dist_sq <= (radius * radius)
+
+        # Build a rect-inclusion mask (which pixels belong to tile rects)
+        rect_mask = np.zeros_like(circle_mask, dtype=bool)
+        for r in tile.rects:
+            rx_mask = (xx >= r[0]) & (xx < r[2])
+            ry_mask = (yy >= r[1]) & (yy < r[3])
+            rect_mask |= (rx_mask & ry_mask)
+
+        valid = circle_mask & rect_mask
+        # Extract affected pixel coordinates directly from the meshgrid
+        affected_pixels = set(zip(xx[valid].tolist(), yy[valid].tolist()))
+
+        if not affected_pixels:
+            return
+
+        # ── Batch set update ──────────────────────────────────────────────────
+        old_size = len(tile.pixel_mask)
+        if is_erase:
+            tile.pixel_mask |= affected_pixels
+        else:
+            tile.pixel_mask -= affected_pixels
+
+        if len(tile.pixel_mask) != old_size:
+            self.viewport().update()
+
+    def _refresh_membrane_controls(self):
+        """Refresh the layer dropdown in the toolbar."""
+        dropdown = getattr(self.main_window, "layer_dropdown", None)
+        if dropdown:
+            s = self.main_window.current_session
+            if s and self._slice_idx is not None and self._slice_idx < len(s.tiles):
+                dropdown.set_tile(s.tiles[self._slice_idx])
+            else:
+                dropdown.clear()
+
 
     # ── Rendering: Explicit background clear (OpenGL framebuffer pattern) ────
     def drawBackground(self, painter: QPainter, rect) -> None:
@@ -282,46 +366,42 @@ class TileRenderer(QGraphicsView):
 
         left, top, right, bottom = rect.left(), rect.top(), rect.right(), rect.bottom()
 
-        # ── Membrane Overlay (Múltiplas segmentações) ─────────────────────────
+        # ── Membrane Overlay (segmentation layers) ─────────────────────────────
         show_membrane = True
         if hasattr(self.main_window, "chk_show_membrane"):
             show_membrane = self.main_window.chk_show_membrane.isChecked()
 
-        if show_membrane and hasattr(s, "segmentations"):
-            for seg in s.segmentations:
-                poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
-                model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
-                
-                base_color = QColor("#FFFF00") # Default / Imported
-                if "nuclick" in model.lower():
-                    base_color = QColor("#00FFFF") # Cyan
-                elif "cellpose" in model.lower():
-                    base_color = QColor("#FF00FF") # Magenta
-
+        if show_membrane:
+            for poly, color_hex in tile.get_visible_polygons():
+                base_color = QColor(color_hex)
                 membrane_color = QColor(base_color)
                 membrane_color.setAlpha(120)
                 painter.setBrush(QBrush(membrane_color))
-                
+
                 border_pen = QPen(base_color, 0)
                 border_pen.setCosmetic(True)
                 border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                 painter.setPen(border_pen)
-                
-                if len(poly) >= 3:
-                    poly_f = QPolygonF()
-                    for pt in poly:
-                        sx, sy = self._global_to_scene(pt[0], pt[1])
-                        poly_f.append(QPointF(sx, sy))
-                    painter.drawPolygon(poly_f)
 
-        # ── Pixel removal borders ────────────────────────────────────────────
+                poly_f = QPolygonF()
+                for pt in poly:
+                    sx, sy = self._global_to_scene(pt[0], pt[1])
+                    poly_f.append(QPointF(sx, sy))
+                painter.drawPolygon(poly_f)
+
+        # ── Pixel removal overlay (batch QPainterPath for performance) ────────
         if tile.pixel_mask:
-            border_pen = QPen(QColor(210, 40, 40, 230), 0.08 / max(self._zoom, 1))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(border_pen)
+            fill_color = QColor(210, 40, 40, 160)
+            painter.setBrush(QBrush(fill_color))
+            painter.setPen(Qt.PenStyle.NoPen)
+
+            # Batch all pixel rects into a single QPainterPath for one draw call
+            from PyQt6.QtGui import QPainterPath
+            path = QPainterPath()
+            ox, oy = self._global_offset()
             for (px, py) in tile.pixel_mask:
-                sx, sy = self._global_to_scene(px, py)
-                painter.drawRect(QRectF(float(sx), float(sy), 1.0, 1.0))
+                path.addRect(QRectF(float(px - ox), float(py - oy), 1.0, 1.0))
+            painter.drawPath(path)
 
         # ── Pixel grid (visible at high zoom) ────────────────────────────────
         if self._zoom >= 4.0:
@@ -347,10 +427,33 @@ class TileRenderer(QGraphicsView):
         # ── Loading overlay (drawn on top of everything) ──────────────────
         if self._processing:
             self._draw_loading_overlay(painter, rect)
+            
+        # ── Brush Tool Preview ───────────────────────────────────────────────
+        tool = getattr(self.main_window, "active_tool", None)
+        if tool in ("brush_eraser", "brush_select") and hasattr(self, '_last_mouse_scene_pt') and self._last_mouse_scene_pt is not None:
+            radius = self.main_window.properties_dock.slider_brush_size.value()
+            pt = self._last_mouse_scene_pt
+            color = QColor(255, 50, 50, 100) if tool == "brush_eraser" else QColor(50, 255, 50, 100)
+            painter.setBrush(QBrush(color))
+            painter.setPen(QPen(Qt.GlobalColor.white, 1.0 / max(self._zoom, 1)))
+            painter.drawEllipse(pt, radius, radius)
 
     # ----- Input: Zoom -------------------------------------------------------
 
     def wheelEvent(self, event: QWheelEvent):
+        # Allow adjusting brush size with Shift + Scroll
+        if event.modifiers() == Qt.KeyboardModifier.ShiftModifier:
+            tool = getattr(self.main_window, "active_tool", None)
+            if tool in ("brush_eraser", "brush_select"):
+                delta = 1 if event.angleDelta().y() > 0 else -1
+                current_size = self.main_window.properties_dock.slider_brush_size.value()
+                # Change faster if size is larger
+                step = 2 if current_size < 20 else 5
+                new_size = max(1, min(500, current_size + delta * step))
+                self.main_window.properties_dock.slider_brush_size.setValue(new_size)
+                self.viewport().update()
+                return
+
         zoom_factor = 1.25 if event.angleDelta().y() > 0 else 0.8
         new_zoom = self._zoom * zoom_factor
         new_zoom = max(0.05, min(new_zoom, 200.0))
@@ -385,20 +488,25 @@ class TileRenderer(QGraphicsView):
         model_name = self.main_window.combo_model.currentText()
 
         # Check if clicked inside an existing segmentation to remove it (works for ML tools, but NOT for Manual Fine Tune)
-        if tool == "segment" and model_name != "🖌️ Manual Fine Tune" and event.button() == Qt.MouseButton.LeftButton and hasattr(s, "segmentations"):
+        if tool == "segment" and model_name != "🖌️ Manual Fine Tune" and event.button() == Qt.MouseButton.LeftButton:
             scene_pt = self.mapToScene(event.position().toPoint())
             gx, gy = self._scene_to_global(math.floor(scene_pt.x()), math.floor(scene_pt.y()))
             gx, gy = int(gx), int(gy)
 
-            for idx_seg, seg in enumerate(s.segmentations):
-                poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
-                if is_point_in_polygon(gx, gy, poly):
-                    s.segmentations.pop(idx_seg)
-                    sb = getattr(self.main_window, "statusBar", lambda: None)()
-                    if sb:
-                        sb.showMessage("Segmentation removed.")
-                    self.viewport().update()
-                    return
+            tile = s.tiles[idx]
+            for layer in tile.segmentation_layers:
+                for pi, poly in enumerate(layer.get("polygons", [])):
+                    if is_point_in_polygon(gx, gy, poly):
+                        layer["polygons"].pop(pi)
+                        # Remove empty layers
+                        if not layer["polygons"]:
+                            tile.segmentation_layers.remove(layer)
+                        sb = getattr(self.main_window, "statusBar", lambda: None)()
+                        if sb:
+                            sb.showMessage("Segmentation removed.")
+                        self._refresh_membrane_controls()
+                        self.viewport().update()
+                        return
 
         # ── Manual Fine Tune tool ─────────────────────────────────────────────
         if tool == "segment" and model_name == "🖌️ Manual Fine Tune":
@@ -408,6 +516,24 @@ class TileRenderer(QGraphicsView):
             elif event.button() == Qt.MouseButton.RightButton:
                 self._start_stroke(event, s, idx, True)
                 return
+
+        # ── Eraser & Selection Brush ──────────────────────────────────────────
+        if tool in ("brush_eraser", "brush_select"):
+            if event.button() == Qt.MouseButton.LeftButton:
+                undo = getattr(self.main_window, "undo_manager", None)
+                if undo:
+                    undo.push(s, tool)
+                self._apply_circular_brush(event, tool == "brush_eraser")
+                self._is_brushing = True
+                self._brushing_button = Qt.MouseButton.LeftButton
+            elif event.button() == Qt.MouseButton.RightButton:
+                undo = getattr(self.main_window, "undo_manager", None)
+                if undo:
+                    undo.push(s, tool)
+                self._apply_circular_brush(event, tool != "brush_eraser")
+                self._is_brushing = True
+                self._brushing_button = Qt.MouseButton.RightButton
+            return
 
         # ── Segment tool (regular segmentation models) ───────────────────────
         if tool == "segment" and event.button() == Qt.MouseButton.LeftButton:
@@ -467,6 +593,22 @@ class TileRenderer(QGraphicsView):
 
         tool = self.main_window.active_tool
         model_name = self.main_window.combo_model.currentText()
+        
+        # Track mouse for brush preview
+        self._last_mouse_scene_pt = self.mapToScene(event.position().toPoint())
+        if tool in ("brush_eraser", "brush_select"):
+            if self.viewport().cursor().shape() != Qt.CursorShape.BlankCursor:
+                self.viewport().setCursor(Qt.CursorShape.BlankCursor)
+                
+            if getattr(self, "_is_brushing", False):
+                is_erase = tool == "brush_eraser"
+                if getattr(self, "_brushing_button", Qt.MouseButton.LeftButton) == Qt.MouseButton.RightButton:
+                    is_erase = not is_erase
+                self._apply_circular_brush(event, is_erase)
+            self.viewport().update()
+        else:
+            if self.viewport().cursor().shape() == Qt.CursorShape.BlankCursor:
+                self.viewport().unsetCursor()
 
         # Manual Fine Tune stroke drawing
         if tool == "segment" and model_name == "🖌️ Manual Fine Tune" and self._is_drawing_stroke:
@@ -479,6 +621,10 @@ class TileRenderer(QGraphicsView):
         tool = self.main_window.active_tool
         model_name = self.main_window.combo_model.currentText()
 
+        if tool in ("brush_eraser", "brush_select") and getattr(self, "_is_brushing", False):
+            self._is_brushing = False
+            return
+
         # Manual Fine Tune stroke completion
         if tool == "segment" and model_name == "🖌️ Manual Fine Tune" and self._is_drawing_stroke:
             self._is_drawing_stroke = False
@@ -487,6 +633,11 @@ class TileRenderer(QGraphicsView):
 
         super().mouseReleaseEvent(event)
 
+
+    def leaveEvent(self, event):
+        self._last_mouse_scene_pt = None
+        self.viewport().update()
+        super().leaveEvent(event)
 
     # ----- Manual Fine Tune stroke helpers -----------------------------------
 
@@ -542,69 +693,84 @@ class TileRenderer(QGraphicsView):
 
         local_stroke = [(x - bx1, y - by1) for x, y in points]
 
-        # Extract current polygon list (convert to LOCAL coords!)
-        old_segmentations = []
-        if hasattr(s, "segmentations"):
-            old_segmentations = s.segmentations
+        # Collect ALL polygons from ALL visible layers into a flat list
+        all_polys = []
+        poly_to_layer = []  # track which layer each poly belongs to
+        for li, layer in enumerate(tile.segmentation_layers):
+            for poly in layer.get("polygons", []):
+                if poly and len(poly) >= 3:
+                    local_poly = [(px - bx1, py - by1) for (px, py) in poly]
+                    all_polys.append(local_poly)
+                    poly_to_layer.append(li)
 
-        poly_list = []
-        for seg in old_segmentations:
-            poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
-            if not poly or len(poly) < 3:
-                continue
-            local_poly = [(px - bx1, py - by1) for (px, py) in poly]
-            poly_list.append(local_poly)
+        if not all_polys:
+            return
 
         service = self.main_window.manual_adjustment_service
         updated_local_polygons = service.apply_fine_tune(
             stroke_points=local_stroke,
-            segmentations=poly_list,
+            segmentations=all_polys,
             image_width=tile_width,
             image_height=tile_height,
             target_idx=None,
             is_erase=self._is_erasing_stroke
         )
 
-        # Convert back to GLOBAL coords
-        updated_polygons = []
-        for local_poly in updated_local_polygons:
+        # Convert back to GLOBAL coords and redistribute to layers
+        # Clear all layers' polygons first, then re-add
+        layer_polys = {li: [] for li in range(len(tile.segmentation_layers))}
+        for i, local_poly in enumerate(updated_local_polygons):
             global_poly = [(px + bx1, py + by1) for (px, py) in local_poly]
-            updated_polygons.append(global_poly)
+            if i < len(poly_to_layer):
+                layer_polys[poly_to_layer[i]].append(global_poly)
+            else:
+                # New polygon from fine-tune → add to Manual layer
+                manual_li = self._find_or_create_manual_layer(tile)
+                layer_polys.setdefault(manual_li, []).append(global_poly)
 
-        # Rebuild metadata for the updated segmentations
-        new_segmentations = []
-        # Find which polygons match the old ones, or just assign new models if counts don't align
-        for new_poly in updated_polygons:
-            found_meta = {"polygon": new_poly, "model": "Manual Fine Tune"}
-            
-            # Revert local coordinate matching check for metadata preservation
-            for old_seg in old_segmentations:
-                old_poly = old_seg.get("polygon", old_seg) if isinstance(old_seg, dict) else old_seg
-                # if exact length match, let's keep metadata... or simply always use Manual Fine Tune for all!
-                if new_poly == old_poly:
-                    found_meta = old_seg
-                    break
-            new_segmentations.append(found_meta)
+        for li, polys in layer_polys.items():
+            if li < len(tile.segmentation_layers):
+                tile.segmentation_layers[li]["polygons"] = polys
 
-        s.segmentations = new_segmentations
+        # Remove empty layers
+        tile.segmentation_layers = [l for l in tile.segmentation_layers if l.get("polygons")]
         
         sb = getattr(self.main_window, "statusBar", lambda: None)()
         if sb:
             sb.showMessage("Pixel edited.")
 
+        self._refresh_membrane_controls()
         self.viewport().update()
+
+    def _find_or_create_manual_layer(self, tile) -> int:
+        """Find existing Manual Fine Tune layer or create one. Returns layer index."""
+        for i, layer in enumerate(tile.segmentation_layers):
+            if "manual" in layer.get("model", "").lower():
+                return i
+        from app.domain.tile import LAYER_COLORS
+        tile.add_layer("Manual Fine Tune", "manual_fine_tune", [], "#00FF88")
+        return len(tile.segmentation_layers) - 1
 
 
     # ----- Segmentation callbacks --------------------------------------------
 
     def _on_seg_done(self, polygon: list, session, slice_idx: int, model_name: str = "Unknown"):
+        """Single-polygon segmentation completed (e.g. NuClick click)."""
         sb = getattr(self.main_window, "statusBar", lambda: None)()
         if polygon:
-            if not hasattr(session, "segmentations"):
-                session.segmentations = []
-            session.segmentations.append({"polygon": polygon, "model": model_name})
+            tile = session.tiles[slice_idx]
+            # Find existing layer for this model, or create a new one
+            layer_found = False
+            for layer in tile.segmentation_layers:
+                if layer.get("model", "").lower() == model_name.lower():
+                    layer["polygons"].append(polygon)
+                    layer_found = True
+                    break
+            if not layer_found:
+                tile.add_layer(model_name, model_name, [polygon])
             if sb:
                 sb.showMessage(f"Segmentation successful: {len(polygon)} points.")
+            self._refresh_membrane_controls()
         else:
             if sb:
                 sb.showMessage("Failed to find nucleus at coordinates.")
@@ -661,13 +827,14 @@ class TileRenderer(QGraphicsView):
         self._processing = False
         sb = getattr(self.main_window, "statusBar", lambda: None)()
         if polygons:
-            if not hasattr(session, "segmentations"):
-                session.segmentations = []
-            session.segmentations.extend([{"polygon": p, "model": model_name} for p in polygons])
+            tile = session.tiles[slice_idx]
+            # Always create a NEW layer for batch runs
+            tile.add_layer(model_name, model_name, polygons)
             if sb:
                 sb.showMessage(
                     f"Batch segmentation: {len(polygons)} nuclei detected."
                 )
+            self._refresh_membrane_controls()
         else:
             if sb:
                 sb.showMessage("Batch segmentation returned no results.")

@@ -1,11 +1,12 @@
 import logging
 from PyQt6.QtWidgets import (
     QDockWidget, QWidget, QFormLayout, QLineEdit, QTextEdit, QLabel,
-    QVBoxLayout, QScrollArea
+    QVBoxLayout, QScrollArea, QSlider
 )
 from PyQt6.QtCore import Qt
 
 logger = logging.getLogger(__name__)
+
 
 class PropertiesPanel(QDockWidget):
     """
@@ -14,6 +15,7 @@ class PropertiesPanel(QDockWidget):
     """
     def __init__(self, title, parent=None):
         super().__init__(title, parent)
+        self._main_window = parent
         self.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures | QDockWidget.DockWidgetFeature.DockWidgetMovable)
         self.setStyleSheet("""
             QDockWidget { 
@@ -61,7 +63,7 @@ class PropertiesPanel(QDockWidget):
         self.main_layout.setSpacing(12)
         
         # Title Label
-        self.lbl_title = QLabel("TILE PROPERTIES")
+        self.lbl_title = QLabel("TILE METADATA")
         self.lbl_title.setStyleSheet("color: #aaaaaa; font-size: 8pt; font-weight: bold; letter-spacing: 1px;")
         self.main_layout.addWidget(self.lbl_title)
         
@@ -92,6 +94,55 @@ class PropertiesPanel(QDockWidget):
         
         self.main_layout.addLayout(self.form_layout)
         
+        # ── Brush Settings Section ─────────────────────────────────────────────
+        self.lbl_brush_title = QLabel("BRUSH SETTINGS")
+        self.lbl_brush_title.setStyleSheet("color: #aaaaaa; font-size: 8pt; font-weight: bold; letter-spacing: 1px; margin-top: 20px;")
+        self.main_layout.addWidget(self.lbl_brush_title)
+        
+        self.brush_layout = QVBoxLayout()
+        self.brush_layout.setContentsMargins(0, 0, 0, 0)
+        self.brush_layout.setSpacing(5)
+        
+        self.lbl_brush_value = QLabel("Brush Size: 10 px")
+        self.lbl_brush_value.setStyleSheet("color: #cccccc; font-size: 8pt;")
+        
+        self.slider_brush_size = QSlider(Qt.Orientation.Horizontal)
+        self.slider_brush_size.setRange(1, 500)
+        self.slider_brush_size.setValue(10)
+        self.slider_brush_size.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.slider_brush_size.setStyleSheet("""
+            QSlider::groove:horizontal {
+                border: none;
+                height: 6px;
+                background: #444444;
+                border-radius: 3px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #0e639c;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #cccccc;
+                border: 2px solid #252526;
+                width: 16px;
+                height: 16px;
+                margin: -5px 0;
+                border-radius: 8px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #ffffff;
+                border: 2px solid #0e639c;
+            }
+        """)
+        
+        self.slider_brush_size.valueChanged.connect(
+            lambda v: self.lbl_brush_value.setText(f"Brush Size: {v} px")
+        )
+        
+        self.brush_layout.addWidget(self.lbl_brush_value)
+        self.brush_layout.addWidget(self.slider_brush_size)
+        self.main_layout.addLayout(self.brush_layout)
+
         # Stretch spacer at the bottom to force everything to align to the TOP
         self.main_layout.addStretch(1)
         

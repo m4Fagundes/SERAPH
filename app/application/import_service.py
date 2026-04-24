@@ -4,6 +4,7 @@ import os
 
 from app.domain.session import ImageSession
 from app.infrastructure.tile_xml import read_tile_xml
+from app.infrastructure.tile_geojson import read_geojson_features
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +93,20 @@ class TileImportService:
         session.tiles.append(tile)
         new_idx = len(session.tiles) - 1
 
-        # Restore segmentations
+        # Restore segmentations as layers on the tile
         segmentations = sl.get("segmentations", [])
-        for seg in segmentations:
-            poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
-            model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
-            # Reconstruct polygon as int coords
-            int_poly = [(int(pt[0]), int(pt[1])) for pt in poly]
-            session.segmentations.append({"polygon": int_poly, "model": model})
+        if segmentations:
+            from collections import defaultdict
+            grouped = defaultdict(list)
+            for seg in segmentations:
+                poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
+                model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
+                int_poly = [(int(pt[0]), int(pt[1])) for pt in poly]
+                grouped[model].append(int_poly)
+            from app.domain.tile import LAYER_COLORS
+            for i, (model, polys) in enumerate(grouped.items()):
+                color = LAYER_COLORS[i % len(LAYER_COLORS)]
+                tile.add_layer(model, model, polys, color)
 
         logger.info(
             "Tile XML imported: type=%s, rect=%s, polygon=%s, %d removed pixels, %d nuclei → slice idx %d",
@@ -111,3 +118,67 @@ class TileImportService:
             new_idx,
         )
         return new_idx
+
+    def load_geojson(self, path: str, session: ImageSession) -> list[int]:
+        """Parse a GeoJSON annotation file.  Each annotated region becomes
+        its own independent Slice/Tile in *session*.
+
+        Args:
+            path: Path to a ``.geojson`` annotation file.
+            session: The :class:`ImageSession` to extend.
+
+        Returns:
+            List of indices of the newly appended tiles.
+
+        Raises:
+            OSError: If the file cannot be read.
+            ValueError: If the GeoJSON is malformed or empty.
+        """
+        descriptors = read_geojson_features(path)
+        from app.domain.tile import Tile
+
+        new_indices: list[int] = []
+
+        for descriptor in descriptors:
+            sl = descriptor.get("slice", {})
+
+            # ── Polygon (authoritative clipping boundary) ─────────────
+            raw_polygon = sl.get("polygon")
+            polygon = (
+                [tuple(pt) for pt in raw_polygon]
+                if raw_polygon and len(raw_polygon) >= 3
+                else None
+            )
+
+            # ── Bounding rect from the polygon ────────────────────────
+            if polygon:
+                bx1 = int(min(p[0] for p in polygon))
+                by1 = int(min(p[1] for p in polygon))
+                bx2 = int(math.ceil(max(p[0] for p in polygon)))
+                by2 = int(math.ceil(max(p[1] for p in polygon)))
+                rects = [(bx1, by1, bx2, by2)]
+            else:
+                raw_rects = sl.get("rects", [])
+                if not raw_rects:
+                    b = sl.get("bounds", {})
+                    raw_rects = [(b.get("x1", 0), b.get("y1", 0),
+                                  b.get("x2", 0), b.get("y2", 0))]
+                rects = [tuple(r) for r in raw_rects]
+
+            # ── Build Tile ────────────────────────────────────────────
+            tile = Tile(rects=rects, polygon=polygon)
+            tile.metadata = {
+                "name": sl.get("name", ""),
+                "description": sl.get("description", ""),
+                "microns_per_pixel": sl.get("microns_per_pixel", ""),
+            }
+
+            session.tiles.append(tile)
+            new_indices.append(len(session.tiles) - 1)
+
+        logger.info(
+            "GeoJSON imported: %d slices from '%s'",
+            len(new_indices),
+            path,
+        )
+        return new_indices

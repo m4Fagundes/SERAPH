@@ -162,7 +162,7 @@ class ProjectManager:
     # ── Tile Import ───────────────────────────────────────────────────────────
 
     def add_tile(self) -> None:
-        """Open a tile XML descriptor and import it into the current session."""
+        """Open a tile descriptor (XML or GeoJSON) and import it into the current session."""
         s = self.mw.current_session
         if not s:
             from PyQt6.QtWidgets import QMessageBox
@@ -171,18 +171,36 @@ class ProjectManager:
 
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
         path, _ = QFileDialog.getOpenFileName(
-            self.mw, "Open Tile Descriptor", "", "Tile Descriptor (*.xml)"
+            self.mw,
+            "Open Tile Descriptor",
+            "",
+            "All Supported (*.xml *.geojson);;Tile Descriptor (*.xml);;GeoJSON Annotations (*.geojson)",
         )
         if not path:
             return
 
         try:
-            new_idx = self.mw.tile_import_service.load_tile_xml(path, s)
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".geojson":
+                new_indices = self.mw.tile_import_service.load_geojson(path, s)
+                if not new_indices:
+                    QMessageBox.warning(self.mw, "Import", "No valid annotations found.")
+                    return
+                # Refresh sidebar
+                self.mw.slice_previews.update_previews()
+                self.mw.statusBar().showMessage(
+                    f"GeoJSON imported → {len(new_indices)} slices | {len(s.tiles)} total"
+                )
+                # Navigate to the first newly imported slice
+                self.mw.switch_to_tile(new_indices[0])
+                return
+            else:
+                new_idx = self.mw.tile_import_service.load_tile_xml(path, s)
         except Exception as exc:
             QMessageBox.critical(self.mw, "Import Error", str(exc))
             return
 
-        # Refresh sidebar
+        # Refresh sidebar (XML path)
         self.mw.slice_previews.update_previews()
         self.mw.statusBar().showMessage(
             f"Tile imported → Slice {new_idx + 1} | {len(s.tiles)} slices total"

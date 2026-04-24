@@ -4,6 +4,7 @@ from .tile_renderer import TileRenderer
 from .slice_previews import SlicePreviews
 from .slice_export import ExportHandler
 from .properties_panel import PropertiesPanel
+from .layer_dropdown import LayerDropdown
 
 __all__ = [
     "ProjectManager",
@@ -12,4 +13,5 @@ __all__ = [
     "SlicePreviews",
     "ExportHandler",
     "PropertiesPanel",
+    "LayerDropdown",
 ]
