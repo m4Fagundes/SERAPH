@@ -108,3 +108,52 @@ class InteractiveSegmentationService:
             return global_poly
         logger.warning("segment_at_point: predict returned empty polygon")
         return []
+
+    def predict_batch(self, model_name: str, image: Image, clicks: List[Tuple[int, int]]) -> List[List[Tuple[int, int]]]:
+        model = self._models.get(model_name)
+        if not model:
+            logger.warning("Requested model '%s' not found.", model_name)
+            return []
+
+        if not hasattr(model, 'predict_batch'):
+            logger.warning("Model '%s' does not support predict_batch. Falling back to sequential.", model_name)
+            results = []
+            for cx, cy in clicks:
+                results.append(self.predict(model_name, image, cx, cy))
+            return results
+
+        try:
+            return model.predict_batch(image, clicks)
+        except Exception as e:
+            logger.exception("Error running batch interactive segmentation for %s: %s", model_name, e)
+            return []
+
+    def segment_at_points(self, model_name: str, session, slice_idx: int,
+                          global_points: List[Tuple[int, int]]) -> List[List[Tuple[int, int]]]:
+        """
+        Batch version of segment_at_point, optimized for predicting multiple points 
+        in a single image extract, utilizing GPU batch processing if available.
+        """
+        tile = session.tiles[slice_idx]
+        if not tile.rects or not global_points:
+            return []
+
+        bx1, by1, bx2, by2 = tile.bounding_box
+
+        logger.info("segment_at_points: region=(%d,%d)-(%d,%d), %d clicks",
+                     bx1, by1, bx2, by2, len(global_points))
+
+        pil_img = session.pyramid.get_region_fullres(bx1, by1, bx2 - bx1, by2 - by1)
+        pil_img = tile.get_ml_ready_image(pil_img)
+
+        local_points = [(gx - bx1, gy - by1) for gx, gy in global_points]
+
+        polygons = self.predict_batch(model_name, pil_img, local_points)
+
+        global_polygons = []
+        for polygon in polygons:
+            if polygon:
+                global_polygons.append([(px + bx1, py + by1) for px, py in polygon])
+
+        logger.info("segment_at_points: success, %d polygons returned", len(global_polygons))
+        return global_polygons

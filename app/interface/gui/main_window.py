@@ -187,8 +187,8 @@ class SlicerLabApp(QMainWindow):
             self.segmentation_service.get_available_models()
             + self.batch_segmentation_service.get_available_models()
         )
-        # Add Manual Fine Tune option
-        all_model_names = list(all_model_names) + ["🖌️ Manual Fine Tune"]
+        # Add Manual Fine Tune and Nuclick All options
+        all_model_names = list(all_model_names) + ["🖌️ Manual Fine Tune", "🧠 Nuclick All"]
         self.combo_model.addItems(all_model_names)
         self.combo_model.setStyleSheet("""
             QComboBox { 
@@ -413,9 +413,13 @@ class SlicerLabApp(QMainWindow):
         """Show/hide the 'Segment All' button and parameter controls
         based on whether the selected model is a batch model."""
         is_batch = self.batch_segmentation_service.is_batch_model(model_name)
+        if model_name == "🧠 Nuclick All":
+            is_batch = True
+            
         self.btn_segment_all.setVisible(is_batch)
         for w in self._batch_param_widgets:
-            w.setVisible(is_batch)
+            # Hide parameters if it's Nuclick All, since they belong to Cellpose
+            w.setVisible(is_batch and model_name != "🧠 Nuclick All")
 
     def _run_batch_segmentation(self) -> None:
         """Trigger batch segmentation on the current isolated tile."""
@@ -427,6 +431,13 @@ class SlicerLabApp(QMainWindow):
 
         model_name = self.combo_model.currentText()
         if not model_name:
+            return
+
+        if model_name == "🧠 Nuclick All":
+            self.statusBar().showMessage(
+                "Running Nuclick on all existing segmentations... (this may take a moment)"
+            )
+            self.tile_renderer.run_nuclick_all(s, idx, self.segmentation_service)
             return
 
         # Read parameters from UI spinboxes

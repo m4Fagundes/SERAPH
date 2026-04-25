@@ -175,3 +175,108 @@ class NuClickAdapter(ISegmentationModel):
             polygon.append((int(abs_x), int(abs_y)))
 
         return polygon
+
+    def predict_batch(self, image: Image, clicks: List[Tuple[int, int]]) -> List[List[Tuple[int, int]]]:
+        """
+        Runs the NuClick neural network to segment multiple nuclei in a single batch pass.
+
+        Args:
+            image: The PIL Image (RGB).
+            clicks: List of (click_x, click_y) coordinates.
+
+        Returns:
+            List of polygons, where each polygon is a list of (x, y) coordinates.
+        """
+        self._ensure_model_loaded()
+
+        if self._model is None:
+            logger.warning("NuClick model is not loaded. Returning empty segmentations.")
+            return []
+
+        if not clicks:
+            return []
+
+        import torch
+        import numpy as np
+        import cv2
+
+        from app.infrastructure.ml_models.nuclick_torch.guiding_signals import get_patches_and_signals
+        from app.infrastructure.ml_models.nuclick_torch.process import post_processing
+        from PIL import ImageOps
+
+        logger.info(f"Running NuClick batch segmentation for {len(clicks)} points")
+
+        pad = self.PAD
+        padded_image = ImageOps.expand(image, border=pad, fill=0)
+        padded_width, padded_height = padded_image.size
+
+        image_np = np.asarray(padded_image)[:, :, :3]
+        image_np = np.moveaxis(image_np, 2, 0) # Format (3, H, W)
+
+        cx = []
+        cy = []
+        boundingBoxes = []
+        clickMap = np.zeros((padded_height, padded_width), dtype=np.uint8)
+
+        for (click_x, click_y) in clicks:
+            new_click_x = click_x + pad
+            new_click_y = click_y + pad
+            cx.append(new_click_x)
+            cy.append(new_click_y)
+            clickMap[new_click_y, new_click_x] = 1
+            half = self.PAD
+            bb = [
+                new_click_x - half,
+                new_click_y - half,
+                new_click_x + half - 1,
+                new_click_y + half - 1
+            ]
+            boundingBoxes.append(bb)
+
+        CHUNK_SIZE = 128
+        all_polygons = []
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        for i in range(0, len(cx), CHUNK_SIZE):
+            cx_chunk = cx[i:i+CHUNK_SIZE]
+            cy_chunk = cy[i:i+CHUNK_SIZE]
+            bb_chunk = boundingBoxes[i:i+CHUNK_SIZE]
+
+            patchs, nucPoints, otherPoints = get_patches_and_signals(
+                image_np, clickMap, bb_chunk, cx_chunk, cy_chunk, padded_height, padded_width
+            )
+
+            patchs = patchs / 255.0
+            input_data = np.concatenate((patchs, nucPoints, otherPoints), axis=1, dtype=np.float32)
+            input_tensor = torch.from_numpy(input_data).to(device=device, dtype=torch.float32)
+
+            with torch.no_grad():
+                output = self._model(input_tensor) # (N, 1, 128, 128)
+                output = torch.sigmoid(output)
+                output = torch.squeeze(output, 1)  # (N, 128, 128)
+                preds = output.cpu().numpy()
+
+            masks = post_processing(preds, thresh=0.5, minSize=10, minHole=30, doReconstruction=True, nucPoints=nucPoints)
+
+            for j in range(len(masks)):
+                patch_mask = masks[j]
+                patch_mask = patch_mask.astype(np.uint8) * 255
+                
+                contours, _ = cv2.findContours(patch_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if not contours:
+                    all_polygons.append([])
+                    continue
+
+                largest_contour = max(contours, key=cv2.contourArea)
+                bx_min, by_min, bx_max, by_max = bb_chunk[j]
+                
+                polygon = []
+                for pt in largest_contour:
+                    px, py = pt[0]
+                    abs_x = px + bx_min - pad
+                    abs_y = py + by_min - pad
+                    polygon.append((int(abs_x), int(abs_y)))
+                    
+                all_polygons.append(polygon)
+
+        return all_polygons

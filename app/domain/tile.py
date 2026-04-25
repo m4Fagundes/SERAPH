@@ -119,12 +119,16 @@ class Tile:
         return rgba
 
     def get_ml_ready_image(self, img: Image.Image) -> Image.Image:
-        """Returns an RGB image with masked areas replaced by black pixels for ML models."""
+        """Returns an RGB image with masked areas replaced by white pixels for ML models."""
         masked = self.apply_polygon_mask(img)
         if masked.mode != "RGBA":
             return masked.convert("RGB")
         
-        bg = Image.new("RGB", masked.size, (0, 0, 0))
+        # We use WHITE (255, 255, 255) instead of BLACK because H&E slides have
+        # a naturally white background. For Cellpose, the blue channel is inverted 
+        # (255 - blue). If background is black (blue=0), it becomes 255 (super bright) 
+        # and breaks the normalization/segmentation. White becomes 0 (perfectly dark/ignored).
+        bg = Image.new("RGB", masked.size, (255, 255, 255))
         bg.paste(masked, mask=masked.split()[3])
         return bg
 

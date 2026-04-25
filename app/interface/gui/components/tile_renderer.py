@@ -29,7 +29,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF, QObject, QRunnable, QThreadPool, pyqtSignal
 
-from app.domain.geometry import is_point_in_polygon
+from app.domain.geometry import is_point_in_polygon, get_polygon_centroid
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,30 @@ class _BatchSegWorker(QRunnable):
                 diameter=self.diameter,
                 flow_threshold=self.flow_threshold,
                 cellprob_threshold=self.cellprob_threshold,
+            )
+            self.signals.finished.emit(polygons)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.signals.error.emit(str(e))
+
+
+class _NuclickAllWorker(QRunnable):
+    """Off-thread batch inference — runs NuClick on centroids of existing segmentations."""
+
+    def __init__(self, service, session, slice_idx, centroids):
+        super().__init__()
+        self.service = service
+        self.session = session
+        self.slice_idx = slice_idx
+        self.centroids = centroids
+        self.signals = _BatchSegSignals() # Reuse batch signals
+
+    def run(self):
+        try:
+            # Send all centroids in a single batch to leverage GPU parallelism
+            polygons = self.service.segment_at_points(
+                "NuClick (PyTorch)", self.session, self.slice_idx, self.centroids
             )
             self.signals.finished.emit(polygons)
         except Exception as e:
@@ -495,6 +519,11 @@ class TileRenderer(QGraphicsView):
 
             tile = s.tiles[idx]
             for layer in tile.segmentation_layers:
+                # Only allow removing polygons from VISIBLE layers.
+                # Hidden layers are untouchable — the user can't see them,
+                # so clicking "through" them must trigger a new segmentation.
+                if not layer.get("visible", True):
+                    continue
                 for pi, poly in enumerate(layer.get("polygons", [])):
                     if is_point_in_polygon(gx, gy, poly):
                         layer["polygons"].pop(pi)
@@ -553,6 +582,11 @@ class TileRenderer(QGraphicsView):
 
             # Route to the correct service based on model type
             batch_service = self.main_window.batch_segmentation_service
+            
+            if model_name == "🧠 Nuclick All":
+                self.run_nuclick_all(s, idx, self.main_window.segmentation_service)
+                return
+                
             if batch_service.is_batch_model(model_name):
                 # Read parameters from main_window spinboxes
                 diameter = self.main_window.spin_diameter.value()
@@ -839,6 +873,40 @@ class TileRenderer(QGraphicsView):
             if sb:
                 sb.showMessage("Batch segmentation returned no results.")
         self.viewport().update()
+
+    def run_nuclick_all(self, session, slice_idx: int, seg_service) -> None:
+        """Run Nuclick on the centroid of every existing visible polygon."""
+        if self._processing:
+            return
+
+        tile = session.tiles[slice_idx]
+        
+        # Get all centroids of visible polygons
+        centroids = []
+        for poly, _ in tile.get_visible_polygons():
+            centroids.append(get_polygon_centroid(poly))
+            
+        if not centroids:
+            sb = getattr(self.main_window, "statusBar", lambda: None)()
+            if sb:
+                sb.showMessage("No visible segmentations found to process with Nuclick.")
+            return
+
+        self._processing = True
+        self.viewport().update()
+
+        sb = getattr(self.main_window, "statusBar", lambda: None)()
+        if sb:
+            sb.showMessage(f"Running Nuclick on {len(centroids)} cells... please wait.")
+
+        worker = _NuclickAllWorker(seg_service, session, slice_idx, centroids)
+        worker.signals.finished.connect(
+            lambda polys, _s=session, _idx=slice_idx, _m="Nuclick All": self._on_batch_seg_done(
+                polys, _s, _idx, _m
+            )
+        )
+        worker.signals.error.connect(self._on_seg_error)
+        self._threadpool.start(worker)
 
     # ----- Loading overlay ---------------------------------------------------
 

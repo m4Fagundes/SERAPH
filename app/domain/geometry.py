@@ -74,3 +74,22 @@ def is_rect_overlapping(rect1: Tuple[int, int, int, int], rect2: Tuple[int, int,
         return False
         
     return True
+
+def get_polygon_centroid(polygon: List[Tuple[int, int]]) -> Tuple[int, int]:
+    """
+    Computes the centroid of a given polygon.
+    
+    Args:
+        polygon: List of (x, y) coordinates.
+        
+    Returns:
+        A tuple of (x, y) coordinates for the centroid.
+    """
+    if not polygon:
+        return (0, 0)
+        
+    x_sum = sum(pt[0] for pt in polygon)
+    y_sum = sum(pt[1] for pt in polygon)
+    n = len(polygon)
+    
+    return (int(x_sum / n), int(y_sum / n))
