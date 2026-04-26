@@ -173,14 +173,14 @@ class ExportService:
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(rows, f, indent=2, ensure_ascii=False)
 
-    def export_nuclei_from_slice(self, session, tile_idx, output_dir, format_ext=".png"):
+    def export_nuclei_from_slice(self, session, tile_idx, output_dir, format_ext=".png", selected_layer="All Segmentations"):
         """
         Extracts and exports all nuclei inside a specific slice as individual image files.
         """
         from app.application.nuclei_extraction_service import NucleiExtractionService
         
         extractor = NucleiExtractionService()
-        nuclei_data = extractor.extract_nuclei_from_tile(session, tile_idx)
+        nuclei_data = extractor.extract_nuclei_from_tile(session, tile_idx, selected_layer)
         
         count = 0
         base = os.path.splitext(session.name)[0]

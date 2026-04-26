@@ -119,6 +119,29 @@ class ExportHandler:
             QMessageBox.warning(self.mw, "Export Nuclei", "No slices available (please select slices first).")
             return
 
+        available_layers = set()
+        for tile in s.tiles:
+            for layer in tile.segmentation_layers:
+                available_layers.add(layer.get("name", "Unknown"))
+                
+        if not available_layers:
+            QMessageBox.warning(self.mw, "Export Nuclei", "No segmentations found in any slice.")
+            return
+            
+        from PyQt6.QtWidgets import QInputDialog
+        layer_list = ["All Segmentations"] + sorted(list(available_layers))
+        selected_layer, ok = QInputDialog.getItem(
+            self.mw, 
+            "Select Layer", 
+            "Choose which segmentation type to export:", 
+            layer_list, 
+            0, 
+            False
+        )
+        
+        if not ok or not selected_layer:
+            return
+
         export_dir = QFileDialog.getExistingDirectory(self.mw, "Select Output Folder for Nuclei")
         if not export_dir:
             return
@@ -132,11 +155,11 @@ class ExportHandler:
             if hasattr(self.mw, '_central_stack') and self.mw._central_stack.currentIndex() == 1:
                 idx = self.mw.tile_renderer.slice_idx
                 if idx is not None:
-                    total_exported = self.mw.export_service.export_nuclei_from_slice(s, idx, export_dir, fmt)
+                    total_exported = self.mw.export_service.export_nuclei_from_slice(s, idx, export_dir, fmt, selected_layer)
             else:
                 # Iterate through all tiles if in global view
                 for i in range(len(s.tiles)):
-                    total_exported += self.mw.export_service.export_nuclei_from_slice(s, i, export_dir, fmt)
+                    total_exported += self.mw.export_service.export_nuclei_from_slice(s, i, export_dir, fmt, selected_layer)
             
             QMessageBox.information(self.mw, "Export Complete", f"Successfully exported {total_exported} nuclei images.")
             self.mw.statusBar().showMessage("Nuclei export complete.")

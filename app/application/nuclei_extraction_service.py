@@ -14,13 +14,14 @@ class NucleiExtractionService:
     Follows Single Responsibility Principle (Clean Architecture).
     """
 
-    def extract_nuclei_from_tile(self, session: ImageSession, tile_idx: int) -> List[Tuple[Image.Image, Dict[str, Any]]]:
+    def extract_nuclei_from_tile(self, session: ImageSession, tile_idx: int, selected_layer: str = "All Segmentations") -> List[Tuple[Image.Image, Dict[str, Any]]]:
         """
         Extracts all segmented nuclei that intersect with the given tile.
 
         Args:
             session: The active image session containing tiles and segmentations.
             tile_idx: The index of the tile to process.
+            selected_layer: If provided, only extract nuclei from the layer matching this name.
 
         Returns:
             A list of tuples containing:
@@ -44,6 +45,10 @@ class NucleiExtractionService:
         # Find overlapping nuclei from per-tile segmentation layers
         nucleus_id = 0
         for layer in tile.segmentation_layers:
+            # Filter by layer name if requested
+            if selected_layer != "All Segmentations" and layer.get("name", "Unknown") != selected_layer:
+                continue
+                
             for poly in layer.get("polygons", []):
                 if not poly or len(poly) < 3:
                     nucleus_id += 1
