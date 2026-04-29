@@ -91,14 +91,14 @@ jobs:
         continue-on-error: true
 
       - name: Upload app as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: GridAnalyzer-${{ matrix.arch }}.app
           path: dist/GridAnalyzer.app
           retention-days: 30
 
       - name: Upload DMG as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: GridAnalyzer-${{ matrix.arch }}.dmg
           path: dist/GridAnalyzer.dmg
