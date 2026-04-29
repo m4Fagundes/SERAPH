@@ -5,6 +5,7 @@ Arquitetura: Clean Architecture (Infrastructure Layer)
 - Detecta CPU cores, memória, GPU/MPS disponibilidade
 - Verifica compatibilidade com macOS Monterey 12.7.6
 - Fornece recomendações para configuração de performance
+- Auto-seleciona melhor GPU compatível com PyTorch
 
 Design Decision (python-patterns §8 — Error Handling):
     Todas as detecções têm fallbacks seguros. Se uma detecção falhar,
@@ -19,6 +20,15 @@ import os
 from typing import Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Auto-select best compatible GPU on import (handles RTX 5060 not supported yet)
+try:
+    from .gpu_selector import get_best_cuda_device, set_cuda_device
+    _best_device = get_best_cuda_device()
+    if _best_device is not None:
+        set_cuda_device(_best_device)
+except Exception as e:
+    logger.debug(f"GPU auto-selection unavailable: {e}")
 
 
 class HardwareDetector:
@@ -117,21 +127,25 @@ class HardwareDetector:
 
     def _detect_gpu_availability(self) -> bool:
         """
-        Detecta se GPU/MPS está disponível e funcional.
+        Detecta se GPU/MPS/CUDA está disponível e funcional.
 
-        Verifica especificamente compatibilidade com macOS Monterey 12.7.6.
+        Detecta:
+        - macOS: MPS (Metal Performance Shaders)
+        - Windows/Linux: CUDA (NVIDIA GPUs)
         """
-        if not self.is_mac:
-            logger.debug("Not macOS, GPU detection limited")
+        try:
+            import torch
+        except ImportError:
+            logger.debug("PyTorch not installed - GPU detection unavailable")
             return False
 
-        # macOS Monterey 12.x tem problemas conhecidos com MPS
-        if self.is_mac_monterey:
-            logger.info("macOS Monterey detected - MPS may be unstable")
+        if self.is_mac:
+            # macOS: Detectar MPS
+            # macOS Monterey 12.x tem problemas conhecidos com MPS
+            if self.is_mac_monterey:
+                logger.info("macOS Monterey detected - MPS may be unstable")
 
-            # Testar PyTorch MPS se disponível
-            try:
-                import torch
+                # Testar PyTorch MPS se disponível
                 if hasattr(torch.backends, 'mps'):
                     mps_available = torch.backends.mps.is_available()
                     mps_built = torch.backends.mps.is_built()
@@ -157,20 +171,71 @@ class HardwareDetector:
                 else:
                     logger.debug("PyTorch MPS not available in this build")
                     return False
-            except ImportError:
-                logger.debug("PyTorch not installed")
-                return False
-            except Exception as e:
-                logger.warning("GPU detection error: %s", e)
+            else:
+                # macOS mais novo - confiar na detecção do PyTorch
+                if hasattr(torch.backends, 'mps'):
+                    is_available = torch.backends.mps.is_available() and torch.backends.mps.is_built()
+                    if is_available:
+                        logger.info("PyTorch MPS available on macOS")
+                    return is_available
                 return False
         else:
-            # macOS mais novo - confiar na detecção do PyTorch
+            # Windows/Linux: Detectar CUDA
+            logger.debug("Detecting CUDA availability on %s", self.system)
+            
             try:
-                import torch
-                if hasattr(torch.backends, 'mps'):
-                    return torch.backends.mps.is_available() and torch.backends.mps.is_built()
-                return False
-            except Exception:
+                # Verificar se CUDA está disponível no PyTorch
+                cuda_available = torch.cuda.is_available()
+                
+                if not cuda_available:
+                    logger.debug("CUDA not detected by PyTorch")
+                    return False
+                
+                # Verificar número de GPUs
+                num_gpus = torch.cuda.device_count()
+                if num_gpus == 0:
+                    logger.debug("PyTorch reports CUDA available but no GPUs found")
+                    return False
+                
+                logger.info("CUDA available with %d GPU(s)", num_gpus)
+                
+                # Procurar por GPU compatível (mesmo que não seja a primeira)
+                supported_capabilities = {(5, 0), (6, 0), (6, 1), (7, 0), (7, 5), (8, 0), (8, 6), (9, 0)}
+                compatible_gpus = []
+                
+                for device_id in range(num_gpus):
+                    try:
+                        device_cap = torch.cuda.get_device_capability(device_id)
+                        device_name = torch.cuda.get_device_name(device_id)
+                        
+                        if device_cap in supported_capabilities:
+                            compatible_gpus.append((device_id, device_name, device_cap))
+                            logger.info(f"Compatible GPU found: {device_id} - {device_name} (sm_{device_cap[0]}{device_cap[1]})")
+                        else:
+                            logger.warning(f"Incompatible GPU: {device_id} - {device_name} (sm_{device_cap[0]}{device_cap[1]})")
+                    except Exception as e:
+                        logger.debug(f"Failed to check GPU {device_id}: {e}")
+                
+                if compatible_gpus:
+                    # Há pelo menos uma GPU compatível
+                    logger.info(f"Found {len(compatible_gpus)} compatible GPU(s)")
+                    # Testar operação simples em GPU compatível para verificar funcionalidade
+                    try:
+                        device = torch.device(f"cuda:{compatible_gpus[0][0]}")
+                        test_tensor = torch.randn(2, 3, device=device)
+                        _ = test_tensor * 2
+                        logger.info("CUDA functional test passed on compatible GPU")
+                        return True
+                    except Exception as e:
+                        logger.warning("CUDA functional test failed: %s", e)
+                        return False
+                else:
+                    # Nenhuma GPU compatível encontrada
+                    logger.warning(f"CUDA available but no compatible GPUs found (found {num_gpus} total)")
+                    return False
+                    
+            except Exception as e:
+                logger.warning("CUDA detection error: %s", e)
                 return False
 
     def _recommend_gpu_usage(self) -> bool:
@@ -178,10 +243,11 @@ class HardwareDetector:
         Recomenda se deve usar GPU baseado em hardware e compatibilidade.
 
         Regras:
-        1. macOS Monterey: não recomendar GPU (instável)
-        2. Memória < 8GB: não recomendar GPU (pouca memória)
-        3. GPU não disponível: óbvio
-        4. Caso contrário: recomendar GPU
+        1. GPU não disponível: não recomendar (óbvio)
+        2. macOS Monterey: não recomendar GPU (instável com MPS)
+        3. Windows/Linux com CUDA: recomendar (menos restritivo que macOS)
+        4. macOS com MPS: recomendar se tiver 6+ GB RAM
+        5. Fallback: não recomendar
         """
         if not self.gpu_available:
             return False
@@ -191,12 +257,21 @@ class HardwareDetector:
             logger.info("Not recommending GPU for macOS Monterey due to stability issues")
             return False
 
-        if self.memory_gb < 8.0:
-            # Pouca memória - GPU pode piorar performance
-            logger.info("Not recommending GPU for systems with < 8GB RAM")
-            return False
-
-        return True
+        if self.is_mac:
+            # macOS com MPS: ser conservador com memória
+            if self.memory_gb < 6.0:
+                logger.info("Not recommending MPS for systems with < 6GB RAM")
+                return False
+            logger.info("MPS available on macOS with sufficient memory")
+            return True
+        else:
+            # Windows/Linux com CUDA: menos restritivo
+            # CUDA pode funcionar com até ~4GB, mas 6GB+ é mais confortável
+            if self.memory_gb < 4.0:
+                logger.info("Not recommending CUDA for systems with < 4GB RAM")
+                return False
+            logger.info("CUDA recommended for Windows/Linux")
+            return True
 
     def get_performance_profile(self) -> str:
         """

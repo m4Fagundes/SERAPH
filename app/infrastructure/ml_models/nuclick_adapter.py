@@ -1,11 +1,14 @@
 import logging
 import math
 from typing import List, Tuple
+from pathlib import Path
 from PIL.Image import Image
 
 from app.domain.interfaces.segmentation_model import ISegmentationModel
+from app.infrastructure.ml_models.model_downloader import ModelDownloader
 
 logger = logging.getLogger(__name__)
+
 
 class NuClickAdapter(ISegmentationModel):
     """
@@ -13,12 +16,21 @@ class NuClickAdapter(ISegmentationModel):
     Transforms the domain concepts (Image, x, y) into the expected
     format for the NuClick neural network, and translates the output
     mask back to a list of polygon coordinates.
+    
+    The model is downloaded on-demand from the internet on first use.
     """
 
     PATCH_SIZE = 128   # NuClick operates on 128×128 patches
     PAD = PATCH_SIZE // 2  # Padding to guarantee safe patch extraction at edges
 
-    def __init__(self, model_path: str = "models/nuclick.pth"):
+    def __init__(self, model_path: str = None):
+        """
+        Initialize NuClick adapter.
+        
+        Args:
+            model_path: Optional override path to model. If None, will auto-download
+                       from configured URL to ~/.grid-analyzer/models/nuclick.pth
+        """
         self.model_path = model_path
         self._model = None
         self._load_attempted = False
@@ -36,20 +48,40 @@ class NuClickAdapter(ISegmentationModel):
         self._load_attempted = True
         self._load_model()
 
+    def _get_model_path(self) -> Path:
+        """Get path to model, downloading if necessary."""
+        if self.model_path:
+            # User provided explicit path
+            return Path(self.model_path)
+        
+        # Auto-download from configured URL
+        logger.info("Downloading NuClick model on-demand...")
+        try:
+            model_path = ModelDownloader.get_model_path('nuclick.pth')
+            logger.info(f"NuClick model ready at {model_path}")
+            return model_path
+        except Exception as e:
+            logger.error(f"Failed to download NuClick model: {e}")
+            raise
+
     def _load_model(self):
         """Loads the NuClick PyTorch model."""
         import torch
         from app.infrastructure.ml_models.nuclick_torch.architecture import NuClick_NN
 
         try:
+            # Ensure model file exists (download if needed)
+            model_path = self._get_model_path()
+            
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             self._model = NuClick_NN(n_channels=5, n_classes=1)
             self._model.to(device=device)
+            
             # Load state dictionary
-            self._model.load_state_dict(torch.load(self.model_path, map_location=device))
+            self._model.load_state_dict(torch.load(str(model_path), map_location=device))
             self._model.eval()
             
-            logger.info("NuClick model loaded successfully from %s on %s", self.model_path, device)
+            logger.info("NuClick model loaded successfully from %s on %s", model_path, device)
         except Exception as e:
             logger.error("Failed to load NuClick model: %s", e)
             self._model = None

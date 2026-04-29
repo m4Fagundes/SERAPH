@@ -98,7 +98,7 @@ class PerformanceConfig:
         return cls(
             cellpose=CellposeConfig(
                 use_gpu=use_gpu,
-                batch_size=1,
+                batch_size=1,  # Sempre 1 em low performance
                 resample_factor=0.75,  # Downsample para economizar memória
                 timeout_seconds=180,  # 3 minutos
                 max_tile_size_pixels=1000,
@@ -118,11 +118,14 @@ class PerformanceConfig:
     def _create_medium_performance_config(cls, detector) -> "PerformanceConfig":
         """Configuração para hardware modesto."""
         use_gpu = detector.gpu_recommended and not detector.is_mac_monterey
+        
+        # Aumentar batch size se GPU for recomendada
+        batch_size = 2 if use_gpu else 1
 
         return cls(
             cellpose=CellposeConfig(
                 use_gpu=use_gpu,
-                batch_size=1,
+                batch_size=batch_size,  # 2 com GPU, 1 com CPU
                 resample_factor=1.0,  # Sem downsampling
                 timeout_seconds=300,  # 5 minutos
                 max_tile_size_pixels=1500,
@@ -140,19 +143,30 @@ class PerformanceConfig:
 
     @classmethod
     def _create_high_performance_config(cls, detector) -> "PerformanceConfig":
-        """Configuração para hardware razoável."""
+        """Configuração para hardware razoável — OTIMIZADO PARA GPU MÁXIMA."""
         use_gpu = detector.gpu_recommended and not detector.is_mac_monterey
 
         # Para macOS Monterey, dividir tiles grandes é recomendado
         split_large_tiles = detector.is_mac_monterey
+        
+        # Aumentar batch size MASSIVAMENTE para saturar GPU
+        # RTX 2060 (6GB) pode processar 16+ imagens de 512x512 simultaneamente
+        batch_size = 16 if use_gpu else 2
+        
+        # Aumentar max_tile_size para processar menos tiles sequencialmente
+        # RTX 2060 suporta até ~3000px sem ficar sem memória
+        max_tile_size = 3000 if use_gpu else 2000
+        
+        # Aumentar timeout para batches maiores
+        timeout = 900 if use_gpu else 600  # 15 min vs 10 min
 
         return cls(
             cellpose=CellposeConfig(
                 use_gpu=use_gpu,
-                batch_size=2,  # Batch processing para múltiplas imagens
+                batch_size=batch_size,  # 16 com GPU, 2 com CPU
                 resample_factor=1.0,
-                timeout_seconds=600,  # 10 minutos
-                max_tile_size_pixels=2000,
+                timeout_seconds=timeout,  # 15 minutos com GPU
+                max_tile_size_pixels=max_tile_size,  # 3000 com GPU
                 split_large_tiles=split_large_tiles,
                 memory_limit_mb=4096,  # 4GB limite
             ),

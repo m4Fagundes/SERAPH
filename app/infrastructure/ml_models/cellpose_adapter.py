@@ -404,6 +404,10 @@ class CellposeAdapter(IBatchSegmentationModel):
         img_processed = inverted.astype(np.uint8)
 
         # 3. Run Cellpose evaluation on pre-processed single-channel image
+        # Aumentar batch_size interno para saturar GPU VRAM
+        # RTX 2060: 256 é seguro para tiles até 1000x1000px
+        internal_batch = 256 if self._gpu else 8
+        
         masks, flows, styles = self._model.eval(
             img_processed,
             diameter=diameter,
@@ -411,7 +415,7 @@ class CellposeAdapter(IBatchSegmentationModel):
             cellprob_threshold=cellprob_threshold,
             min_size=self._min_size,
             channels=[0, 0],  # grayscale (already preprocessed)
-            batch_size=128,    # Socar carga na GPU (default é 8)
+            batch_size=internal_batch,  # 256 com GPU, 8 sem GPU
         )
 
         logger.info("Cellpose detected %d objects.", masks.max() if masks.size else 0)
