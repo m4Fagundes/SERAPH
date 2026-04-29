@@ -13,8 +13,6 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
-    
     strategy:
       matrix:
         include:
@@ -24,6 +22,8 @@ jobs:
           - arch: arm64
             runner: macos-14  # Apple Silicon (M1/M2/M3)
     
+    runs-on: ${{ matrix.runner }}
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,7 +32,6 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.12'
-          architecture: ${{ matrix.arch }}
 
       - name: Cache pip dependencies
         uses: actions/cache@v3
