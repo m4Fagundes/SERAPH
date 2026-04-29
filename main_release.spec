@@ -110,12 +110,9 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=['hooks'],
+    hookspath=[],
     hooksconfig={},
-    runtime_hooks=[
-        'hooks/rthook_cellpose.py',
-        'hooks/rthook_openslide.py' if IS_WINDOWS else None,
-    ] if IS_WINDOWS else ['hooks/rthook_cellpose.py'],
+    runtime_hooks=[],
     excludes=[
         # GUI frameworks we don't use
         'PyQt5',
