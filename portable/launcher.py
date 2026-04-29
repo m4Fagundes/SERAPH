@@ -90,39 +90,21 @@ def _extract_payload(source: Path, dest: Path) -> None:
     if dest.exists():
         shutil.rmtree(dest, ignore_errors=True)
 
+    # Inform the user that this is a one-time setup
+    ctypes.windll.user32.MessageBoxW(
+        0,
+        "GridAnalyzer está sendo preparado para o primeiro uso.\n"
+        "As dependências serão desempacotadas para garantir inicialização instantânea no futuro.\n\n"
+        "Isso levará alguns segundos...",
+        "GridAnalyzer — Configuração Inicial",
+        0x40,  # MB_ICONINFORMATION
+    )
+
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(str(source), str(dest))
 
     # Write marker
     marker.write_text("ok", encoding="utf-8")
-
-
-def _cleanup(install_dir: Path) -> None:
-    """
-    Remove the extracted payload folder.
-    Called on exit — best-effort; retries a few times for locked files.
-    """
-    if not install_dir.exists():
-        return
-
-    for attempt in range(5):
-        try:
-            shutil.rmtree(str(install_dir))
-            return
-        except Exception:
-            time.sleep(0.5 * (attempt + 1))
-
-    # Last resort: schedule deletion on next reboot (Windows)
-    try:
-        _schedule_delete_on_reboot(install_dir)
-    except Exception:
-        pass
-
-
-def _schedule_delete_on_reboot(path: Path) -> None:
-    """Use MoveFileEx to delete a folder on next reboot."""
-    MOVEFILE_DELAY_UNTIL_REBOOT = 0x00000004
-    ctypes.windll.kernel32.MoveFileExW(str(path), None, MOVEFILE_DELAY_UNTIL_REBOOT)
 
 
 def _cleanup_old_versions(base_dir: Path, current_hash: str) -> None:
@@ -145,14 +127,14 @@ def main():
     version_hash = _compute_payload_hash()
     base_dir = install_dir.parent
 
-    # Clean old versions first
+    # Clean old versions first (keeps disk usage low)
     _cleanup_old_versions(base_dir, version_hash)
 
-    # Extract
+    # Extract if needed
     _extract_payload(payload_source, install_dir)
 
-    # Register cleanup on exit
-    atexit.register(_cleanup, install_dir)
+    # [PERSISTENCE] — REMOVED atexit cleanup to keep files on the machine
+    # for instant subsequent launches.
 
     # Launch the real application
     app_exe = install_dir / APP_EXE_NAME

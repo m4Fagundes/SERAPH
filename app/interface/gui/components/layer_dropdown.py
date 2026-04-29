@@ -120,6 +120,14 @@ class LayerDropdown(QToolButton):
 
     # ── Menu builder ──────────────────────────────────────────────────────────
 
+    def _delete_layer(self, idx: int):
+        if not self._current_tile:
+            return
+        if idx < len(self._current_tile.segmentation_layers):
+            del self._current_tile.segmentation_layers[idx]
+            self._rebuild_menu()
+            self.layerVisibilityChanged.emit()
+
     def _rebuild_menu(self):
         """Reconstruct the popup menu from the tile's segmentation_layers."""
         self._menu.clear()
@@ -142,17 +150,24 @@ class LayerDropdown(QToolButton):
         # ── Per-layer checkable actions ───────────────────────────────────────
         for i, layer in enumerate(layers):
             name = layer.get("name", f"Layer {i+1}")
-            model = layer.get("model", "")
             poly_count = len(layer.get("polygons", []))
             is_visible = layer.get("visible", True)
             color_hex = layer.get("color", "#FFFF00")
 
-            action = self._menu.addAction(
-                _color_icon(color_hex),
-                f"  {name}  ({poly_count})"
-            )
-            action.setCheckable(True)
-            action.setChecked(is_visible)
+            action = QWidgetAction(self._menu)
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(8, 2, 8, 2)
+            row_layout.setSpacing(8)
+
+            chk_visible = QCheckBox(f"  {name}  ({poly_count})")
+            chk_visible.setIcon(_color_icon(color_hex))
+            chk_visible.setChecked(is_visible)
+            chk_visible.setStyleSheet("""
+                QCheckBox { color: #cccccc; font-size: 8pt; font-family: 'Segoe UI', Tahoma, sans-serif; }
+                QCheckBox::indicator { width: 14px; height: 14px; background-color: #3c3c3c; border: 1px solid #555; border-radius: 3px; }
+                QCheckBox::indicator:checked { background-color: #0e639c; border: 1px solid #0e639c; }
+            """)
 
             # Capture index by value
             def make_handler(idx=i):
@@ -163,7 +178,30 @@ class LayerDropdown(QToolButton):
                         self.layerVisibilityChanged.emit()
                 return handler
 
-            action.toggled.connect(make_handler())
+            chk_visible.toggled.connect(make_handler())
+            
+            btn_delete = QToolButton()
+            btn_delete.setText("🗑️")
+            btn_delete.setToolTip("Apagar esta segmentação")
+            btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_delete.setStyleSheet("""
+                QToolButton { border: none; background: transparent; font-size: 10pt; }
+                QToolButton:hover { background-color: #c0392b; border-radius: 3px; }
+            """)
+            
+            def make_delete_handler(idx=i):
+                def handler():
+                    self._delete_layer(idx)
+                return handler
+                
+            btn_delete.clicked.connect(make_delete_handler())
+
+            row_layout.addWidget(chk_visible)
+            row_layout.addStretch()
+            row_layout.addWidget(btn_delete)
+            
+            action.setDefaultWidget(row_widget)
+            self._menu.addAction(action)
             self._layer_actions.append(action)
 
         # ── Separator + bulk actions ──────────────────────────────────────────

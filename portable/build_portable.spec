@@ -9,15 +9,19 @@
 #   2. console=False — no terminal window
 #   3. Output goes to dist/GridAnalyzer_payload/
 #
+import os
 import pathlib
 from PyInstaller.utils.hooks import collect_all, collect_data_files
+
+# Get the root directory of the project (parent of 'portable/')
+ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 
 # ---------------------------------------------------------------------------
 # 1. NuClick model weights
 # ---------------------------------------------------------------------------
 datas = [
     (
-        '../app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth',
+        os.path.join(ROOT, 'app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth'),
         'app/infrastructure/ml_models/nuclick_torch/weights',
     ),
 ]
@@ -46,7 +50,6 @@ packages_to_collect = [
     'numba',
     'llvmlite',
     'fastremap',
-    'imagecodecs',
 ]
 
 for pkg in packages_to_collect:
@@ -81,15 +84,16 @@ hiddenimports = list(set(hiddenimports))
 # 5. Analysis
 # ---------------------------------------------------------------------------
 a = Analysis(
-    ['../main.py'],
-    pathex=['..'],
+    [os.path.join(ROOT, 'main.py')],
+    pathex=[ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=['../hooks'],
+    hookspath=[os.path.join(ROOT, 'hooks')],
     hooksconfig={},
     runtime_hooks=[
-        '../hooks/rthook_cellpose.py',
+        os.path.join(ROOT, 'hooks/rthook_cellpose.py'),
+        os.path.join(ROOT, 'hooks/rthook_openslide.py'),
     ],
     excludes=[
         'PyQt5',

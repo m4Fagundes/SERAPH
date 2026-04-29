@@ -175,12 +175,33 @@ class ExportService:
 
     def export_nuclei_from_slice(self, session, tile_idx, output_dir, format_ext=".png", selected_layer="All Segmentations"):
         """
-        Extracts and exports all nuclei inside a specific slice as individual image files.
+        Extracts and exports all nuclei inside a specific slice as individual image files,
+        organized in a folder named after the slice's name.
         """
         from app.application.nuclei_extraction_service import NucleiExtractionService
         
         extractor = NucleiExtractionService()
         nuclei_data = extractor.extract_nuclei_from_tile(session, tile_idx, selected_layer)
+        
+        if not nuclei_data:
+            return 0
+            
+        tile = session.tiles[tile_idx]
+        slice_name = tile.metadata.get("name", f"slice{tile_idx + 1}")
+        
+        # Clean up slice_name to avoid invalid characters in folder names
+        safe_slice_name = "".join(c for c in slice_name if c.isalnum() or c in " _-()").strip()
+        if not safe_slice_name:
+            safe_slice_name = f"slice{tile_idx + 1}"
+            
+        # Handle duplicates: ex. INV, INV(1), INV(2)
+        target_dir = os.path.join(output_dir, safe_slice_name)
+        counter = 1
+        while os.path.exists(target_dir):
+            target_dir = os.path.join(output_dir, f"{safe_slice_name}({counter})")
+            counter += 1
+            
+        os.makedirs(target_dir, exist_ok=True)
         
         count = 0
         base = os.path.splitext(session.name)[0]
@@ -194,8 +215,8 @@ class ExportService:
                 bg.paste(img, mask=img.split()[3])
                 img = bg
                 
-            filename = f"{base}_slice{tile_idx + 1}_nucleus{nucleus_id}{format_ext}"
-            full_path = os.path.join(output_dir, filename)
+            filename = f"nucleus_{nucleus_id}{format_ext}"
+            full_path = os.path.join(target_dir, filename)
             
             if save_image_tile(img, full_path, format_ext):
                 count += 1

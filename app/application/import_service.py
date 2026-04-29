@@ -182,3 +182,68 @@ class TileImportService:
             path,
         )
         return new_indices
+
+    def load_json(self, path: str, session: ImageSession) -> list[int]:
+        """Parse a custom JSON annotation file.  Each annotated region becomes
+        its own independent Slice/Tile in *session*.
+
+        Args:
+            path: Path to a ``.json`` annotation file.
+            session: The :class:`ImageSession` to extend.
+
+        Returns:
+            List of indices of the newly appended tiles.
+
+        Raises:
+            OSError: If the file cannot be read.
+            ValueError: If the JSON is malformed or empty.
+        """
+        from app.infrastructure.tile_json import read_json_features
+        descriptors = read_json_features(path)
+        from app.domain.tile import Tile
+
+        new_indices: list[int] = []
+
+        for descriptor in descriptors:
+            sl = descriptor.get("slice", {})
+
+            # ── Polygon (authoritative clipping boundary) ─────────────
+            raw_polygon = sl.get("polygon")
+            polygon = (
+                [tuple(pt) for pt in raw_polygon]
+                if raw_polygon and len(raw_polygon) >= 3
+                else None
+            )
+
+            # ── Bounding rect from the polygon ────────────────────────
+            if polygon:
+                bx1 = int(min(p[0] for p in polygon))
+                by1 = int(min(p[1] for p in polygon))
+                bx2 = int(math.ceil(max(p[0] for p in polygon)))
+                by2 = int(math.ceil(max(p[1] for p in polygon)))
+                rects = [(bx1, by1, bx2, by2)]
+            else:
+                raw_rects = sl.get("rects", [])
+                if not raw_rects:
+                    b = sl.get("bounds", {})
+                    raw_rects = [(b.get("x1", 0), b.get("y1", 0),
+                                  b.get("x2", 0), b.get("y2", 0))]
+                rects = [tuple(r) for r in raw_rects]
+
+            # ── Build Tile ────────────────────────────────────────────
+            tile = Tile(rects=rects, polygon=polygon)
+            tile.metadata = {
+                "name": sl.get("name", ""),
+                "description": sl.get("description", ""),
+                "microns_per_pixel": sl.get("microns_per_pixel", ""),
+            }
+
+            session.tiles.append(tile)
+            new_indices.append(len(session.tiles) - 1)
+
+        logger.info(
+            "JSON imported: %d slices from '%s'",
+            len(new_indices),
+            path,
+        )
+        return new_indices

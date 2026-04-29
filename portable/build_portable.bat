@@ -11,6 +11,17 @@ REM ============================================================================
 
 setlocal enabledelayedexpansion
 
+if not exist ".venv\Scripts\python.exe" (
+    echo.
+    echo [ERRO] Nenhum ambiente virtual .venv encontrado.
+    echo        Crie e ative a venv com Python 3.12 antes de buildar.
+    pause
+    exit /b 1
+)
+
+set "PYTHON_EXE=.venv\Scripts\python.exe"
+set "PYTHON_ARGS=-m PyInstaller"
+
 echo.
 echo ╔══════════════════════════════════════════════════════════════╗
 echo ║         GridAnalyzer — Build Portátil                       ║
@@ -28,7 +39,7 @@ echo [1/2] Compilando a aplicação (modo --onedir)...
 echo       Isso pode levar vários minutos na primeira execução.
 echo.
 
-pyinstaller --clean --noconfirm portable\build_portable.spec
+%PYTHON_EXE% %PYTHON_ARGS% --clean --noconfirm portable\build_portable.spec
 
 if errorlevel 1 (
     echo.
@@ -46,7 +57,7 @@ REM ── Etapa 2: Build do Launcher ──────────────
 echo [2/2] Empacotando no launcher portátil...
 echo.
 
-pyinstaller --clean --noconfirm portable\launcher.spec
+%PYTHON_EXE% %PYTHON_ARGS% --clean --noconfirm portable\launcher.spec
 
 if errorlevel 1 (
     echo.

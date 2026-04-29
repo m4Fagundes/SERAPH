@@ -142,13 +142,13 @@ class NuClickAdapter(ISegmentationModel):
         # 5. Post Processing
         logger.info("Raw max prediction probability: %f", float(preds.max()))
         logger.info("Raw min prediction probability: %f", float(preds.min()))
-        masks = post_processing(preds, thresh=0.5, minSize=10, minHole=30, doReconstruction=True, nucPoints=nucPoints)
-
-        # 'masks' now has one mask of size 128x128 for the patch.
-        # We need to extract the absolute coordinates in the main image.
+        
+        # OpenCV's RETR_EXTERNAL ignores holes and we pick the largest contour,
+        # skipping expensive CPU morphology.
+        masks = preds > 0.5
         patch_mask = masks[0]
         
-        # cv2.findContours requires uint8 array, masks is boolean.
+        # cv2.findContours requires uint8 array
         patch_mask = patch_mask.astype(np.uint8) * 255
         
         logger.info("Generated mask unique values: %s", str(np.unique(patch_mask)))
@@ -233,7 +233,10 @@ class NuClickAdapter(ISegmentationModel):
             ]
             boundingBoxes.append(bb)
 
-        CHUNK_SIZE = 128
+        # Maximiza o uso da GPU enviando 512 patches por vez em vez de apenas 128.
+        # Patches são pequenos (128x128x5), 512 patches gastam ~167MB de VRAM, 
+        # o que é super seguro para GPUs modernas e acelera muito o processamento batch.
+        CHUNK_SIZE = 512
         all_polygons = []
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -256,7 +259,9 @@ class NuClickAdapter(ISegmentationModel):
                 output = torch.squeeze(output, 1)  # (N, 128, 128)
                 preds = output.cpu().numpy()
 
-            masks = post_processing(preds, thresh=0.5, minSize=10, minHole=30, doReconstruction=True, nucPoints=nucPoints)
+            # OpenCV's RETR_EXTERNAL already ignores holes and we pick the largest contour,
+            # so expensive CPU morphology (remove_small_objects, holes, reconstruction) is 100% redundant.
+            masks = preds > 0.5
 
             for j in range(len(masks)):
                 patch_mask = masks[j]

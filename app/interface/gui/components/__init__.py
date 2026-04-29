@@ -5,6 +5,7 @@ from .slice_previews import SlicePreviews
 from .slice_export import ExportHandler
 from .properties_panel import PropertiesPanel
 from .layer_dropdown import LayerDropdown
+from .macro_pipeline_panel import MacroPipelinePanel
 
 __all__ = [
     "ProjectManager",
@@ -14,4 +15,5 @@ __all__ = [
     "ExportHandler",
     "PropertiesPanel",
     "LayerDropdown",
+    "MacroPipelinePanel",
 ]

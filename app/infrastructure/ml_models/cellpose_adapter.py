@@ -411,6 +411,7 @@ class CellposeAdapter(IBatchSegmentationModel):
             cellprob_threshold=cellprob_threshold,
             min_size=self._min_size,
             channels=[0, 0],  # grayscale (already preprocessed)
+            batch_size=128,    # Socar carga na GPU (default é 8)
         )
 
         logger.info("Cellpose detected %d objects.", masks.max() if masks.size else 0)
@@ -478,17 +479,31 @@ class CellposeAdapter(IBatchSegmentationModel):
         """
         import numpy as np
         import cv2
+        import scipy.ndimage as ndi
 
         polygons: List[List[Tuple[int, int]]] = []
         if masks is None or masks.size == 0:
             return polygons
 
-        labels = np.unique(masks)
-        labels = labels[labels != 0]  # skip background
+        h, w = masks.shape
 
-        for label in labels:
-            # Isolate single object
-            binary = (masks == label).astype(np.uint8) * 255
+        # Optimize: instead of checking masks == label on the entire 2D image
+        # for every single label (which takes O(N * W * H) and freezes the CPU),
+        # we find the tight bounding box for each label first.
+        slices = ndi.find_objects(masks)
+
+        for i, slc in enumerate(slices):
+            if slc is None:
+                continue
+            
+            label = i + 1
+            # slc is a tuple: (slice(y1, y2), slice(x1, x2))
+            min_y = slc[0].start
+            min_x = slc[1].start
+
+            # Isolate single object ONLY within its bounding box
+            crop = masks[slc]
+            binary = (crop == label).astype(np.uint8) * 255
 
             contours, _ = cv2.findContours(
                 binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
@@ -501,8 +516,17 @@ class CellposeAdapter(IBatchSegmentationModel):
             if cv2.contourArea(largest) < 4:
                 continue  # skip degenerate contours
 
-            poly = [(int(pt[0][0]), int(pt[0][1])) for pt in largest]
+            # Re-add the bounding box offset to the contour coordinates
+            poly = [(int(pt[0][0]) + min_x, int(pt[0][1]) + min_y) for pt in largest]
+
             if len(poly) >= 3:
+                # Excluir núcleos que tocam as bordas do tile
+                touches_border = any(
+                    x <= 0 or y <= 0 or x >= w - 1 or y >= h - 1
+                    for x, y in poly
+                )
+                if touches_border:
+                    continue
                 polygons.append(poly)
 
         return polygons

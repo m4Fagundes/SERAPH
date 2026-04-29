@@ -139,15 +139,22 @@ def get_patches_and_signals(img, clickMap, boundingBoxes, cx, cy, m, n):
 
         patchs[i] = img[0, :, yStart:yEnd + 1, xStart:xEnd + 1]
 
-        thisClickMap = np.zeros((1, 1, m, n), dtype=np.uint8)
-        thisClickMap[0, 0, cy[i], cx[i]] = 1
+        # O(patch_size) optimization: avoid O(m*n) array allocations
+        local_clicks = clickMap[0, 0, yStart:yEnd + 1, xStart:xEnd + 1].copy()
+        
+        nuc = np.zeros((bb, bb), dtype=np.uint8)
+        
+        cy_local = cy[i] - yStart
+        cx_local = cx[i] - xStart
+        
+        if 0 <= cy_local < bb and 0 <= cx_local < bb:
+            nuc[cy_local, cx_local] = 1
+            local_clicks[cy_local, cx_local] = 0
+            
+        nucPoints[i, 0] = nuc
+        otherPoints[i, 0] = local_clicks
 
-        othersClickMap = np.uint8((clickMap - thisClickMap) > 0)
-
-        nucPoints[i] = thisClickMap[0, :, yStart:yEnd + 1, xStart:xEnd + 1]
-        otherPoints[i] = othersClickMap[0, :, yStart:yEnd + 1, xStart:xEnd + 1]
-
-    # patchs: (total, 3, m, n)
-    # nucPoints: (total, 1, m, n)
-    # otherPoints: (total, 1, m, n)
-    return patchs, nucPoints, otherPoints   
+    # patchs: (total, 3, bb, bb)
+    # nucPoints: (total, 1, bb, bb)
+    # otherPoints: (total, 1, bb, bb)
+    return patchs, nucPoints, otherPoints

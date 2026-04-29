@@ -174,7 +174,7 @@ class ProjectManager:
             self.mw,
             "Open Tile Descriptor",
             "",
-            "All Supported (*.xml *.geojson);;Tile Descriptor (*.xml);;GeoJSON Annotations (*.geojson)",
+            "All Supported (*.xml *.geojson *.json);;Tile Descriptor (*.xml);;GeoJSON Annotations (*.geojson);;JSON Annotations (*.json)",
         )
         if not path:
             return
@@ -190,6 +190,19 @@ class ProjectManager:
                 self.mw.slice_previews.update_previews()
                 self.mw.statusBar().showMessage(
                     f"GeoJSON imported → {len(new_indices)} slices | {len(s.tiles)} total"
+                )
+                # Navigate to the first newly imported slice
+                self.mw.switch_to_tile(new_indices[0])
+                return
+            elif ext == ".json":
+                new_indices = self.mw.tile_import_service.load_json(path, s)
+                if not new_indices:
+                    QMessageBox.warning(self.mw, "Import", "No valid annotations found.")
+                    return
+                # Refresh sidebar
+                self.mw.slice_previews.update_previews()
+                self.mw.statusBar().showMessage(
+                    f"JSON imported → {len(new_indices)} slices | {len(s.tiles)} total"
                 )
                 # Navigate to the first newly imported slice
                 self.mw.switch_to_tile(new_indices[0])

@@ -26,7 +26,8 @@ from .components import (
     SlicePreviews,
     ExportHandler,
     PropertiesPanel,
-    LayerDropdown
+    LayerDropdown,
+    MacroPipelinePanel
 )
 
 class SlicerLabApp(QMainWindow):
@@ -232,6 +233,11 @@ class SlicerLabApp(QMainWindow):
         self.btn_segment_all.setVisible(False)  # hidden until a batch model is selected
         self.toolbar.addWidget(self.btn_segment_all)
 
+        self.lbl_execution_time = QLabel("")
+        self.lbl_execution_time.setStyleSheet("color: #00FF88; font-weight: bold; font-family: 'Segoe UI', sans-serif; font-size: 9pt; margin-left: 8px;")
+        self.lbl_execution_time.hide()
+        self.toolbar.addWidget(self.lbl_execution_time)
+
         # ── Cellpose parameter controls (visible only for batch models) ────
         _param_style = (
             "QDoubleSpinBox { background-color: #3c3c3c; color: #ffffff; "
@@ -401,6 +407,10 @@ class SlicerLabApp(QMainWindow):
         self.sidebar_dock.setWidget(self.sidebar_splitter)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.sidebar_dock)
         
+        # 3.2 Left Dock Bottom (Macro Pipeline)
+        self.macro_pipeline_dock = MacroPipelinePanel(self)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.macro_pipeline_dock)
+        
         # 3.5 Right Dock (Properties)
         self.properties_dock = PropertiesPanel("Tile Properties", self)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.properties_dock)
@@ -501,6 +511,9 @@ class SlicerLabApp(QMainWindow):
         # Show and populate properties pane
         self.properties_dock.load_tile(s.tiles[idx])
         self.properties_dock.show()
+        
+        # Update layer dropdown
+        self.layer_dropdown.set_tile(s.tiles[idx])
         
         self._central_stack.setCurrentIndex(1)
         self.update_tool_context(True)

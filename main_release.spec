@@ -51,7 +51,6 @@ packages_to_collect = [
     'numba',
     'llvmlite',
     'fastremap',
-    'imagecodecs',
 ]
 
 for pkg in packages_to_collect:
@@ -101,6 +100,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[
         'hooks/rthook_cellpose.py',   # sets CELLPOSE_LOCAL_MODELS_PATH & NUMBA env
+        'hooks/rthook_openslide.py',
     ],
     excludes=[
         # GUI
@@ -124,23 +124,28 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='GridAnalyzer',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,          # UPX off: avoid false-positive AV flags and DLL issues
-    upx_exclude=[],
-    # ── PORTABILITY: extract to a local folder instead of random temp ──
-    # When set to None, PyInstaller uses sys._MEIPASS in %TEMP%.
-    # For a deterministic local folder, we'll handle this in the runtime hook.
-    runtime_tmpdir=None,
+    upx=False,
     console=False,      # ← NO CONSOLE WINDOW — clean UX
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='GridAnalyzer',
 )

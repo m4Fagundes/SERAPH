@@ -24,7 +24,7 @@ except Exception:
 
 try:
     import openslide
-except ImportError:
+except Exception:
     openslide = None
 
 # File extensions handled by OpenSlide

@@ -57,8 +57,7 @@ packages_to_collect = [
     'skimage', 
     'numba', 
     'llvmlite',
-    'fastremap',
-    'imagecodecs'
+    'fastremap'
 ]
 
 for pkg in packages_to_collect:
@@ -105,6 +104,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[
         'hooks/rthook_cellpose.py',   # sets CELLPOSE_LOCAL_MODELS_PATH & NUMBA env
+        'hooks/rthook_openslide.py',
     ],
     excludes=[
         # GUI
