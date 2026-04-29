@@ -3,6 +3,8 @@ name: Build macOS App
 on:
   push:
     branches: [ main, develop ]
+    tags:
+      - 'v*'
     paths:
       - 'app/**'
       - 'main.py'
@@ -106,7 +108,7 @@ jobs:
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/GridAnalyzer.dmg
