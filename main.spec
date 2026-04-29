@@ -100,12 +100,9 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=['hooks'],       # custom hooks directory
+    hookspath=[],
     hooksconfig={},
-    runtime_hooks=[
-        'hooks/rthook_cellpose.py',   # sets CELLPOSE_LOCAL_MODELS_PATH & NUMBA env
-        'hooks/rthook_openslide.py',
-    ],
+    runtime_hooks=[],
     excludes=[
         # GUI
         'PyQt5',
