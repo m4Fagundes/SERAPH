@@ -16,11 +16,13 @@ Lazy-Loading Pattern (same as NuClickAdapter):
 """
 
 import logging
-from typing import List, Tuple
+import time
+from typing import List, Tuple, Optional
 
 from PIL.Image import Image
 
 from app.domain.interfaces.batch_segmentation_model import IBatchSegmentationModel
+from app.infrastructure.config.performance_config import get_performance_config
 
 logger = logging.getLogger(__name__)
 
@@ -43,24 +45,61 @@ class CellposeAdapter(IBatchSegmentationModel):
     def __init__(
         self,
         model_type: str = "nuclei",
-        gpu: bool = True,
+        gpu: Optional[bool] = None,  # None = usar configuração automática
         flow_threshold: float = DEFAULT_FLOW_THRESHOLD,
         cellprob_threshold: float = DEFAULT_CELLPROB_THRESHOLD,
         min_size: int = DEFAULT_MIN_SIZE,
+        config_override: Optional[dict] = None,
     ):
         """
         Args:
             model_type: Cellpose model type ("nuclei", "cyto", "cyto2", etc.).
-            gpu: Whether to attempt GPU acceleration.
+            gpu: Whether to attempt GPU acceleration. None = auto-detect from config.
             flow_threshold: Flow error threshold for mask quality filtering.
             cellprob_threshold: Cell probability threshold.
             min_size: Minimum mask area in pixels.
+            config_override: Override specific config values.
         """
         self._model_type = model_type
-        self._gpu = gpu
+
+        # Carregar configuração de performance
+        self._config = get_performance_config()
+
+        # Aplicar overrides se fornecidos
+        if config_override:
+            # Aqui precisaríamos de uma forma de aplicar overrides
+            # Por enquanto, apenas logamos
+            logger.info("Config overrides provided: %s", config_override)
+
+        # Decidir se usa GPU (configuração automática ou manual)
+        if gpu is None:
+            # Usar configuração automática
+            self._gpu = self._config.cellpose.use_gpu and not self._config.force_cpu_only
+            logger.info("Auto GPU decision: %s (config.use_gpu=%s, force_cpu_only=%s)",
+                       self._gpu, self._config.cellpose.use_gpu, self._config.force_cpu_only)
+        else:
+            # Override manual - Se o usuário pediu explicitamente, respeitamos (mesmo que o detector diga o contrário)
+            self._gpu = gpu
+            if gpu and self._config.force_cpu_only:
+                logger.warning("GPU requested manually despite force_cpu_only recommendation. Attempting to use GPU...")
+
         self._flow_threshold = flow_threshold
         self._cellprob_threshold = cellprob_threshold
         self._min_size = min_size
+
+        # Configurações de performance
+        self._batch_size = self._config.cellpose.batch_size
+        self._resample_factor = self._config.cellpose.resample_factor
+        self._timeout_seconds = self._config.cellpose.timeout_seconds
+        self._max_tile_size = self._config.cellpose.max_tile_size_pixels
+        self._memory_limit_mb = self._config.cellpose.memory_limit_mb
+
+        logger.info(
+            "CellposeAdapter initialized: model=%s, gpu=%s, batch_size=%d, "
+            "resample=%.2f, timeout=%ds, max_tile=%dpx",
+            model_type, self._gpu, self._batch_size, self._resample_factor,
+            self._timeout_seconds, self._max_tile_size
+        )
 
         # Lazy-loaded model instance
         self._model = None
@@ -72,9 +111,137 @@ class CellposeAdapter(IBatchSegmentationModel):
     def name(self) -> str:
         return f"Cellpose ({self._model_type})"
 
+    def _check_memory_usage(self) -> bool:
+        """Verifica se o uso de memória está dentro dos limites."""
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / (1024 * 1024)
+
+            if memory_mb > self._memory_limit_mb:
+                logger.warning(
+                    "Memory usage %.1f MB exceeds limit %d MB. Consider reducing tile size.",
+                    memory_mb, self._memory_limit_mb
+                )
+                return False
+            return True
+        except ImportError:
+            logger.debug("psutil not available, skipping memory check")
+            return True
+        except Exception as e:
+            logger.warning("Failed to check memory usage: %s", e)
+            return True
+
+    def _apply_resample_if_needed(self, image):
+        """Aplica downsampling se configurado e necessário.
+
+        Args:
+            image: PIL Image ou NumPy array
+
+        Returns:
+            Imagem redimensionada (mesmo tipo da entrada)
+        """
+        from PIL import Image as PILImage
+        import numpy as np
+        import cv2
+
+        if self._resample_factor >= 1.0:
+            return image
+
+        # Determinar dimensões baseado no tipo de imagem
+        if isinstance(image, Image):
+            width, height = image.size
+            is_pil = True
+        elif isinstance(image, np.ndarray):
+            # NumPy array: (height, width, channels) ou (height, width)
+            if len(image.shape) == 3:
+                height, width = image.shape[:2]
+            else:
+                height, width = image.shape
+            is_pil = False
+        else:
+            raise TypeError(f"Unsupported image type: {type(image)}. Expected PIL Image or NumPy array.")
+
+        new_width = int(width * self._resample_factor)
+        new_height = int(height * self._resample_factor)
+
+        if new_width < 100 or new_height < 100:
+            logger.warning(
+                "Resample factor %.2f would create image too small (%dx%d). Using original.",
+                self._resample_factor, new_width, new_height
+            )
+            return image
+
+        logger.info(
+            "Resampling image from %dx%d to %dx%d (factor=%.2f)",
+            width, height, new_width, new_height, self._resample_factor
+        )
+
+        if is_pil:
+            return image.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
+        else:
+            # Redimensionar NumPy array usando OpenCV
+            return cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+
+    def _split_large_image(self, image) -> List[tuple]:
+        """Divide imagens grandes em tiles menores se necessário.
+
+        Args:
+            image: PIL Image ou NumPy array (H, W, 3) ou (H, W)
+
+        Returns:
+            Lista de tuplas (tile, offset_x, offset_y)
+        """
+        from PIL import Image as PILImage
+        import numpy as np
+
+        # Determinar dimensões baseado no tipo de imagem
+        if isinstance(image, Image):
+            width, height = image.size
+            is_pil = True
+        elif isinstance(image, np.ndarray):
+            # NumPy array: (height, width, channels) ou (height, width)
+            if len(image.shape) == 3:
+                height, width = image.shape[:2]
+            else:
+                height, width = image.shape
+            is_pil = False
+        else:
+            raise TypeError(f"Unsupported image type: {type(image)}. Expected PIL Image or NumPy array.")
+
+        max_size = self._max_tile_size
+
+        if width <= max_size and height <= max_size:
+            return [(image, 0, 0)]
+
+        logger.info(
+            "Splitting large image %dx%d (max tile size: %dpx)",
+            width, height, max_size
+        )
+
+        tiles = []
+        for y in range(0, height, max_size):
+            for x in range(0, width, max_size):
+                tile_width = min(max_size, width - x)
+                tile_height = min(max_size, height - y)
+
+                if tile_width < 50 or tile_height < 50:
+                    continue  # Tile muito pequeno
+
+                if is_pil:
+                    tile = image.crop((x, y, x + tile_width, y + tile_height))
+                else:
+                    # NumPy array slicing
+                    tile = image[y:y + tile_height, x:x + tile_width]
+
+                tiles.append((tile, x, y))  # Guardar offset para reconstrução
+
+        logger.info("Split into %d tiles", len(tiles))
+        return tiles
+
     def segment(
         self,
-        image: Image,
+        image,
         diameter: float | None = None,
         flow_threshold: float | None = None,
         cellprob_threshold: float | None = None,
@@ -84,7 +251,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         for every detected object.
 
         Args:
-            image: PIL Image (RGB).
+            image: PIL Image (RGB) ou NumPy array (H, W, 3) ou (H, W).
             diameter: Expected nucleus diameter in pixels.
                       None = Cellpose auto-estimates.
             flow_threshold: Override flow error threshold (None = use default).
@@ -99,6 +266,22 @@ class CellposeAdapter(IBatchSegmentationModel):
             logger.warning("Cellpose model not loaded. Returning empty.")
             return []
 
+        # Verificar uso de memória antes de começar
+        if not self._check_memory_usage():
+            logger.warning("High memory usage detected. Consider reducing image size.")
+
+        # Aplicar resample se configurado
+        image = self._apply_resample_if_needed(image)
+
+        # Dividir imagem grande se necessário
+        if self._config.cellpose.split_large_tiles:
+            tiles_with_offsets = self._split_large_image(image)
+            if len(tiles_with_offsets) > 1:
+                return self._segment_tiled_image(tiles_with_offsets, diameter,
+                                                flow_threshold, cellprob_threshold)
+
+        # Processamento normal (imagem única) com timeout
+        import concurrent.futures
         import numpy as np
         import cv2
 
@@ -106,21 +289,113 @@ class CellposeAdapter(IBatchSegmentationModel):
         _flow = flow_threshold if flow_threshold is not None else self._flow_threshold
         _cellprob = cellprob_threshold if cellprob_threshold is not None else self._cellprob_threshold
 
+        # Log image size based on type
+        from PIL import Image as PILImage
+        import numpy as np
+
+        if isinstance(image, Image):
+            img_size_str = f"{image.size}"
+        elif isinstance(image, np.ndarray):
+            if len(image.shape) == 3:
+                img_size_str = f"({image.shape[1]}x{image.shape[0]}x{image.shape[2]})"
+            else:
+                img_size_str = f"({image.shape[1]}x{image.shape[0]})"
+        else:
+            img_size_str = str(type(image))
+
         logger.info(
-            "Running Cellpose (%s) on image %s, diameter=%s, flow=%.2f, cellprob=%.1f",
-            self._model_type, image.size, diameter, _flow, _cellprob,
+            "Running Cellpose (%s) on image %s, diameter=%s, flow=%.2f, cellprob=%.1f (timeout=%ds)",
+            self._model_type, img_size_str, diameter, _flow, _cellprob, self._timeout_seconds
         )
 
-        # 1. PIL → numpy RGB (H, W, 3)
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-        img_np = np.asarray(image)
+        # Executar com timeout usando ThreadPoolExecutor
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                self._segment_single_image,
+                image, diameter, _flow, _cellprob
+            )
+            try:
+                polygons = future.result(timeout=self._timeout_seconds)
+                logger.info("Cellpose completed successfully in time")
+                return polygons
+            except concurrent.futures.TimeoutError:
+                logger.error("Cellpose segmentation timed out after %d seconds", self._timeout_seconds)
+                future.cancel()
+                return []
+            except Exception as e:
+                logger.error("Cellpose segmentation failed: %s", e)
+                return []
+
+    def _segment_tiled_image(
+        self,
+        tiles_with_offsets: List[tuple],
+        diameter: float | None,
+        flow_threshold: float | None,
+        cellprob_threshold: float | None,
+    ) -> List[List[Tuple[int, int]]]:
+        """Segmenta imagem dividida em tiles e combina resultados."""
+        logger.info("Segmenting tiled image with %d tiles", len(tiles_with_offsets))
+
+        all_polygons = []
+        completed = 0
+        failed = 0
+
+        for tile, offset_x, offset_y in tiles_with_offsets:
+            try:
+                # Segmentar tile individual
+                tile_polygons = self.segment(tile, diameter, flow_threshold, cellprob_threshold)
+
+                # Ajustar coordenadas com offset
+                for polygon in tile_polygons:
+                    adjusted_polygon = [(x + offset_x, y + offset_y) for (x, y) in polygon]
+                    all_polygons.append(adjusted_polygon)
+
+                completed += 1
+                logger.debug("Tile at (%d, %d) completed: %d polygons", offset_x, offset_y, len(tile_polygons))
+
+            except Exception as e:
+                failed += 1
+                logger.warning("Failed to segment tile at (%d, %d): %s", offset_x, offset_y, e)
+
+        logger.info("Tiled segmentation complete: %d tiles succeeded, %d failed, %d total polygons",
+                   completed, failed, len(all_polygons))
+        return all_polygons
+
+    def _segment_single_image(
+        self,
+        image,
+        diameter: float | None,
+        flow_threshold: float,
+        cellprob_threshold: float,
+    ) -> List[List[Tuple[int, int]]]:
+        """Segmenta uma única imagem (método interno sem timeout)."""
+        import numpy as np
+        import cv2
+        from PIL import Image as PILImage
+
+        # 1. Converter para NumPy array se necessário
+        if isinstance(image, Image):
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            img_np = np.asarray(image)
+        elif isinstance(image, np.ndarray):
+            img_np = image
+        else:
+            raise TypeError(f"Unsupported image type: {type(image)}. Expected PIL Image or NumPy array.")
 
         # 2. H&E pre-processing: extract and invert the blue channel
         #    In H&E staining, hematoxylin stains nuclei and absorbs
         #    strongly in the blue channel. Inverting makes nuclei appear
         #    bright on a dark background, which Cellpose detects better.
-        blue_channel = img_np[:, :, 2].astype(np.float32)
+        if len(img_np.shape) == 3 and img_np.shape[2] >= 3:
+            # Imagem colorida (RGB ou RGBA) - extrair canal azul
+            blue_channel = img_np[:, :, 2].astype(np.float32)
+        elif len(img_np.shape) == 2:
+            # Imagem em escala de cinza - usar diretamente
+            blue_channel = img_np.astype(np.float32)
+        else:
+            raise ValueError(f"Unsupported image shape: {img_np.shape}. Expected (H, W, 3), (H, W, 4), or (H, W).")
+
         inverted = 255.0 - blue_channel
         # Normalize to 0-255 range
         inv_min, inv_max = inverted.min(), inverted.max()
@@ -132,15 +407,15 @@ class CellposeAdapter(IBatchSegmentationModel):
         masks, flows, styles = self._model.eval(
             img_processed,
             diameter=diameter,
-            flow_threshold=_flow,
-            cellprob_threshold=_cellprob,
+            flow_threshold=flow_threshold,
+            cellprob_threshold=cellprob_threshold,
             min_size=self._min_size,
             channels=[0, 0],  # grayscale (already preprocessed)
         )
 
         logger.info("Cellpose detected %d objects.", masks.max() if masks.size else 0)
 
-        # 3. Convert label masks → contour polygons
+        # 4. Convert label masks → contour polygons
         polygons = self._masks_to_polygons(masks)
 
         logger.info("Extracted %d polygons from masks.", len(polygons))

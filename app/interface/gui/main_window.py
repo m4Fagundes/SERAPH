@@ -73,8 +73,19 @@ class SlicerLabApp(QMainWindow):
         # Batch models (segment entire tile)
         batch_models = []
         try:
-            cellpose_adapter = CellposeAdapter(model_type="nuclei", gpu=True)
+            # Usar configuração automática (gpu=None para auto-detect)
+            cellpose_adapter = CellposeAdapter(model_type="nuclei", gpu=None)
             batch_models.append(cellpose_adapter)
+
+            # Log da configuração usada
+            from app.infrastructure.config.hardware_detector import get_hardware_detector
+            detector = get_hardware_detector()
+            _cr_logger.info(
+                "CellposeAdapter initialized with auto-config: GPU=%s, profile=%s, "
+                "cores=%d, memory=%.1fGB, macOS Monterey=%s",
+                cellpose_adapter._gpu, detector.get_performance_profile(),
+                detector.cpu_cores, detector.memory_gb, detector.is_mac_monterey
+            )
         except Exception as e:
             _cr_logger.error("Failed to load Cellpose adapter: %s", e)
 
