@@ -1,15 +1,15 @@
 """
-PerformanceConfig — Configurações de performance adaptativas baseadas em hardware.
+PerformanceConfig — Adaptive performance settings based on hardware.
 
-Arquitetura: Clean Architecture (Infrastructure Layer)
-- Usa HardwareDetector para detectar capacidades
-- Fornece configurações otimizadas para cada perfil de hardware
-- Permite override manual pelo usuário
-- Persiste configurações em ~/.grid-analyzer/config.json
+Architecture: Clean Architecture (Infrastructure Layer)
+- Uses HardwareDetector to detect capabilities
+- Provides optimized configurations for each hardware profile
+- Allows manual user overrides
+- Persists settings in ~/.grid-analyzer/config.json
 
 Design Decision (python-patterns §3 — Configuration):
-    Configurações são hierárquicas: default → hardware-based → user-override.
-    Valores são imutáveis após inicialização para evitar race conditions.
+    Settings are hierarchical: default → hardware-based → user-override.
+    Values are immutable after initialization to avoid race conditions.
 """
 
 import json
@@ -26,31 +26,31 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CellposeConfig:
-    """Configurações específicas para o Cellpose."""
+    """Cellpose specific settings."""
 
     # GPU/CPU
     use_gpu: bool = False
     gpu_fallback_enabled: bool = True
 
     # Performance
-    batch_size: int = 1  # Número de imagens processadas por batch
-    resample_factor: float = 1.0  # Downsampling (0.5 = metade do tamanho)
-    timeout_seconds: int = 300  # 5 minutos timeout máximo
+    batch_size: int = 1  # Number of images processed per batch
+    resample_factor: float = 1.0  # Downsampling (0.5 = half size)
+    timeout_seconds: int = 300  # 5 minutes maximum timeout
 
-    # Parâmetros Cellpose
+    # Cellpose Parameters
     flow_threshold: float = 0.4
     cellprob_threshold: float = 0.0
     min_size: int = 15
 
-    # Memória
-    max_tile_size_pixels: int = 2000  # Tamanho máximo de tile (largura/altura)
-    split_large_tiles: bool = True  # Dividir tiles grandes automaticamente
-    memory_limit_mb: int = 2048  # Limite de memória por operação (MB)
+    # Memory
+    max_tile_size_pixels: int = 2000  # Maximum tile size (width/height)
+    split_large_tiles: bool = True  # Automatically split large tiles
+    memory_limit_mb: int = 2048  # Memory limit per operation (MB)
 
 
 @dataclass(frozen=True)
 class ThreadingConfig:
-    """Configurações de threading."""
+    """Threading settings."""
 
     max_segmentation_threads: int = 2
     max_rendering_threads: int = 4
@@ -59,29 +59,29 @@ class ThreadingConfig:
 
 @dataclass(frozen=True)
 class PerformanceConfig:
-    """Configuração completa de performance."""
+    """Complete performance configuration."""
 
-    # Configurações específicas (sem valores padrão primeiro)
+    # Specific settings (no defaults first)
     cellpose: CellposeConfig
     threading: ThreadingConfig
 
-    # Perfil detectado
+    # Detected profile
     performance_profile: str = "medium"  # low, medium, high
 
-    # Flags de compatibilidade
-    force_cpu_only: bool = False  # Override para forçar CPU
-    disable_gpu: bool = False  # Desabilitar GPU completamente
+    # Compatibility flags
+    force_cpu_only: bool = False  # Override to force CPU
+    disable_gpu: bool = False  # Disable GPU completely
 
     @classmethod
     def create_for_hardware(cls, hardware_detector=None) -> "PerformanceConfig":
-        """Cria configuração otimizada para hardware detectado."""
+        """Creates optimized configuration for detected hardware."""
         if hardware_detector is None:
             hardware_detector = get_hardware_detector()
 
         profile = hardware_detector.get_performance_profile()
         logger.info("Creating performance config for profile: %s", profile)
 
-        # Configurações baseadas no perfil
+        # Settings based on profile
         if profile == "low":
             return cls._create_low_performance_config(hardware_detector)
         elif profile == "medium":
@@ -91,19 +91,19 @@ class PerformanceConfig:
 
     @classmethod
     def _create_low_performance_config(cls, detector) -> "PerformanceConfig":
-        """Configuração para hardware muito limitado."""
-        # macOS Monterey: não usar GPU
+        """Configuration for very limited hardware."""
+        # macOS Monterey: do not use GPU
         use_gpu = detector.gpu_recommended and not detector.is_mac_monterey
 
         return cls(
             cellpose=CellposeConfig(
                 use_gpu=use_gpu,
-                batch_size=1,  # Sempre 1 em low performance
-                resample_factor=0.75,  # Downsample para economizar memória
-                timeout_seconds=180,  # 3 minutos
+                batch_size=1,  # Always 1 in low performance
+                resample_factor=0.75,  # Downsample to save memory
+                timeout_seconds=180,  # 3 minutes
                 max_tile_size_pixels=1000,
                 split_large_tiles=True,
-                memory_limit_mb=1024,  # 1GB limite
+                memory_limit_mb=1024,  # 1GB limit
             ),
             threading=ThreadingConfig(
                 max_segmentation_threads=1,
@@ -111,26 +111,26 @@ class PerformanceConfig:
                 use_thread_pool=True,
             ),
             performance_profile="low",
-            force_cpu_only=detector.is_mac_monterey,  # Monterey força CPU
+            force_cpu_only=detector.is_mac_monterey,  # Monterey forces CPU
         )
 
     @classmethod
     def _create_medium_performance_config(cls, detector) -> "PerformanceConfig":
-        """Configuração para hardware modesto."""
+        """Configuration for modest hardware."""
         use_gpu = detector.gpu_recommended and not detector.is_mac_monterey
         
-        # Aumentar batch size se GPU for recomendada
+        # Increase batch size if GPU is recommended
         batch_size = 2 if use_gpu else 1
 
         return cls(
             cellpose=CellposeConfig(
                 use_gpu=use_gpu,
-                batch_size=batch_size,  # 2 com GPU, 1 com CPU
-                resample_factor=1.0,  # Sem downsampling
-                timeout_seconds=300,  # 5 minutos
+                batch_size=batch_size,  # 2 with GPU, 1 with CPU
+                resample_factor=1.0,  # No downsampling
+                timeout_seconds=300,  # 5 minutes
                 max_tile_size_pixels=1500,
                 split_large_tiles=True,
-                memory_limit_mb=2048,  # 2GB limite
+                memory_limit_mb=2048,  # 2GB limit
             ),
             threading=ThreadingConfig(
                 max_segmentation_threads=2,
@@ -143,32 +143,32 @@ class PerformanceConfig:
 
     @classmethod
     def _create_high_performance_config(cls, detector) -> "PerformanceConfig":
-        """Configuração para hardware razoável — OTIMIZADO PARA GPU MÁXIMA."""
+        """Configuration for reasonable hardware — OPTIMIZED FOR MAXIMUM GPU."""
         use_gpu = detector.gpu_recommended and not detector.is_mac_monterey
 
-        # Para macOS Monterey, dividir tiles grandes é recomendado
+        # For macOS Monterey, splitting large tiles is recommended
         split_large_tiles = detector.is_mac_monterey
         
-        # Aumentar batch size MASSIVAMENTE para saturar GPU
-        # RTX 2060 (6GB) pode processar 16+ imagens de 512x512 simultaneamente
+        # Increase batch size MASSIVELY to saturate GPU
+        # RTX 2060 (6GB) can process 16+ images of 512x512 simultaneously
         batch_size = 16 if use_gpu else 2
         
-        # Aumentar max_tile_size para processar menos tiles sequencialmente
-        # RTX 2060 suporta até ~3000px sem ficar sem memória
+        # Increase max_tile_size to process fewer tiles sequentially
+        # RTX 2060 supports up to ~3000px without running out of memory
         max_tile_size = 3000 if use_gpu else 2000
         
-        # Aumentar timeout para batches maiores
+        # Increase timeout for larger batches
         timeout = 900 if use_gpu else 600  # 15 min vs 10 min
 
         return cls(
             cellpose=CellposeConfig(
                 use_gpu=use_gpu,
-                batch_size=batch_size,  # 16 com GPU, 2 com CPU
+                batch_size=batch_size,  # 16 with GPU, 2 with CPU
                 resample_factor=1.0,
-                timeout_seconds=timeout,  # 15 minutos com GPU
-                max_tile_size_pixels=max_tile_size,  # 3000 com GPU
+                timeout_seconds=timeout,  # 15 minutes with GPU
+                max_tile_size_pixels=max_tile_size,  # 3000 with GPU
                 split_large_tiles=split_large_tiles,
-                memory_limit_mb=4096,  # 4GB limite
+                memory_limit_mb=4096,  # 4GB limit
             ),
             threading=ThreadingConfig(
                 max_segmentation_threads=4,
@@ -176,11 +176,11 @@ class PerformanceConfig:
                 use_thread_pool=True,
             ),
             performance_profile="high",
-            force_cpu_only=detector.is_mac_monterey,  # Monterey força CPU
+            force_cpu_only=detector.is_mac_monterey,  # Monterey forces CPU
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """Converte para dicionário para serialização."""
+        """Converts to dictionary for serialization."""
         return {
             "performance_profile": self.performance_profile,
             "cellpose": asdict(self.cellpose),
@@ -191,7 +191,7 @@ class PerformanceConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PerformanceConfig":
-        """Cria a partir de dicionário."""
+        """Creates from dictionary."""
         cellpose_data = data.get("cellpose", {})
         threading_data = data.get("threading", {})
 
@@ -205,7 +205,7 @@ class PerformanceConfig:
 
 
 class ConfigManager:
-    """Gerencia configurações persistentes do usuário."""
+    """Manages persistent user settings."""
 
     CONFIG_DIR = Path.home() / ".grid-analyzer"
     CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -214,12 +214,12 @@ class ConfigManager:
         self._config: Optional[PerformanceConfig] = None
         self._user_overrides: Dict[str, Any] = {}
 
-        # Garantir que diretório existe
+        # Ensure directory exists
         self.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     def load_or_create_config(self) -> PerformanceConfig:
-        """Carrega configuração do usuário ou cria nova baseada em hardware."""
-        # Primeiro, criar configuração baseada em hardware
+        """Loads user configuration or creates a new one based on hardware."""
+        # First, create hardware-based configuration
         hardware_config = PerformanceConfig.create_for_hardware()
 
         try:
@@ -227,13 +227,13 @@ class ConfigManager:
                 with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
                     user_data = json.load(f)
 
-                # Aplicar overrides do usuário
+                # Apply user overrides
                 merged_config = self._merge_configs(hardware_config, user_data)
                 logger.info("Loaded user config from %s", self.CONFIG_FILE)
                 self._config = merged_config
                 return merged_config
             else:
-                # Salvar configuração padrão
+                # Save default configuration
                 self._save_config(hardware_config)
                 self._config = hardware_config
                 return hardware_config
@@ -244,10 +244,10 @@ class ConfigManager:
             return hardware_config
 
     def save_user_overrides(self, overrides: Dict[str, Any]) -> None:
-        """Salva overrides do usuário e atualiza configuração."""
+        """Saves user overrides and updates configuration."""
         self._user_overrides.update(overrides)
 
-        # Recarregar configuração base com novos overrides
+        # Reload base configuration with new overrides
         hardware_config = PerformanceConfig.create_for_hardware()
         merged_config = self._merge_configs(hardware_config, self._user_overrides)
 
@@ -256,13 +256,13 @@ class ConfigManager:
         logger.info("Saved user config overrides: %s", overrides)
 
     def get_config(self) -> PerformanceConfig:
-        """Retorna configuração atual."""
+        """Returns current configuration."""
         if self._config is None:
             self._config = self.load_or_create_config()
         return self._config
 
     def reset_to_defaults(self) -> PerformanceConfig:
-        """Reseta para configurações padrão baseadas em hardware."""
+        """Resets to hardware-based default settings."""
         self._user_overrides.clear()
 
         if self.CONFIG_FILE.exists():
@@ -276,10 +276,10 @@ class ConfigManager:
         return hardware_config
 
     def _merge_configs(self, base: PerformanceConfig, user_data: Dict[str, Any]) -> PerformanceConfig:
-        """Mescla configuração base com overrides do usuário."""
+        """Merges base configuration with user overrides."""
         base_dict = base.to_dict()
 
-        # Merge recursivo
+        # Recursive merge
         def merge_dicts(base_dict, user_dict):
             result = base_dict.copy()
             for key, value in user_dict.items():
@@ -293,7 +293,7 @@ class ConfigManager:
         return PerformanceConfig.from_dict(merged_dict)
 
     def _save_config(self, config: PerformanceConfig) -> None:
-        """Salva configuração em arquivo."""
+        """Saves configuration to file."""
         config_dict = config.to_dict()
         config_dict["_version"] = "1.0"
         config_dict["_timestamp"] = os.path.getmtime(__file__) if os.path.exists(__file__) else 0
@@ -302,16 +302,16 @@ class ConfigManager:
             json.dump(config_dict, f, indent=2, ensure_ascii=False)
 
 
-# Singleton para uso em toda a aplicação
+# Singleton for use throughout the application
 _config_manager_instance: Optional[ConfigManager] = None
 
 def get_config_manager() -> ConfigManager:
-    """Retorna instância singleton do ConfigManager."""
+    """Returns singleton instance of ConfigManager."""
     global _config_manager_instance
     if _config_manager_instance is None:
         _config_manager_instance = ConfigManager()
     return _config_manager_instance
 
 def get_performance_config() -> PerformanceConfig:
-    """Retorna configuração de performance atual."""
+    """Returns current performance configuration."""
     return get_config_manager().get_config()

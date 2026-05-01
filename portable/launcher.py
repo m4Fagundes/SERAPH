@@ -93,10 +93,10 @@ def _extract_payload(source: Path, dest: Path) -> None:
     # Inform the user that this is a one-time setup
     ctypes.windll.user32.MessageBoxW(
         0,
-        "GridAnalyzer está sendo preparado para o primeiro uso.\n"
-        "As dependências serão desempacotadas para garantir inicialização instantânea no futuro.\n\n"
-        "Isso levará alguns segundos...",
-        "GridAnalyzer — Configuração Inicial",
+        "GridAnalyzer is being prepared for first use.\n"
+        "Dependencies will be unpacked to ensure instant startup in the future.\n\n"
+        "This will take a few seconds...",
+        "GridAnalyzer — Initial Setup",
         0x40,  # MB_ICONINFORMATION
     )
 
@@ -141,8 +141,8 @@ def main():
     if not app_exe.exists():
         ctypes.windll.user32.MessageBoxW(
             0,
-            f"Erro: Executável da aplicação não encontrado em:\n{app_exe}",
-            "GridAnalyzer — Erro",
+            f"Error: Application executable not found at:\n{app_exe}",
+            "GridAnalyzer — Error",
             0x10,  # MB_ICONERROR
         )
         return 1
@@ -161,8 +161,8 @@ def main():
     except Exception as e:
         ctypes.windll.user32.MessageBoxW(
             0,
-            f"Erro ao iniciar a aplicação:\n{e}",
-            "GridAnalyzer — Erro",
+            f"Error starting the application:\n{e}",
+            "GridAnalyzer — Error",
             0x10,
         )
         return 1

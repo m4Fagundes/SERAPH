@@ -1,15 +1,15 @@
 """
-HardwareDetector — Detecta capacidades de hardware e compatibilidade.
+HardwareDetector — Detects hardware capabilities and compatibility.
 
-Arquitetura: Clean Architecture (Infrastructure Layer)
-- Detecta CPU cores, memória, GPU/MPS disponibilidade
-- Verifica compatibilidade com macOS Monterey 12.7.6
-- Fornece recomendações para configuração de performance
-- Auto-seleciona melhor GPU compatível com PyTorch
+Architecture: Clean Architecture (Infrastructure Layer)
+- Detects CPU cores, memory, GPU/MPS availability
+- Checks compatibility with macOS Monterey 12.7.6
+- Provides recommendations for performance configuration
+- Auto-selects the best GPU compatible with PyTorch
 
 Design Decision (python-patterns §8 — Error Handling):
-    Todas as detecções têm fallbacks seguros. Se uma detecção falhar,
-    retorna valores conservadores apropriados para hardware antigo.
+    All detections have safe fallbacks. If a detection fails,
+    it returns appropriate conservative values for older hardware.
 """
 
 import platform
@@ -33,10 +33,10 @@ except Exception as e:
 
 class HardwareDetector:
     """
-    Detecta capacidades de hardware e fornece recomendações
-    para configuração de performance.
+    Detects hardware capabilities and provides recommendations
+    for performance configuration.
 
-    Focado em compatibilidade com macOS Monterey 12.7.6 e hardware limitado.
+    Focused on compatibility with macOS Monterey 12.7.6 and limited hardware.
     """
 
     def __init__(self):
@@ -60,7 +60,7 @@ class HardwareDetector:
         )
 
     def _detect_mac_version(self) -> None:
-        """Detecta versão do macOS e se é Monterey (12.x)."""
+        """Detects macOS version and if it is Monterey (12.x)."""
         try:
             mac_ver = platform.mac_ver()[0]  # e.g., "12.7.6"
             self.mac_version = mac_ver
@@ -68,7 +68,7 @@ class HardwareDetector:
             # Parse major version
             try:
                 major_version = int(mac_ver.split('.')[0])
-                # Monterey é versão 12
+                # Monterey is version 12
                 self.is_mac_monterey = major_version == 12
             except (ValueError, IndexError):
                 self.is_mac_monterey = False
@@ -80,31 +80,31 @@ class HardwareDetector:
             self.is_mac_monterey = False
 
     def _detect_cpu_cores(self) -> int:
-        """Detecta número de cores CPU disponíveis."""
+        """Detects the number of available CPU cores."""
         try:
             import multiprocessing
             cores = multiprocessing.cpu_count()
 
-            # Para hardware muito antigo, limitar threads
+            # For very old hardware, limit threads
             if cores <= 2:
                 logger.info("Low core count detected: %d cores", cores)
                 return max(1, cores)
             elif cores <= 4:
-                # CPUs modestas - usar 75% dos cores para não sobrecarregar
+                # Modest CPUs - use 75% of cores to avoid overloading
                 return max(2, cores - 1)
             else:
-                # CPUs modernas - usar todos os cores menos 2 para sistema
+                # Modern CPUs - use all cores except 2 for system
                 return max(4, cores - 2)
 
         except Exception as e:
             logger.warning("Failed to detect CPU cores: %s. Using conservative default (2).", e)
-            return 2  # Default conservador
+            return 2  # Conservative default
 
     def _detect_memory(self) -> float:
-        """Detecta memória RAM disponível em GB."""
+        """Detects available RAM memory in GB."""
         try:
             if self.is_mac:
-                # macOS: usar sysctl
+                # macOS: use sysctl
                 result = subprocess.run(
                     ['sysctl', 'hw.memsize'],
                     capture_output=True,
@@ -112,7 +112,7 @@ class HardwareDetector:
                     check=False
                 )
                 if result.returncode == 0:
-                    # hw.memsize está em bytes
+                    # hw.memsize is in bytes
                     mem_bytes = int(result.stdout.split(':')[1].strip())
                     mem_gb = mem_bytes / (1024**3)
                     return round(mem_gb, 1)
@@ -123,13 +123,13 @@ class HardwareDetector:
                 return round(mem_gb, 1)
         except Exception as e:
             logger.warning("Failed to detect memory: %s. Using conservative default (4 GB).", e)
-            return 4.0  # Default conservador
+            return 4.0  # Conservative default
 
     def _detect_gpu_availability(self) -> bool:
         """
-        Detecta se GPU/MPS/CUDA está disponível e funcional.
+        Detects if GPU/MPS/CUDA is available and functional.
 
-        Detecta:
+        Detects:
         - macOS: MPS (Metal Performance Shaders)
         - Windows/Linux: CUDA (NVIDIA GPUs)
         """
@@ -140,12 +140,12 @@ class HardwareDetector:
             return False
 
         if self.is_mac:
-            # macOS: Detectar MPS
-            # macOS Monterey 12.x tem problemas conhecidos com MPS
+            # macOS: Detect MPS
+            # macOS Monterey 12.x has known issues with MPS
             if self.is_mac_monterey:
                 logger.info("macOS Monterey detected - MPS may be unstable")
 
-                # Testar PyTorch MPS se disponível
+                # Test PyTorch MPS if available
                 if hasattr(torch.backends, 'mps'):
                     mps_available = torch.backends.mps.is_available()
                     mps_built = torch.backends.mps.is_built()
@@ -153,11 +153,11 @@ class HardwareDetector:
                     logger.debug("PyTorch MPS: available=%s, built=%s",
                                 mps_available, mps_built)
 
-                    # Em Monterey, mesmo se disponível, pode ser instável
+                    # On Monterey, even if available, it can be unstable
                     if mps_available and mps_built:
-                        # Testar operação simples para verificar estabilidade
+                        # Test simple operation to verify stability
                         try:
-                            # Teste leve de MPS
+                            # Light MPS test
                             device = torch.device("mps")
                             test_tensor = torch.randn(2, 3, device=device)
                             _ = test_tensor * 2
@@ -172,7 +172,7 @@ class HardwareDetector:
                     logger.debug("PyTorch MPS not available in this build")
                     return False
             else:
-                # macOS mais novo - confiar na detecção do PyTorch
+                # Newer macOS - trust PyTorch detection
                 if hasattr(torch.backends, 'mps'):
                     is_available = torch.backends.mps.is_available() and torch.backends.mps.is_built()
                     if is_available:
@@ -180,18 +180,18 @@ class HardwareDetector:
                     return is_available
                 return False
         else:
-            # Windows/Linux: Detectar CUDA
+            # Windows/Linux: Detect CUDA
             logger.debug("Detecting CUDA availability on %s", self.system)
             
             try:
-                # Verificar se CUDA está disponível no PyTorch
+                # Check if CUDA is available in PyTorch
                 cuda_available = torch.cuda.is_available()
                 
                 if not cuda_available:
                     logger.debug("CUDA not detected by PyTorch")
                     return False
                 
-                # Verificar número de GPUs
+                # Check number of GPUs
                 num_gpus = torch.cuda.device_count()
                 if num_gpus == 0:
                     logger.debug("PyTorch reports CUDA available but no GPUs found")
@@ -199,7 +199,7 @@ class HardwareDetector:
                 
                 logger.info("CUDA available with %d GPU(s)", num_gpus)
                 
-                # Procurar por GPU compatível (mesmo que não seja a primeira)
+                # Search for compatible GPU (even if not the first one)
                 supported_capabilities = {(5, 0), (6, 0), (6, 1), (7, 0), (7, 5), (8, 0), (8, 6), (9, 0)}
                 compatible_gpus = []
                 
@@ -217,9 +217,9 @@ class HardwareDetector:
                         logger.debug(f"Failed to check GPU {device_id}: {e}")
                 
                 if compatible_gpus:
-                    # Há pelo menos uma GPU compatível
+                    # There is at least one compatible GPU
                     logger.info(f"Found {len(compatible_gpus)} compatible GPU(s)")
-                    # Testar operação simples em GPU compatível para verificar funcionalidade
+                    # Test simple operation on compatible GPU to verify functionality
                     try:
                         device = torch.device(f"cuda:{compatible_gpus[0][0]}")
                         test_tensor = torch.randn(2, 3, device=device)
@@ -230,7 +230,7 @@ class HardwareDetector:
                         logger.warning("CUDA functional test failed: %s", e)
                         return False
                 else:
-                    # Nenhuma GPU compatível encontrada
+                    # No compatible GPU found
                     logger.warning(f"CUDA available but no compatible GPUs found (found {num_gpus} total)")
                     return False
                     
@@ -240,33 +240,33 @@ class HardwareDetector:
 
     def _recommend_gpu_usage(self) -> bool:
         """
-        Recomenda se deve usar GPU baseado em hardware e compatibilidade.
+        Recommends whether to use GPU based on hardware and compatibility.
 
-        Regras:
-        1. GPU não disponível: não recomendar (óbvio)
-        2. macOS Monterey: não recomendar GPU (instável com MPS)
-        3. Windows/Linux com CUDA: recomendar (menos restritivo que macOS)
-        4. macOS com MPS: recomendar se tiver 6+ GB RAM
-        5. Fallback: não recomendar
+        Rules:
+        1. GPU not available: do not recommend (obvious)
+        2. macOS Monterey: do not recommend GPU (unstable with MPS)
+        3. Windows/Linux with CUDA: recommend (less restrictive than macOS)
+        4. macOS with MPS: recommend if it has 6+ GB RAM
+        5. Fallback: do not recommend
         """
         if not self.gpu_available:
             return False
 
         if self.is_mac_monterey:
-            # Monterey tem problemas conhecidos com MPS
+            # Monterey has known issues with MPS
             logger.info("Not recommending GPU for macOS Monterey due to stability issues")
             return False
 
         if self.is_mac:
-            # macOS com MPS: ser conservador com memória
+            # macOS with MPS: be conservative with memory
             if self.memory_gb < 6.0:
                 logger.info("Not recommending MPS for systems with < 6GB RAM")
                 return False
             logger.info("MPS available on macOS with sufficient memory")
             return True
         else:
-            # Windows/Linux com CUDA: menos restritivo
-            # CUDA pode funcionar com até ~4GB, mas 6GB+ é mais confortável
+            # Windows/Linux with CUDA: less restrictive
+            # CUDA can work with up to ~4GB, but 6GB+ is more comfortable
             if self.memory_gb < 4.0:
                 logger.info("Not recommending CUDA for systems with < 4GB RAM")
                 return False
@@ -275,12 +275,12 @@ class HardwareDetector:
 
     def get_performance_profile(self) -> str:
         """
-        Retorna perfil de performance recomendado.
+        Returns recommended performance profile.
 
         Returns:
-            "low" - Hardware muito limitado (<= 2 cores, <= 4GB RAM)
-            "medium" - Hardware modesto (2-4 cores, 4-8GB RAM)
-            "high" - Hardware razoável (4+ cores, 8+ GB RAM)
+            "low" - Very limited hardware (<= 2 cores, <= 4GB RAM)
+            "medium" - Modest hardware (2-4 cores, 4-8GB RAM)
+            "high" - Reasonable hardware (4+ cores, 8+ GB RAM)
         """
         if self.cpu_cores <= 2 or self.memory_gb <= 4.0:
             return "low"
@@ -290,7 +290,7 @@ class HardwareDetector:
             return "high"
 
     def get_recommended_threads(self) -> int:
-        """Retorna número recomendado de threads para processamento."""
+        """Returns recommended number of threads for processing."""
         profile = self.get_performance_profile()
 
         if profile == "low":
@@ -302,9 +302,9 @@ class HardwareDetector:
 
     def get_recommended_tile_size(self) -> int:
         """
-        Retorna tamanho máximo recomendado para tiles em pixels.
+        Returns recommended maximum tile size in pixels.
 
-        Tiles maiores usam mais memória. Ajustar baseado em RAM disponível.
+        Tiles larger use more memory. Adjust based on available RAM.
         """
         if self.memory_gb <= 4.0:
             return 1000  # 1000x1000 pixels
@@ -316,7 +316,7 @@ class HardwareDetector:
             return 2500  # 2500x2500 pixels
 
     def get_report(self) -> Dict[str, Any]:
-        """Retorna relatório completo de detecção de hardware."""
+        """Returns full hardware detection report."""
         return {
             "system": self.system,
             "is_mac": self.is_mac,
@@ -334,15 +334,15 @@ class HardwareDetector:
     @classmethod
     def create_safe_detector(cls) -> "HardwareDetector":
         """
-        Cria detector com fallbacks seguros para quando a detecção falha.
+        Creates detector with safe fallbacks for when detection fails.
 
-        Útil para inicialização onde exceções não são aceitáveis.
+        Useful for initialization where exceptions are not acceptable.
         """
         try:
             return cls()
         except Exception as e:
             logger.error("Failed to create hardware detector: %s. Using safe defaults.", e)
-            # Criar instância com valores padrão seguros
+            # Create instance with safe default values
             detector = cls.__new__(cls)
             detector.system = platform.system() if hasattr(platform, 'system') else "Unknown"
             detector.is_mac = detector.system == "Darwin"
@@ -355,11 +355,11 @@ class HardwareDetector:
             return detector
 
 
-# Singleton para uso em toda a aplicação
+# Singleton for use throughout the application
 _hardware_detector_instance: Optional[HardwareDetector] = None
 
 def get_hardware_detector() -> HardwareDetector:
-    """Retorna instância singleton do HardwareDetector."""
+    """Returns singleton instance of HardwareDetector."""
     global _hardware_detector_instance
     if _hardware_detector_instance is None:
         _hardware_detector_instance = HardwareDetector.create_safe_detector()

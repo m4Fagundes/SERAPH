@@ -269,10 +269,10 @@ class SlicePreviews(QWidget):
             QMenu { background-color: #2d2d2d; color: #eeeeee; border: 1px solid #555; }
             QMenu::item:selected { background-color: #3e3e4f; }
         """)
-        action_nav   = menu.addAction("🔍 Focar no Canvas")
-        action_edit  = menu.addAction("✏️ Editar Propriedades")
+        action_nav   = menu.addAction("🔍 Focus on Canvas")
+        action_edit  = menu.addAction("✏️ Edit Properties")
         menu.addSeparator()
-        action_del = menu.addAction("🗑️ Deletar Slice")
+        action_del = menu.addAction("🗑️ Delete Slice")
 
         chosen = menu.exec(self.list_widget.mapToGlobal(pos))
         if chosen == action_nav:
@@ -291,7 +291,7 @@ class SlicePreviews(QWidget):
         meta = tile.metadata
         
         dialog = QDialog(self)
-        dialog.setWindowTitle("Editar Propriedades")
+        dialog.setWindowTitle("Edit Properties")
         dialog.setMinimumWidth(350)
         dialog.setStyleSheet("QDialog { background-color: #1e1e1e; color: #cccccc; } QLabel { color: #cccccc; } QLineEdit, QTextEdit { background-color: #333; color: white; border: 1px solid #555;}")
         
@@ -308,10 +308,10 @@ class SlicePreviews(QWidget):
         comment_input.setPlainText(meta.get("comment", ""))
         comment_input.setMaximumHeight(80)
         
-        layout.addRow("Nome (Name):", name_input)
+        layout.addRow("Name:", name_input)
         layout.addRow("Microns/Pixel:", microns_input)
-        layout.addRow("Descrição (Desc):", desc_input)
-        layout.addRow("Comentário (Comment):", comment_input)
+        layout.addRow("Description:", desc_input)
+        layout.addRow("Comment:", comment_input)
         
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)

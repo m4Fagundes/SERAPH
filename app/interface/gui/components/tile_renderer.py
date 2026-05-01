@@ -843,7 +843,7 @@ class TileRenderer(QGraphicsView):
         import time
         start_time = time.monotonic()
         if hasattr(self.main_window, "lbl_execution_time"):
-            self.main_window.lbl_execution_time.setText("⏱️ Processando...")
+            self.main_window.lbl_execution_time.setText("⏱️ Processing...")
             self.main_window.lbl_execution_time.setStyleSheet("color: #F1C40F; font-weight: bold; font-family: 'Segoe UI', sans-serif; font-size: 9pt; margin-left: 8px;")
             self.main_window.lbl_execution_time.show()
 
@@ -872,13 +872,13 @@ class TileRenderer(QGraphicsView):
         if start_time is not None:
             import time
             elapsed = time.monotonic() - start_time
-            time_msg = f" em {elapsed:.2f}s"
+            time_msg = f" in {elapsed:.2f}s"
             if hasattr(self.main_window, "lbl_execution_time"):
                 if polygons:
-                    self.main_window.lbl_execution_time.setText(f"⏱️ {len(polygons)} núcleos detectados em {elapsed:.2f}s")
+                    self.main_window.lbl_execution_time.setText(f"⏱️ {len(polygons)} nuclei detected in {elapsed:.2f}s")
                     self.main_window.lbl_execution_time.setStyleSheet("color: #00FF88; font-weight: bold; font-family: 'Segoe UI', sans-serif; font-size: 9pt; margin-left: 8px;")
                 else:
-                    self.main_window.lbl_execution_time.setText(f"⏱️ 0 núcleos em {elapsed:.2f}s")
+                    self.main_window.lbl_execution_time.setText(f"⏱️ 0 nuclei in {elapsed:.2f}s")
                     self.main_window.lbl_execution_time.setStyleSheet("color: #E74C3C; font-weight: bold; font-family: 'Segoe UI', sans-serif; font-size: 9pt; margin-left: 8px;")
                 self.main_window.lbl_execution_time.show()
 
@@ -888,12 +888,12 @@ class TileRenderer(QGraphicsView):
             tile.add_layer(model_name, model_name, polygons)
             if sb:
                 sb.showMessage(
-                    f"Batch segmentation: {len(polygons)} núcleos detectados{time_msg}."
+                    f"Batch segmentation: {len(polygons)} nuclei detected{time_msg}."
                 )
             self._refresh_membrane_controls()
         else:
             if sb:
-                sb.showMessage(f"Batch segmentation retornou 0 resultados{time_msg}.")
+                sb.showMessage(f"Batch segmentation returned 0 results{time_msg}.")
         self.viewport().update()
 
     def run_nuclick_all(self, session, slice_idx: int, seg_service) -> None:
@@ -924,7 +924,7 @@ class TileRenderer(QGraphicsView):
         import time
         start_time = time.monotonic()
         if hasattr(self.main_window, "lbl_execution_time"):
-            self.main_window.lbl_execution_time.setText(f"⏱️ Processando {len(centroids)} núcleos...")
+            self.main_window.lbl_execution_time.setText(f"⏱️ Processing {len(centroids)} nuclei...")
             self.main_window.lbl_execution_time.setStyleSheet("color: #F1C40F; font-weight: bold; font-family: 'Segoe UI', sans-serif; font-size: 9pt; margin-left: 8px;")
             self.main_window.lbl_execution_time.show()
 

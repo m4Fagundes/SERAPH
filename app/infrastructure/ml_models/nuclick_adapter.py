@@ -265,9 +265,9 @@ class NuClickAdapter(ISegmentationModel):
             ]
             boundingBoxes.append(bb)
 
-        # Maximiza o uso da GPU enviando 512 patches por vez em vez de apenas 128.
-        # Patches são pequenos (128x128x5), 512 patches gastam ~167MB de VRAM, 
-        # o que é super seguro para GPUs modernas e acelera muito o processamento batch.
+        # Maximize GPU usage by sending 512 patches at a time instead of just 128.
+        # Patches are small (128x128x5), 512 patches use ~167MB of VRAM, 
+        # which is very safe for modern GPUs and greatly speeds up batch processing.
         CHUNK_SIZE = 512
         all_polygons = []
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

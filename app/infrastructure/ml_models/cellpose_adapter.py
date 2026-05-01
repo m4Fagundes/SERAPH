@@ -45,7 +45,7 @@ class CellposeAdapter(IBatchSegmentationModel):
     def __init__(
         self,
         model_type: str = "nuclei",
-        gpu: Optional[bool] = None,  # None = usar configuração automática
+        gpu: Optional[bool] = None,  # None = use auto-detect configuration
         flow_threshold: float = DEFAULT_FLOW_THRESHOLD,
         cellprob_threshold: float = DEFAULT_CELLPROB_THRESHOLD,
         min_size: int = DEFAULT_MIN_SIZE,
@@ -62,23 +62,23 @@ class CellposeAdapter(IBatchSegmentationModel):
         """
         self._model_type = model_type
 
-        # Carregar configuração de performance
+        # Load performance configuration
         self._config = get_performance_config()
 
-        # Aplicar overrides se fornecidos
+        # Apply overrides if provided
         if config_override:
-            # Aqui precisaríamos de uma forma de aplicar overrides
-            # Por enquanto, apenas logamos
+            # We would need a way to apply overrides here
+            # For now, just log them
             logger.info("Config overrides provided: %s", config_override)
 
-        # Decidir se usa GPU (configuração automática ou manual)
+        # Decide whether to use GPU (automatic or manual configuration)
         if gpu is None:
-            # Usar configuração automática
+            # Use automatic configuration
             self._gpu = self._config.cellpose.use_gpu and not self._config.force_cpu_only
             logger.info("Auto GPU decision: %s (config.use_gpu=%s, force_cpu_only=%s)",
                        self._gpu, self._config.cellpose.use_gpu, self._config.force_cpu_only)
         else:
-            # Override manual - Se o usuário pediu explicitamente, respeitamos (mesmo que o detector diga o contrário)
+            # Manual override - If the user explicitly requested, we respect it (even if the detector says otherwise)
             self._gpu = gpu
             if gpu and self._config.force_cpu_only:
                 logger.warning("GPU requested manually despite force_cpu_only recommendation. Attempting to use GPU...")
@@ -87,7 +87,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         self._cellprob_threshold = cellprob_threshold
         self._min_size = min_size
 
-        # Configurações de performance
+        # Performance settings
         self._batch_size = self._config.cellpose.batch_size
         self._resample_factor = self._config.cellpose.resample_factor
         self._timeout_seconds = self._config.cellpose.timeout_seconds
@@ -112,7 +112,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         return f"Cellpose ({self._model_type})"
 
     def _check_memory_usage(self) -> bool:
-        """Verifica se o uso de memória está dentro dos limites."""
+        """Checks if memory usage is within limits."""
         try:
             import psutil
             process = psutil.Process()
@@ -133,13 +133,13 @@ class CellposeAdapter(IBatchSegmentationModel):
             return True
 
     def _apply_resample_if_needed(self, image):
-        """Aplica downsampling se configurado e necessário.
+        """Applies downsampling if configured and necessary.
 
         Args:
-            image: PIL Image ou NumPy array
+            image: PIL Image or NumPy array
 
         Returns:
-            Imagem redimensionada (mesmo tipo da entrada)
+            Resized image (same type as input)
         """
         from PIL import Image as PILImage
         import numpy as np
@@ -148,7 +148,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         if self._resample_factor >= 1.0:
             return image
 
-        # Determinar dimensões baseado no tipo de imagem
+        # Determine dimensions based on image type
         if isinstance(image, Image):
             width, height = image.size
             is_pil = True
@@ -180,22 +180,20 @@ class CellposeAdapter(IBatchSegmentationModel):
         if is_pil:
             return image.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
         else:
-            # Redimensionar NumPy array usando OpenCV
+            # Resize NumPy array using OpenCV
             return cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
 
     def _split_large_image(self, image) -> List[tuple]:
-        """Divide imagens grandes em tiles menores se necessário.
-
-        Args:
-            image: PIL Image ou NumPy array (H, W, 3) ou (H, W)
+        """
+        Splits a large image into smaller tiles for Cellpose processing.
 
         Returns:
-            Lista de tuplas (tile, offset_x, offset_y)
+            List of tuples (tile, offset_x, offset_y)
         """
         from PIL import Image as PILImage
         import numpy as np
 
-        # Determinar dimensões baseado no tipo de imagem
+        # Determine dimensions based on image type
         if isinstance(image, Image):
             width, height = image.size
             is_pil = True
@@ -226,7 +224,7 @@ class CellposeAdapter(IBatchSegmentationModel):
                 tile_height = min(max_size, height - y)
 
                 if tile_width < 50 or tile_height < 50:
-                    continue  # Tile muito pequeno
+                    continue  # Very small tile
 
                 if is_pil:
                     tile = image.crop((x, y, x + tile_width, y + tile_height))
@@ -234,7 +232,7 @@ class CellposeAdapter(IBatchSegmentationModel):
                     # NumPy array slicing
                     tile = image[y:y + tile_height, x:x + tile_width]
 
-                tiles.append((tile, x, y))  # Guardar offset para reconstrução
+                tiles.append((tile, x, y))  # Save offset for reconstruction
 
         logger.info("Split into %d tiles", len(tiles))
         return tiles
@@ -266,21 +264,21 @@ class CellposeAdapter(IBatchSegmentationModel):
             logger.warning("Cellpose model not loaded. Returning empty.")
             return []
 
-        # Verificar uso de memória antes de começar
+        # Check memory usage before starting
         if not self._check_memory_usage():
             logger.warning("High memory usage detected. Consider reducing image size.")
 
-        # Aplicar resample se configurado
+        # Apply resample if configured
         image = self._apply_resample_if_needed(image)
 
-        # Dividir imagem grande se necessário
+        # Split large image if necessary
         if self._config.cellpose.split_large_tiles:
             tiles_with_offsets = self._split_large_image(image)
             if len(tiles_with_offsets) > 1:
                 return self._segment_tiled_image(tiles_with_offsets, diameter,
                                                 flow_threshold, cellprob_threshold)
 
-        # Processamento normal (imagem única) com timeout
+        # Normal processing (single image) with timeout
         import concurrent.futures
         import numpy as np
         import cv2
@@ -308,7 +306,7 @@ class CellposeAdapter(IBatchSegmentationModel):
             self._model_type, img_size_str, diameter, _flow, _cellprob, self._timeout_seconds
         )
 
-        # Executar com timeout usando ThreadPoolExecutor
+        # Execute with timeout using ThreadPoolExecutor
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(
                 self._segment_single_image,
@@ -333,7 +331,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         flow_threshold: float | None,
         cellprob_threshold: float | None,
     ) -> List[List[Tuple[int, int]]]:
-        """Segmenta imagem dividida em tiles e combina resultados."""
+        """Segments an image split into tiles and combines results."""
         logger.info("Segmenting tiled image with %d tiles", len(tiles_with_offsets))
 
         all_polygons = []
@@ -342,10 +340,10 @@ class CellposeAdapter(IBatchSegmentationModel):
 
         for tile, offset_x, offset_y in tiles_with_offsets:
             try:
-                # Segmentar tile individual
+                # Segment individual tile
                 tile_polygons = self.segment(tile, diameter, flow_threshold, cellprob_threshold)
 
-                # Ajustar coordenadas com offset
+                # Adjust coordinates with offset
                 for polygon in tile_polygons:
                     adjusted_polygon = [(x + offset_x, y + offset_y) for (x, y) in polygon]
                     all_polygons.append(adjusted_polygon)
@@ -368,12 +366,12 @@ class CellposeAdapter(IBatchSegmentationModel):
         flow_threshold: float,
         cellprob_threshold: float,
     ) -> List[List[Tuple[int, int]]]:
-        """Segmenta uma única imagem (método interno sem timeout)."""
+        """Segments a single image (internal method without timeout)."""
         import numpy as np
         import cv2
         from PIL import Image as PILImage
 
-        # 1. Converter para NumPy array se necessário
+        # 1. Convert to NumPy array if necessary
         if isinstance(image, Image):
             if image.mode != "RGB":
                 image = image.convert("RGB")
@@ -388,10 +386,10 @@ class CellposeAdapter(IBatchSegmentationModel):
         #    strongly in the blue channel. Inverting makes nuclei appear
         #    bright on a dark background, which Cellpose detects better.
         if len(img_np.shape) == 3 and img_np.shape[2] >= 3:
-            # Imagem colorida (RGB ou RGBA) - extrair canal azul
+            # Color image (RGB or RGBA) - extract blue channel
             blue_channel = img_np[:, :, 2].astype(np.float32)
         elif len(img_np.shape) == 2:
-            # Imagem em escala de cinza - usar diretamente
+            # Grayscale image - use directly
             blue_channel = img_np.astype(np.float32)
         else:
             raise ValueError(f"Unsupported image shape: {img_np.shape}. Expected (H, W, 3), (H, W, 4), or (H, W).")
@@ -404,8 +402,8 @@ class CellposeAdapter(IBatchSegmentationModel):
         img_processed = inverted.astype(np.uint8)
 
         # 3. Run Cellpose evaluation on pre-processed single-channel image
-        # Aumentar batch_size interno para saturar GPU VRAM
-        # RTX 2060: 256 é seguro para tiles até 1000x1000px
+        # Increase internal batch_size to saturate GPU VRAM
+        # RTX 2060: 256 is safe for tiles up to 1000x1000px
         internal_batch = 256 if self._gpu else 8
         
         masks, flows, styles = self._model.eval(
@@ -415,7 +413,7 @@ class CellposeAdapter(IBatchSegmentationModel):
             cellprob_threshold=cellprob_threshold,
             min_size=self._min_size,
             channels=[0, 0],  # grayscale (already preprocessed)
-            batch_size=internal_batch,  # 256 com GPU, 8 sem GPU
+            batch_size=internal_batch,  # 256 with GPU, 8 without GPU
         )
 
         logger.info("Cellpose detected %d objects.", masks.max() if masks.size else 0)
@@ -454,7 +452,7 @@ class CellposeAdapter(IBatchSegmentationModel):
                     self._model_type, self._gpu,
                 )
             except Exception as e:
-                # Se falhar porque a GPU (MPS no Mac) não suporta BFloat16 do modelo novo, faz um fallback pra CPU
+                # If it fails because the GPU (MPS on Mac) doesn't support BFloat16 from the new model, fallback to CPU
                 if self._gpu and ("BFloat16" in str(e) or "MPS" in str(e)):
                     logger.warning("Failed to load Cellpose on GPU (%s). Retrying on CPU (gpu=False)...", e)
                     self._gpu = False
@@ -524,7 +522,7 @@ class CellposeAdapter(IBatchSegmentationModel):
             poly = [(int(pt[0][0]) + min_x, int(pt[0][1]) + min_y) for pt in largest]
 
             if len(poly) >= 3:
-                # Excluir núcleos que tocam as bordas do tile
+                # Exclude nuclei that touch the tile edges
                 touches_border = any(
                     x <= 0 or y <= 0 or x >= w - 1 or y >= h - 1
                     for x, y in poly

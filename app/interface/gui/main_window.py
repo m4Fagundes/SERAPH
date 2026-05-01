@@ -74,11 +74,11 @@ class SlicerLabApp(QMainWindow):
         # Batch models (segment entire tile)
         batch_models = []
         try:
-            # Usar configuração automática (gpu=None para auto-detect)
+            # Use auto-configuration (gpu=None for auto-detect)
             cellpose_adapter = CellposeAdapter(model_type="nuclei", gpu=None)
             batch_models.append(cellpose_adapter)
 
-            # Log da configuração usada
+            # Log the configuration used
             from app.infrastructure.config.hardware_detector import get_hardware_detector
             detector = get_hardware_detector()
             _cr_logger.info(

@@ -87,10 +87,10 @@ class PropertiesPanel(QDockWidget):
         self.input_comment.setMaximumHeight(80)
         self.input_comment.setPlaceholderText("Any additional comments...")
         
-        self.form_layout.addRow("Nome (Name):", self.input_name)
+        self.form_layout.addRow("Name:", self.input_name)
         self.form_layout.addRow("Microns/Pixel:", self.input_microns)
-        self.form_layout.addRow("Descrição:", self.input_desc)
-        self.form_layout.addRow("Comentário:", self.input_comment)
+        self.form_layout.addRow("Description:", self.input_desc)
+        self.form_layout.addRow("Comment:", self.input_comment)
         
         self.main_layout.addLayout(self.form_layout)
         

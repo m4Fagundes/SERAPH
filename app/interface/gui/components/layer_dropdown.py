@@ -182,7 +182,7 @@ class LayerDropdown(QToolButton):
             
             btn_delete = QToolButton()
             btn_delete.setText("🗑️")
-            btn_delete.setToolTip("Apagar esta segmentação")
+            btn_delete.setToolTip("Delete this segmentation")
             btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_delete.setStyleSheet("""
                 QToolButton { border: none; background: transparent; font-size: 10pt; }

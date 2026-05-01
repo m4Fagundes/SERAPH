@@ -56,7 +56,7 @@ class MacroPipelineWorker(QThread):
                         time.sleep(0.1)
                     if self.is_cancelled: return
 
-                    self.progress.emit(i, total_slices, f"Cellpose: Analisando Slice {i+1}/{total_slices}...")
+                    self.progress.emit(i, total_slices, f"Cellpose: Analyzing Slice {i+1}/{total_slices}...")
                     
                     # Run Cellpose
                     polys = self.batch_service.segment_tile(
@@ -82,7 +82,7 @@ class MacroPipelineWorker(QThread):
                         time.sleep(0.1)
                     if self.is_cancelled: return
 
-                    self.progress.emit(i, total_slices, f"NuClick: Refinando Slice {i+1}/{total_slices}...")
+                    self.progress.emit(i, total_slices, f"NuClick: Refining Slice {i+1}/{total_slices}...")
                     
                     tile = self.session.tiles[i]
                     centroids = []
@@ -133,15 +133,15 @@ class MacroPipelinePanel(QDockWidget):
         self.container = QWidget()
         self.layout = QVBoxLayout(self.container)
         
-        self.lbl_info = QLabel("Segmenta todos os slices com Cellpose\\ne refina todos com NuClick.")
+        self.lbl_info = QLabel("Segments all slices with Cellpose\nand refines all with NuClick.")
         self.lbl_info.setWordWrap(True)
         self.lbl_info.setStyleSheet("color: #aaaaaa; font-size: 8pt; margin-bottom: 8px;")
         self.layout.addWidget(self.lbl_info)
 
-        self.btn_start = QPushButton("▶️ Iniciar Pipeline")
+        self.btn_start = QPushButton("▶️ Start Pipeline")
         self.btn_start.clicked.connect(self._toggle_start_pause)
         
-        self.btn_cancel = QPushButton("⏹️ Cancelar")
+        self.btn_cancel = QPushButton("⏹️ Cancel")
         self.btn_cancel.clicked.connect(self._cancel)
         self.btn_cancel.setEnabled(False)
 
@@ -154,14 +154,14 @@ class MacroPipelinePanel(QDockWidget):
         self.progress_bar.setValue(0)
         self.layout.addWidget(self.progress_bar)
 
-        self.lbl_status = QLabel("Pronto para iniciar.")
+        self.lbl_status = QLabel("Ready to start.")
         self.layout.addWidget(self.lbl_status)
 
-        self.lbl_time_cellpose = QLabel("Tempo Cellpose: --")
+        self.lbl_time_cellpose = QLabel("Cellpose Time: --")
         self.lbl_time_cellpose.setStyleSheet("color: #F1C40F; font-weight: bold;")
         self.layout.addWidget(self.lbl_time_cellpose)
 
-        self.lbl_time_nuclick = QLabel("Tempo NuClick: --")
+        self.lbl_time_nuclick = QLabel("NuClick Time: --")
         self.lbl_time_nuclick.setStyleSheet("color: #F1C40F; font-weight: bold;")
         self.layout.addWidget(self.lbl_time_nuclick)
 
@@ -173,7 +173,7 @@ class MacroPipelinePanel(QDockWidget):
     def _toggle_start_pause(self):
         s = self.main_window.current_session
         if not s or not s.tiles:
-            self.lbl_status.setText("Nenhum slice encontrado no projeto.")
+            self.lbl_status.setText("No slices found in the project.")
             return
 
         if self.worker is None:
@@ -183,12 +183,12 @@ class MacroPipelinePanel(QDockWidget):
             # PAUSE / RESUME logic
             if self.worker.is_paused:
                 self.worker.resume()
-                self.btn_start.setText("⏸️ Pausar")
-                self.lbl_status.setText("Retomando pipeline...")
+                self.btn_start.setText("⏸️ Pause")
+                self.lbl_status.setText("Resuming pipeline...")
             else:
                 self.worker.pause()
-                self.btn_start.setText("▶️ Retomar")
-                self.lbl_status.setText("Pipeline pausado.")
+                self.btn_start.setText("▶️ Resume")
+                self.lbl_status.setText("Pipeline paused.")
 
     def _start_pipeline(self):
         s = self.main_window.current_session
@@ -214,10 +214,10 @@ class MacroPipelinePanel(QDockWidget):
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
 
-        self.btn_start.setText("⏸️ Pausar")
+        self.btn_start.setText("⏸️ Pause")
         self.btn_cancel.setEnabled(True)
-        self.lbl_time_cellpose.setText("Tempo Cellpose: --")
-        self.lbl_time_nuclick.setText("Tempo NuClick: --")
+        self.lbl_time_cellpose.setText("Cellpose Time: --")
+        self.lbl_time_nuclick.setText("NuClick Time: --")
         self.progress_bar.setValue(0)
         
         self.worker.start()
@@ -229,7 +229,7 @@ class MacroPipelinePanel(QDockWidget):
             self.worker = None
             self.btn_start.setText("▶️ Iniciar Pipeline")
             self.btn_cancel.setEnabled(False)
-            self.lbl_status.setText("Cancelado pelo usuário.")
+            self.lbl_status.setText("Cancelled by user.")
             self.progress_bar.setValue(0)
 
     def _on_progress(self, current, total, text):
@@ -239,10 +239,10 @@ class MacroPipelinePanel(QDockWidget):
 
     def _on_time_update(self, phase, elapsed):
         if phase == "Cellpose":
-            self.lbl_time_cellpose.setText(f"Tempo Cellpose: {elapsed:.2f}s")
+            self.lbl_time_cellpose.setText(f"Cellpose Time: {elapsed:.2f}s")
             self.lbl_time_cellpose.setStyleSheet("color: #00FF88; font-weight: bold;")
         elif phase == "NuClick":
-            self.lbl_time_nuclick.setText(f"Tempo NuClick: {elapsed:.2f}s")
+            self.lbl_time_nuclick.setText(f"NuClick Time: {elapsed:.2f}s")
             self.lbl_time_nuclick.setStyleSheet("color: #00FF88; font-weight: bold;")
             
         if hasattr(self.main_window, 'layer_dropdown'):
@@ -251,7 +251,7 @@ class MacroPipelinePanel(QDockWidget):
     def _on_finished(self):
         self.btn_start.setText("▶️ Iniciar Pipeline")
         self.btn_cancel.setEnabled(False)
-        self.lbl_status.setText("Pipeline concluído com sucesso!")
+        self.lbl_status.setText("Pipeline completed successfully!")
         self.progress_bar.setValue(self.progress_bar.maximum())
         self.worker = None
         
@@ -263,7 +263,7 @@ class MacroPipelinePanel(QDockWidget):
             self.main_window.tile_renderer.viewport().update()
 
     def _on_error(self, err_msg):
-        self.lbl_status.setText(f"Erro: {err_msg}")
-        self.btn_start.setText("▶️ Iniciar Pipeline")
+        self.lbl_status.setText(f"Error: {err_msg}")
+        self.btn_start.setText("▶️ Start Pipeline")
         self.btn_cancel.setEnabled(False)
         self.worker = None

@@ -1,8 +1,8 @@
 """
-GPUSelector — Seleciona automaticamente a GPU compatível com PyTorch.
+GPUSelector — Automatically selects the PyTorch-compatible GPU.
 
-Problema: RTX 5060 não é suportada ainda em PyTorch.
-Solução: Se houver múltiplas GPUs, usar a primeira compatível.
+Problem: RTX 5060 is not yet supported in PyTorch.
+Solution: If multiple GPUs are present, use the first compatible one.
 """
 
 import logging
@@ -14,15 +14,15 @@ logger = logging.getLogger(__name__)
 
 def get_best_cuda_device() -> Optional[int]:
     """
-    Retorna o índice do melhor dispositivo CUDA compatível com PyTorch.
+    Returns the index of the best CUDA device compatible with PyTorch.
     
-    Regras:
-    1. Se CUDA não está disponível: retorna None
-    2. Se há uma GPU compatível: retorna seu índice
-    3. Se nenhuma GPU é compatível: retorna None (forçará CPU fallback)
+    Rules:
+    1. If CUDA is not available: returns None
+    2. If there is a compatible GPU: returns its index
+    3. If no GPU is compatible: returns None (will force CPU fallback)
     
     Returns:
-        Índice da GPU (0, 1, ...) ou None se nenhuma compatível
+        GPU index (0, 1, ...) or None if none compatible
     """
     try:
         import torch
@@ -34,7 +34,7 @@ def get_best_cuda_device() -> Optional[int]:
         logger.debug("CUDA not available")
         return None
     
-    # Compute capabilities suportadas pelo PyTorch atual
+    # Compute capabilities supported by current PyTorch
     # sm_50 (Maxwell), sm_60 (Pascal), sm_70 (Volta), sm_75 (Turing), sm_80 (Ampere), sm_86 (Ampere), sm_90 (Hopper)
     supported_capabilities = {(5, 0), (6, 0), (6, 1), (7, 0), (7, 5), (8, 0), (8, 6), (9, 0)}
     
@@ -69,10 +69,10 @@ def get_best_cuda_device() -> Optional[int]:
 
 def set_cuda_device(device_id: Optional[int]) -> None:
     """
-    Define qual dispositivo CUDA será usado.
+    Sets which CUDA device will be used.
     
     Args:
-        device_id: Índice do dispositivo ou None para CPU
+        device_id: Device index or None for CPU
     """
     try:
         import torch
@@ -102,7 +102,7 @@ try:
     best_device = get_best_cuda_device()
     if best_device is not None:
         set_cuda_device(best_device)
-        # Salvar para que o hardware_detector saiba qual GPU usar
+        # Save so that hardware_detector knows which GPU to use
         os.environ["CUDA_VISIBLE_DEVICES"] = str(best_device)
 except Exception as e:
     logger.warning(f"GPU auto-selection failed: {e}")
