@@ -364,39 +364,30 @@ class CellposeAdapter(IBatchSegmentationModel):
         else:
             raise TypeError(f"Unsupported image type: {type(image)}. Expected PIL Image or NumPy array.")
 
-        # 2. H&E pre-processing: extract and invert the blue channel
-        #    In H&E staining, hematoxylin stains nuclei and absorbs
-        #    strongly in the blue channel. Inverting makes nuclei appear
-        #    bright on a dark background, which Cellpose detects better.
-        if len(img_np.shape) == 3 and img_np.shape[2] >= 3:
-            # Color image (RGB or RGBA) - extract blue channel
-            blue_channel = img_np[:, :, 2].astype(np.float32)
-        elif len(img_np.shape) == 2:
-            # Grayscale image - use directly
-            blue_channel = img_np.astype(np.float32)
-        else:
-            raise ValueError(f"Unsupported image shape: {img_np.shape}. Expected (H, W, 3), (H, W, 4), or (H, W).")
-
-        inverted = 255.0 - blue_channel
-        # Normalize to 0-255 range
-        inv_min, inv_max = inverted.min(), inverted.max()
-        if inv_max > inv_min:
-            inverted = ((inverted - inv_min) / (inv_max - inv_min) * 255.0)
-        img_processed = inverted.astype(np.uint8)
-
-        # 3. Run Cellpose evaluation on pre-processed single-channel image
-        # Keep internal batch_size small to avoid CUDA OOM on 6 GB GPUs.
-        # Cellpose default is 8. A value like 32 causes OOM on 1500x1500 tiles
-        # with 6GB VRAM, which forces a very slow CPU fallback.
+        # 2. Pass the original RGB image to Cellpose.
+        #    For H&E images, Cellpose officially recommends using the 'nuclei' model 
+        #    with channels=[3,0] (which tells it to use the Blue channel, where hematoxylin 
+        #    is most prominent). Custom per-tile min-max normalization causes severe 
+        #    artifacts (like segmenting whole cells) because it stretches the contrast 
+        #    unpredictably depending on the tile's content.
         internal_batch = 8
         
+        # Determine channels based on image shape
+        if len(img_np.shape) == 3 and img_np.shape[2] >= 3:
+            # Color image: Blue channel (3) for nuclei, 0 for secondary
+            channels = [3, 0]
+        else:
+            # Grayscale image
+            channels = [0, 0]
+        
         masks, flows, styles = self._model.eval(
-            img_processed,
+            img_np,
+            channels=channels,
             diameter=diameter,
             flow_threshold=flow_threshold,
             cellprob_threshold=cellprob_threshold,
             min_size=self._min_size,
-            batch_size=internal_batch,  # 8 is the default
+            batch_size=internal_batch,
         )
 
         logger.info("Cellpose detected %d objects.", masks.max() if masks.size else 0)

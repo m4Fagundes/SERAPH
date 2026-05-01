@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Optional
 from PyQt6.QtWidgets import (
-    QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QProgressBar
+    QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QProgressBar, QCheckBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -16,7 +16,7 @@ class MacroPipelineWorker(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, session, batch_service, interactive_service, cellpose_model, nuclick_model, cellpose_params):
+    def __init__(self, session, batch_service, interactive_service, cellpose_model, nuclick_model, cellpose_params, run_nuclick=True):
         super().__init__()
         self.session = session
         self.batch_service = batch_service
@@ -24,6 +24,7 @@ class MacroPipelineWorker(QThread):
         self.cellpose_model = cellpose_model
         self.nuclick_model = nuclick_model
         self.cellpose_params = cellpose_params
+        self.run_nuclick = run_nuclick
         
         self.is_paused = False
         self.is_cancelled = False
@@ -72,10 +73,15 @@ class MacroPipelineWorker(QThread):
                 elapsed = time.monotonic() - start_time
                 self.time_update.emit("Cellpose", elapsed)
                 self.current_slice_idx = 0
-                self.current_phase = 2
+                
+                if self.run_nuclick:
+                    self.current_phase = 2
+                else:
+                    self.finished.emit()
+                    return
 
             # PHASE 2: NuClick
-            if self.current_phase == 2:
+            if self.current_phase == 2 and self.run_nuclick:
                 start_time = time.monotonic()
                 for i in range(self.current_slice_idx, total_slices):
                     while self.is_paused and not self.is_cancelled:
@@ -137,6 +143,11 @@ class MacroPipelinePanel(QDockWidget):
         self.lbl_info.setWordWrap(True)
         self.lbl_info.setStyleSheet("color: #aaaaaa; font-size: 8pt; margin-bottom: 8px;")
         self.layout.addWidget(self.lbl_info)
+
+        self.chk_run_nuclick = QCheckBox("Refine with NuClick after Cellpose")
+        self.chk_run_nuclick.setChecked(True)
+        self.chk_run_nuclick.setStyleSheet("color: #cccccc;")
+        self.layout.addWidget(self.chk_run_nuclick)
 
         self.btn_start = QPushButton("▶️ Start Pipeline")
         self.btn_start.clicked.connect(self._toggle_start_pause)
@@ -207,7 +218,8 @@ class MacroPipelinePanel(QDockWidget):
         self.worker = MacroPipelineWorker(
             s, self.main_window.batch_segmentation_service,
             self.main_window.segmentation_service,
-            cellpose_model, nuclick_model, params
+            cellpose_model, nuclick_model, params,
+            run_nuclick=self.chk_run_nuclick.isChecked()
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.time_update.connect(self._on_time_update)

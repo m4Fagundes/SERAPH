@@ -68,17 +68,23 @@ class NuClickAdapter(ISegmentationModel):
         """Loads the NuClick PyTorch model."""
         import torch
         from app.infrastructure.ml_models.nuclick_torch.architecture import NuClick_NN
+        from app.infrastructure.config.gpu_selector import get_best_cuda_device
 
         try:
             # Ensure model file exists (download if needed)
             model_path = self._get_model_path()
             
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            best_gpu = get_best_cuda_device()
+            if torch.cuda.is_available() and best_gpu is not None:
+                device = torch.device(f'cuda:{best_gpu}')
+            else:
+                device = torch.device('cpu')
+                
             self._model = NuClick_NN(n_channels=5, n_classes=1)
             self._model.to(device=device)
             
             # Load state dictionary
-            self._model.load_state_dict(torch.load(str(model_path), map_location=device))
+            self._model.load_state_dict(torch.load(str(model_path), map_location=device, weights_only=True))
             self._model.eval()
             
             logger.info("NuClick model loaded successfully from %s on %s", model_path, device)
@@ -161,7 +167,13 @@ class NuClickAdapter(ISegmentationModel):
         # Concatenate RGB + Nucleus Point + Other Points
         input_data = np.concatenate((patchs, nucPoints, otherPoints), axis=1, dtype=np.float32)
         
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        from app.infrastructure.config.gpu_selector import get_best_cuda_device
+        best_gpu = get_best_cuda_device()
+        if torch.cuda.is_available() and best_gpu is not None:
+            device = torch.device(f'cuda:{best_gpu}')
+        else:
+            device = torch.device('cpu')
+            
         input_tensor = torch.from_numpy(input_data).to(device=device, dtype=torch.float32)
 
         # 4. Predict
@@ -265,12 +277,16 @@ class NuClickAdapter(ISegmentationModel):
             ]
             boundingBoxes.append(bb)
 
-        # Maximize GPU usage by sending 512 patches at a time instead of just 128.
-        # Patches are small (128x128x5), 512 patches use ~167MB of VRAM, 
-        # which is very safe for modern GPUs and greatly speeds up batch processing.
-        CHUNK_SIZE = 512
+        # Send patches in chunks to prevent CUDA OOM.
+        # A chunk size of 64 is safe for a 6GB GPU (RTX 2060) when Cellpose is also loaded.
+        CHUNK_SIZE = 64
         all_polygons = []
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        from app.infrastructure.config.gpu_selector import get_best_cuda_device
+        best_gpu = get_best_cuda_device()
+        if torch.cuda.is_available() and best_gpu is not None:
+            device = torch.device(f'cuda:{best_gpu}')
+        else:
+            device = torch.device('cpu')
 
         for i in range(0, len(cx), CHUNK_SIZE):
             cx_chunk = cx[i:i+CHUNK_SIZE]
