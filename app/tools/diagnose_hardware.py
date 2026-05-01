@@ -92,7 +92,6 @@ def test_performance_config():
         print(f"  Use GPU: {config.cellpose.use_gpu}")
         print(f"  GPU Fallback Enabled: {config.cellpose.gpu_fallback_enabled}")
         print(f"  Batch Size: {config.cellpose.batch_size}")
-        print(f"  Resample Factor: {config.cellpose.resample_factor}")
         print(f"  Timeout: {config.cellpose.timeout_seconds}s")
         print(f"  Max Tile Size: {config.cellpose.max_tile_size_pixels}px")
         print(f"  Split Large Tiles: {config.cellpose.split_large_tiles}")
@@ -159,7 +158,7 @@ def test_cellpose_import():
 
         # Try to load model with GPU=False first (more reliable)
         try:
-            model = models.CellposeModel(model_type='nuclei', gpu=False)
+            model = models.CellposeModel(pretrained_model='nuclei', gpu=False)
             print("✅ Cellpose CPU model loaded successfully")
             del model
         except Exception as e:
@@ -197,7 +196,6 @@ def test_cellpose_adapter():
         print(f"   Model type: {adapter._model_type}")
         print(f"   GPU enabled: {adapter._gpu}")
         print(f"   Batch size: {adapter._batch_size}")
-        print(f"   Resample factor: {adapter._resample_factor}")
         print(f"   Timeout: {adapter._timeout_seconds}s")
         print(f"   Max tile size: {adapter._max_tile_size}px")
 
@@ -236,7 +234,6 @@ def generate_recommendations():
             print("   • Enable 'Split large tiles' option")
             print("   • Use CPU-only mode (disable GPU)")
             print("   • Set batch size to 1")
-            print("   • Consider 0.75 resample factor for large images")
             print("   • Expect longer processing times")
 
         elif profile == "medium":

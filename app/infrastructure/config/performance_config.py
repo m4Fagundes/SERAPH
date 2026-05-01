@@ -34,7 +34,6 @@ class CellposeConfig:
 
     # Performance
     batch_size: int = 1  # Number of images processed per batch
-    resample_factor: float = 1.0  # Downsampling (0.5 = half size)
     timeout_seconds: int = 300  # 5 minutes maximum timeout
 
     # Cellpose Parameters
@@ -99,7 +98,6 @@ class PerformanceConfig:
             cellpose=CellposeConfig(
                 use_gpu=use_gpu,
                 batch_size=1,  # Always 1 in low performance
-                resample_factor=0.75,  # Downsample to save memory
                 timeout_seconds=180,  # 3 minutes
                 max_tile_size_pixels=1000,
                 split_large_tiles=True,
@@ -126,7 +124,6 @@ class PerformanceConfig:
             cellpose=CellposeConfig(
                 use_gpu=use_gpu,
                 batch_size=batch_size,  # 2 with GPU, 1 with CPU
-                resample_factor=1.0,  # No downsampling
                 timeout_seconds=300,  # 5 minutes
                 max_tile_size_pixels=1500,
                 split_large_tiles=True,
@@ -164,7 +161,6 @@ class PerformanceConfig:
             cellpose=CellposeConfig(
                 use_gpu=use_gpu,
                 batch_size=batch_size,  # 16 with GPU, 2 with CPU
-                resample_factor=1.0,
                 timeout_seconds=timeout,  # 15 minutes with GPU
                 max_tile_size_pixels=max_tile_size,  # 3000 with GPU
                 split_large_tiles=split_large_tiles,
@@ -191,9 +187,18 @@ class PerformanceConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PerformanceConfig":
-        """Creates from dictionary."""
+        """Creates from dictionary, ignoring unknown keys for forward compatibility."""
+        import dataclasses
+
         cellpose_data = data.get("cellpose", {})
         threading_data = data.get("threading", {})
+
+        # Filter out keys that are not fields of the dataclass
+        # (handles old config files that may contain removed fields)
+        cellpose_fields = {f.name for f in dataclasses.fields(CellposeConfig)}
+        threading_fields = {f.name for f in dataclasses.fields(ThreadingConfig)}
+        cellpose_data = {k: v for k, v in cellpose_data.items() if k in cellpose_fields}
+        threading_data = {k: v for k, v in threading_data.items() if k in threading_fields}
 
         return cls(
             cellpose=CellposeConfig(**cellpose_data),
@@ -224,7 +229,7 @@ class ConfigManager:
 
         try:
             if self.CONFIG_FILE.exists():
-                with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
+                with open(self.CONFIG_FILE, 'r', encoding='utf-8-sig') as f:
                     user_data = json.load(f)
 
                 # Apply user overrides

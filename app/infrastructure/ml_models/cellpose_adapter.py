@@ -71,6 +71,26 @@ class CellposeAdapter(IBatchSegmentationModel):
             # For now, just log them
             logger.info("Config overrides provided: %s", config_override)
 
+        def _runtime_gpu_available() -> bool:
+            try:
+                import torch
+            except ImportError:
+                return False
+
+            if self._config.disable_gpu:
+                return False
+
+            if self._config.force_cpu_only:
+                return False
+
+            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                return True
+
+            if hasattr(torch.backends, "mps"):
+                return torch.backends.mps.is_available() and torch.backends.mps.is_built()
+
+            return False
+
         # Decide whether to use GPU (automatic or manual configuration)
         if gpu is None:
             # Use automatic configuration
@@ -83,21 +103,26 @@ class CellposeAdapter(IBatchSegmentationModel):
             if gpu and self._config.force_cpu_only:
                 logger.warning("GPU requested manually despite force_cpu_only recommendation. Attempting to use GPU...")
 
+        if self._gpu and not _runtime_gpu_available():
+            logger.warning(
+                "GPU was requested, but the current PyTorch runtime does not expose CUDA/MPS. Falling back to CPU."
+            )
+            self._gpu = False
+
         self._flow_threshold = flow_threshold
         self._cellprob_threshold = cellprob_threshold
         self._min_size = min_size
 
         # Performance settings
         self._batch_size = self._config.cellpose.batch_size
-        self._resample_factor = self._config.cellpose.resample_factor
         self._timeout_seconds = self._config.cellpose.timeout_seconds
         self._max_tile_size = self._config.cellpose.max_tile_size_pixels
         self._memory_limit_mb = self._config.cellpose.memory_limit_mb
 
         logger.info(
             "CellposeAdapter initialized: model=%s, gpu=%s, batch_size=%d, "
-            "resample=%.2f, timeout=%ds, max_tile=%dpx",
-            model_type, self._gpu, self._batch_size, self._resample_factor,
+            "timeout=%ds, max_tile=%dpx",
+            model_type, self._gpu, self._batch_size,
             self._timeout_seconds, self._max_tile_size
         )
 
@@ -131,57 +156,6 @@ class CellposeAdapter(IBatchSegmentationModel):
         except Exception as e:
             logger.warning("Failed to check memory usage: %s", e)
             return True
-
-    def _apply_resample_if_needed(self, image):
-        """Applies downsampling if configured and necessary.
-
-        Args:
-            image: PIL Image or NumPy array
-
-        Returns:
-            Resized image (same type as input)
-        """
-        from PIL import Image as PILImage
-        import numpy as np
-        import cv2
-
-        if self._resample_factor >= 1.0:
-            return image
-
-        # Determine dimensions based on image type
-        if isinstance(image, Image):
-            width, height = image.size
-            is_pil = True
-        elif isinstance(image, np.ndarray):
-            # NumPy array: (height, width, channels) ou (height, width)
-            if len(image.shape) == 3:
-                height, width = image.shape[:2]
-            else:
-                height, width = image.shape
-            is_pil = False
-        else:
-            raise TypeError(f"Unsupported image type: {type(image)}. Expected PIL Image or NumPy array.")
-
-        new_width = int(width * self._resample_factor)
-        new_height = int(height * self._resample_factor)
-
-        if new_width < 100 or new_height < 100:
-            logger.warning(
-                "Resample factor %.2f would create image too small (%dx%d). Using original.",
-                self._resample_factor, new_width, new_height
-            )
-            return image
-
-        logger.info(
-            "Resampling image from %dx%d to %dx%d (factor=%.2f)",
-            width, height, new_width, new_height, self._resample_factor
-        )
-
-        if is_pil:
-            return image.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
-        else:
-            # Resize NumPy array using OpenCV
-            return cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
 
     def _split_large_image(self, image) -> List[tuple]:
         """
@@ -249,7 +223,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         for every detected object.
 
         Args:
-            image: PIL Image (RGB) ou NumPy array (H, W, 3) ou (H, W).
+            image: PIL Image (RGB) or NumPy array (H, W, 3) or (H, W).
             diameter: Expected nucleus diameter in pixels.
                       None = Cellpose auto-estimates.
             flow_threshold: Override flow error threshold (None = use default).
@@ -266,51 +240,38 @@ class CellposeAdapter(IBatchSegmentationModel):
 
         # Check memory usage before starting
         if not self._check_memory_usage():
-            logger.warning("High memory usage detected. Consider reducing image size.")
-
-        # Apply resample if configured
-        image = self._apply_resample_if_needed(image)
-
-        # Split large image if necessary
-        if self._config.cellpose.split_large_tiles:
-            tiles_with_offsets = self._split_large_image(image)
-            if len(tiles_with_offsets) > 1:
-                return self._segment_tiled_image(tiles_with_offsets, diameter,
-                                                flow_threshold, cellprob_threshold)
-
-        # Normal processing (single image) with timeout
-        import concurrent.futures
-        import numpy as np
-        import cv2
+            logger.warning("High memory usage detected. Consider reducing tile size.")
 
         # Use runtime overrides or fall back to instance defaults
         _flow = flow_threshold if flow_threshold is not None else self._flow_threshold
         _cellprob = cellprob_threshold if cellprob_threshold is not None else self._cellprob_threshold
 
-        # Log image size based on type
-        from PIL import Image as PILImage
-        import numpy as np
+        # ── Tiled path (calls _segment_single_image directly) ───────────
+        if self._config.cellpose.split_large_tiles:
+            tiles_with_offsets = self._split_large_image(image)
+            if len(tiles_with_offsets) > 1:
+                return self._segment_tiled_image(
+                    tiles_with_offsets, diameter, _flow, _cellprob,
+                )
 
-        if isinstance(image, Image):
-            img_size_str = f"{image.size}"
-        elif isinstance(image, np.ndarray):
-            if len(image.shape) == 3:
-                img_size_str = f"({image.shape[1]}x{image.shape[0]}x{image.shape[2]})"
-            else:
-                img_size_str = f"({image.shape[1]}x{image.shape[0]})"
-        else:
-            img_size_str = str(type(image))
+        # ── Single-image path ───────────────────────────────────────────
+        import concurrent.futures
 
+        # Log image size
+        img_size_str = self._format_image_size(image)
         logger.info(
             "Running Cellpose (%s) on image %s, diameter=%s, flow=%.2f, cellprob=%.1f (timeout=%ds)",
-            self._model_type, img_size_str, diameter, _flow, _cellprob, self._timeout_seconds
+            self._model_type, img_size_str, diameter, _flow, _cellprob, self._timeout_seconds,
         )
+
+        # Clear CUDA cache proactively to maximise available VRAM
+        self._clear_cuda_cache()
 
         # Execute with timeout using ThreadPoolExecutor
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(
                 self._segment_single_image,
-                image, diameter, _flow, _cellprob
+                image, diameter, _flow, _cellprob,
             )
             try:
                 polygons = future.result(timeout=self._timeout_seconds)
@@ -321,6 +282,11 @@ class CellposeAdapter(IBatchSegmentationModel):
                 future.cancel()
                 return []
             except Exception as e:
+                # Check if it is a CUDA OOM error — retry on CPU if so
+                if self._gpu and self._is_cuda_oom(e):
+                    return self._retry_on_cpu(
+                        image, diameter, _flow, _cellprob, original_error=e,
+                    )
                 logger.error("Cellpose segmentation failed: %s", e)
                 return []
 
@@ -328,10 +294,15 @@ class CellposeAdapter(IBatchSegmentationModel):
         self,
         tiles_with_offsets: List[tuple],
         diameter: float | None,
-        flow_threshold: float | None,
-        cellprob_threshold: float | None,
+        flow_threshold: float,
+        cellprob_threshold: float,
     ) -> List[List[Tuple[int, int]]]:
-        """Segments an image split into tiles and combines results."""
+        """Segments an image split into tiles and combines results.
+
+        IMPORTANT: calls ``_segment_single_image`` directly to avoid
+        re-applying resampling or re-splitting (which ``segment()``
+        would do).
+        """
         logger.info("Segmenting tiled image with %d tiles", len(tiles_with_offsets))
 
         all_polygons = []
@@ -340,10 +311,22 @@ class CellposeAdapter(IBatchSegmentationModel):
 
         for tile, offset_x, offset_y in tiles_with_offsets:
             try:
-                # Segment individual tile
-                tile_polygons = self.segment(tile, diameter, flow_threshold, cellprob_threshold)
+                self._clear_cuda_cache()
 
-                # Adjust coordinates with offset
+                try:
+                    tile_polygons = self._segment_single_image(
+                        tile, diameter, flow_threshold, cellprob_threshold,
+                    )
+                except Exception as e:
+                    if self._gpu and self._is_cuda_oom(e):
+                        tile_polygons = self._retry_on_cpu(
+                            tile, diameter, flow_threshold, cellprob_threshold,
+                            original_error=e,
+                        )
+                    else:
+                        raise
+
+                # Adjust coordinates with tile offset
                 for polygon in tile_polygons:
                     adjusted_polygon = [(x + offset_x, y + offset_y) for (x, y) in polygon]
                     all_polygons.append(adjusted_polygon)
@@ -402,9 +385,10 @@ class CellposeAdapter(IBatchSegmentationModel):
         img_processed = inverted.astype(np.uint8)
 
         # 3. Run Cellpose evaluation on pre-processed single-channel image
-        # Increase internal batch_size to saturate GPU VRAM
-        # RTX 2060: 256 is safe for tiles up to 1000x1000px
-        internal_batch = 256 if self._gpu else 8
+        # Keep internal batch_size small to avoid CUDA OOM on 6 GB GPUs.
+        # Cellpose default is 8. A value like 32 causes OOM on 1500x1500 tiles
+        # with 6GB VRAM, which forces a very slow CPU fallback.
+        internal_batch = 8
         
         masks, flows, styles = self._model.eval(
             img_processed,
@@ -412,8 +396,7 @@ class CellposeAdapter(IBatchSegmentationModel):
             flow_threshold=flow_threshold,
             cellprob_threshold=cellprob_threshold,
             min_size=self._min_size,
-            channels=[0, 0],  # grayscale (already preprocessed)
-            batch_size=internal_batch,  # 256 with GPU, 8 without GPU
+            batch_size=internal_batch,  # 8 is the default
         )
 
         logger.info("Cellpose detected %d objects.", masks.max() if masks.size else 0)
@@ -425,6 +408,86 @@ class CellposeAdapter(IBatchSegmentationModel):
         return polygons
 
     # ── Private Methods ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _is_cuda_oom(exc: Exception) -> bool:
+        """Returns True if *exc* is a CUDA out-of-memory error."""
+        msg = str(exc).lower()
+        return "cuda out of memory" in msg or "cudnn error" in msg
+
+    @staticmethod
+    def _clear_cuda_cache() -> None:
+        """Frees unused CUDA memory so the next allocation has maximum headroom."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                import gc
+                gc.collect()
+        except Exception:  # pragma: no cover
+            pass
+
+    def _retry_on_cpu(
+        self,
+        image,
+        diameter: float | None,
+        flow_threshold: float,
+        cellprob_threshold: float,
+        *,
+        original_error: Exception,
+    ) -> list:
+        """Fallback: reload the model on CPU and re-run the segmentation."""
+        logger.warning(
+            "CUDA OOM detected (%s). Clearing VRAM and retrying on CPU…",
+            original_error,
+        )
+        self._clear_cuda_cache()
+
+        # Reload model on CPU
+        try:
+            from cellpose import models as cp_models
+            import torch
+
+            self._gpu = False
+            self._model = cp_models.CellposeModel(
+                pretrained_model=self._model_type,
+                gpu=False,
+                device=torch.device("cpu"),
+                use_bfloat16=False,
+            )
+            logger.warning(
+                "Cellpose model permanently reloaded on CPU for OOM fallback. "
+                "Subsequent processing will be very slow."
+            )
+        except Exception as reload_err:
+            logger.error("Failed to reload Cellpose on CPU: %s", reload_err)
+            return []
+
+        # Re-run segmentation (no timeout wrapper — CPU is slower but won't OOM)
+        try:
+            polygons = self._segment_single_image(
+                image, diameter, flow_threshold, cellprob_threshold
+            )
+            logger.info(
+                "CPU fallback succeeded: %d polygons detected.", len(polygons)
+            )
+            return polygons
+        except Exception as cpu_err:
+            logger.error("CPU fallback also failed: %s", cpu_err)
+            return []
+
+    @staticmethod
+    def _format_image_size(image) -> str:
+        """Returns a human-readable size string for logging."""
+        import numpy as np
+        if isinstance(image, Image):
+            return f"{image.size}"
+        elif isinstance(image, np.ndarray):
+            if len(image.shape) == 3:
+                return f"({image.shape[1]}x{image.shape[0]}x{image.shape[2]})"
+            else:
+                return f"({image.shape[1]}x{image.shape[0]})"
+        return str(type(image))
 
     def _ensure_model_loaded(self) -> None:
         """Lazy-load the Cellpose model on first use.
@@ -441,24 +504,38 @@ class CellposeAdapter(IBatchSegmentationModel):
         """Import cellpose and instantiate the CellposeModel."""
         try:
             from cellpose import models as cp_models
+            import torch
+            from app.infrastructure.config.gpu_selector import get_best_cuda_device
+
+            device = None
+            if self._gpu and torch.cuda.is_available():
+                device_index = get_best_cuda_device()
+                if device_index is None:
+                    device_index = torch.cuda.current_device()
+                device = torch.device(f"cuda:{device_index}")
+                logger.info("Using explicit CUDA device for Cellpose: %s", device)
 
             try:
                 self._model = cp_models.CellposeModel(
-                    model_type=self._model_type,
+                    pretrained_model=self._model_type,
                     gpu=self._gpu,
+                    device=device,
+                    use_bfloat16=False,
                 )
                 logger.info(
                     "Cellpose model '%s' loaded (gpu=%s).",
                     self._model_type, self._gpu,
                 )
             except Exception as e:
-                # If it fails because the GPU (MPS on Mac) doesn't support BFloat16 from the new model, fallback to CPU
-                if self._gpu and ("BFloat16" in str(e) or "MPS" in str(e)):
+                # If GPU loading fails, retry on CPU so the app still works.
+                if self._gpu:
                     logger.warning("Failed to load Cellpose on GPU (%s). Retrying on CPU (gpu=False)...", e)
                     self._gpu = False
                     self._model = cp_models.CellposeModel(
-                        model_type=self._model_type,
+                        pretrained_model=self._model_type,
                         gpu=False,
+                        device=torch.device("cpu"),
+                        use_bfloat16=False,
                     )
                     logger.info("Cellpose model '%s' loaded successfully using CPU fallback.", self._model_type)
                 else:

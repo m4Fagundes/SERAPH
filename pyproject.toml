@@ -24,7 +24,7 @@ vips = [
     "pyvips>=2.2.0",
 ]
 cellpose = [
-    "cellpose>=3.0",
+    "cellpose>=4.0,<5.0",
 ]
 
 [project.scripts]
