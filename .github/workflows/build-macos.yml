@@ -8,109 +8,83 @@ on:
     paths:
       - 'app/**'
       - 'main.py'
-      - 'requirements.txt'
-      - 'main_release.spec'
+      - 'requirements-macos.txt'
+      - 'docs/build/main_release.spec'
+      - 'hooks/rthook_cellpose.py'
+      - 'hooks/rthook_openslide.py'
       - '.github/workflows/build-macos.yml'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build-macos:
-    strategy:
-      matrix:
-        include:
-          # Build for both Intel and Apple Silicon
-          - arch: x86_64
-            runner: macos-13  # Intel Macs
-          - arch: arm64
-            runner: macos-14  # Apple Silicon (M1/M2/M3)
-    
-    runs-on: ${{ matrix.runner }}
-    
+    runs-on: macos-14
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Cache pip dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-macos.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install dependencies
+      - name: Install Homebrew dependencies
+        run: |
+          brew install libvips openslide
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-macos.txt
           pip install pyinstaller
-          # 'create-dmg' is installed via Homebrew later (not a pip package)
 
-      - name: Build with PyInstaller (macOS)
+      - name: Build with PyInstaller
         run: |
-          pyinstaller --clean --noconfirm main_release.spec
-          
-      - name: Create DMG (macOS disk image)
+          pyinstaller --clean --noconfirm docs/build/main_release.spec
+
+      - name: Create DMG
         run: |
-          # Install create-dmg if not already installed
           brew install create-dmg || true
-          
-          # Create DMG file
           create-dmg \
             --volname "GridAnalyzer" \
-            --volicon "app.icns" \
             --window-pos 200 120 \
-            --window-size 800 400 \
+            --window-size 600 400 \
             --icon-size 100 \
             --icon "GridAnalyzer.app" 200 190 \
             --hide-extension "GridAnalyzer.app" \
-            --app-drop-link 600 190 \
+            --app-drop-link 400 190 \
             "dist/GridAnalyzer.dmg" \
             "dist/GridAnalyzer.app"
-        continue-on-error: true  # DMG creation is nice-to-have
-
-      - name: Sign and notarize app (macOS requirement for Catalina+)
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          TEAM_ID: ${{ secrets.TEAM_ID }}
-        run: |
-          # Note: Code signing requires Apple Developer account
-          # Skip if secrets not configured
-          if [ -z "$APPLE_ID" ]; then
-            echo "⚠️  Code signing skipped (no Apple ID configured)"
-            echo "To enable: Add APPLE_ID, APPLE_ID_PASSWORD, and TEAM_ID as GitHub secrets"
-          else
-            echo "✅ Code signing enabled"
-            # Sign the app
-            codesign -s "$TEAM_ID" --deep --force --verbose "dist/GridAnalyzer.app"
-          fi
         continue-on-error: true
 
-      - name: Upload app as artifact
+      - name: Upload .app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GridAnalyzer-${{ matrix.arch }}.app
+          name: GridAnalyzer-arm64.app
           path: dist/GridAnalyzer.app
           retention-days: 30
 
-      - name: Upload DMG as artifact
+      - name: Upload .dmg artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GridAnalyzer-${{ matrix.arch }}.dmg
+          name: GridAnalyzer-arm64.dmg
           path: dist/GridAnalyzer.dmg
           retention-days: 30
         continue-on-error: true
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/') && matrix.arch == 'arm64'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
