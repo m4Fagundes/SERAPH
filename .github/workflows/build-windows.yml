@@ -41,11 +41,11 @@ jobs:
 
     - name: Build app files with PyInstaller
       run: |
-        python -m PyInstaller main_release.spec --clean --noconfirm
+        python -m PyInstaller docs\build\main_release.spec --clean --noconfirm
 
     - name: Build Windows installer
       run: |
-        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" docs\build\installer.iss
 
     - name: Upload Installer Artifact
       uses: actions/upload-artifact@v4
