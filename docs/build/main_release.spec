@@ -85,7 +85,6 @@ hiddenimports += [
     'torch.nn.functional',
     'torch.utils',
     'torch.utils.data',
-    'torchaudio',
     # Scientific stack
     'numpy',
     'scipy',
@@ -95,6 +94,14 @@ hiddenimports += [
     'PIL',
     'PIL.Image',
     'PIL.ImageOps',
+    # NuClick submodules — lazy-imported inside methods, not caught by static analysis
+    'app.infrastructure.ml_models.nuclick_torch.architecture',
+    'app.infrastructure.ml_models.nuclick_torch.layers',
+    'app.infrastructure.ml_models.nuclick_torch.guiding_signals',
+    'app.infrastructure.ml_models.nuclick_torch.process',
+    # Config modules used lazily by adapters
+    'app.infrastructure.config.gpu_selector',
+    'app.infrastructure.config.performance_config',
     # macOS-specific (if on macOS)
     'objc' if IS_MAC else None,
 ]
@@ -106,6 +113,16 @@ hiddenimports = list(set(hiddenimports))  # Remove duplicates
 # ---------------------------------------------------------------------------
 # 4. Analysis
 # ---------------------------------------------------------------------------
+# Build excludes list before Analysis — PyInstaller cannot receive None entries.
+_excludes = [
+    'PyQt5', 'wx', 'PySide2', 'PySide6',
+    'nvidia',           # CPU-only build, no CUDA
+    'torchaudio',       # not used by this app
+    'objc' if not IS_MAC else None,   # objc only on macOS
+    'win32' if not IS_WINDOWS else None,  # win32 only excluded on non-Windows
+]
+_excludes = [e for e in _excludes if e is not None]
+
 a = Analysis(
     [str(pathlib.Path(REPO_ROOT) / 'main.py')],
     pathex=[REPO_ROOT],
@@ -118,24 +135,10 @@ a = Analysis(
         str(pathlib.Path(HOOKS_DIR) / 'rthook_cellpose.py'),
         str(pathlib.Path(HOOKS_DIR) / 'rthook_openslide.py'),
     ],
-    excludes=[
-        # GUI frameworks we don't use
-        'PyQt5',
-        'wx',
-        'PySide2',
-        'PySide6',
-        # CUDA (CPU-only build)
-        'nvidia',
-        # Windows-specific
-        'win32' if not IS_WINDOWS else None,
-    ],
+    excludes=_excludes,
     noarchive=False,
     optimize=0,
 )
-
-# Remove None values from excludes
-if a.excludes:
-    a.excludes = [e for e in a.excludes if e is not None]
 
 pyz = PYZ(a.pure)
 
