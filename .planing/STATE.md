@@ -5,32 +5,32 @@
 See: .planning/PROJECT.md (updated 2026-05-04)
 
 **Core value:** Researchers on Apple Silicon Macs can download a `.dmg`, open the app, load whole-slide images, and run nucleus segmentation with MPS acceleration — without any Python setup.
-**Current focus:** Phase 1 — Runtime Foundation
+**Current focus:** Phase 2 — Distribution
 
 ## Current Position
 
-Phase: 1 of 3 (Runtime Foundation)
-Plan: 0 of 5 in current phase
-Status: Ready to execute
-Last activity: 2026-05-04 — Phase 1 planned (5 plans, 3 waves)
+Phase: 2 of 3 (Distribution)
+Plan: 1 of 3 in current phase
+Status: Phase 2 Plan 1 complete — 2 plans remaining in Phase 2
+Last activity: 2026-05-04 — Phase 2 Plan 1 executed (spec + runtime hooks fixed for macOS dylib discovery)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 33%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0 hours
+- Total plans completed: 1
+- Average duration: 2 min
+- Total execution time: 0.03 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 02-distribution | 1 | 2 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: none yet
+- Last 5 plans: 02-01 (2 min)
 - Trend: -
 
 *Updated after each plan completion*
@@ -45,6 +45,9 @@ Recent decisions affecting current work:
 - Split requirements.txt by platform: macOS uses CPU/MPS wheels, Windows keeps `+cu124`
 - Skip code signing for now: no Apple Developer account; colleagues use `xattr -d com.apple.quarantine`
 - ARM64-only (no universal binary): simpler build; Intel Macs are rare in research labs
+- COLLECT name changed from 'GridAnalyzer.app' to 'GridAnalyzer' to avoid name clash with BUNDLE step (02-01)
+- DYLD_LIBRARY_PATH chosen over VIPS_LIBDIR because pyvips does not read VIPS_LIBDIR directly (02-01)
+- rthook_portable.py registered in runtime_hooks preemptively — CI plan (Phase 3) will create the file (02-01)
 
 ### Pending Todos
 
@@ -67,6 +70,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-04
-Stopped at: Phase 1 planned — ready to execute (5 plans in 3 waves)
+Last session: 2026-05-04T20:04:46Z
+Stopped at: Completed 02-01-PLAN.md — PyInstaller spec + runtime hooks for macOS dylib discovery
 Resume file: None
