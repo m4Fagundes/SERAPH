@@ -62,9 +62,18 @@ packages_to_collect = [
     'fastremap',
 ]
 
-# openslide_bin is Windows-only
+# Platform-specific native library packages
 if IS_WINDOWS:
     packages_to_collect.append('openslide_bin')
+
+if IS_MAC:
+    # openslide-bin universal2 wheel bundles the OpenSlide dylib for macOS.
+    # Must be collected so PyInstaller copies the dylib into _MEIPASS.
+    packages_to_collect.append('openslide_bin')
+    # pyvips-binary bundles libvips.dylib for macOS ARM64.
+    # pyvips uses ctypes to load libvips — we must bundle it explicitly.
+    packages_to_collect.append('pyvips')
+    packages_to_collect.append('pyvips_binary')
 
 for pkg in packages_to_collect:
     try:
@@ -94,6 +103,8 @@ hiddenimports += [
     'PIL',
     'PIL.Image',
     'PIL.ImageOps',
+    # pyvips — ctypes-based binding; PyInstaller misses the cffi internals
+    'pyvips',
     # NuClick submodules — lazy-imported inside methods, not caught by static analysis
     'app.infrastructure.ml_models.nuclick_torch.architecture',
     'app.infrastructure.ml_models.nuclick_torch.layers',
@@ -134,6 +145,8 @@ a = Analysis(
     runtime_hooks=[
         str(pathlib.Path(HOOKS_DIR) / 'rthook_cellpose.py'),
         str(pathlib.Path(HOOKS_DIR) / 'rthook_openslide.py'),
+        str(pathlib.Path(HOOKS_DIR) / 'rthook_pyvips.py'),
+        str(pathlib.Path(HOOKS_DIR) / 'rthook_portable.py'),
     ],
     excludes=_excludes,
     noarchive=False,
@@ -171,7 +184,7 @@ if IS_MAC:
         strip=False,
         upx=False,
         upx_exclude=[],
-        name='GridAnalyzer.app',
+        name='GridAnalyzer',
     )
     
     # macOS app
