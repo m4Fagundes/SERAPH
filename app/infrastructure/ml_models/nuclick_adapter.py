@@ -10,6 +10,28 @@ from app.infrastructure.ml_models.model_downloader import ModelDownloader
 logger = logging.getLogger(__name__)
 
 
+def _get_device() -> "torch.device":
+    """Returns the best available torch device: CUDA > MPS > CPU.
+
+    Uses a try/except around get_best_cuda_device so the adapter
+    works even if the GPU selector module cannot be imported.
+    MPS check uses hasattr guard for torch < 1.12 compatibility.
+    """
+    import torch
+    try:
+        from app.infrastructure.config.gpu_selector import get_best_cuda_device
+        best_gpu = get_best_cuda_device()
+        if torch.cuda.is_available() and best_gpu is not None:
+            return torch.device(f'cuda:{best_gpu}')
+    except Exception:
+        pass
+
+    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return torch.device('mps')
+
+    return torch.device('cpu')
+
+
 class NuClickAdapter(ISegmentationModel):
     """
     Adapter for the NuClick interactive segmentation model.
@@ -34,6 +56,7 @@ class NuClickAdapter(ISegmentationModel):
         self.model_path = model_path
         self._model = None
         self._load_attempted = False
+        self._device = None  # set by _load_model on first use
 
     def _ensure_model_loaded(self):
         """Lazy-load the PyTorch model on first use.
@@ -68,17 +91,13 @@ class NuClickAdapter(ISegmentationModel):
         """Loads the NuClick PyTorch model."""
         import torch
         from app.infrastructure.ml_models.nuclick_torch.architecture import NuClick_NN
-        from app.infrastructure.config.gpu_selector import get_best_cuda_device
 
         try:
             # Ensure model file exists (download if needed)
             model_path = self._get_model_path()
-            
-            best_gpu = get_best_cuda_device()
-            if torch.cuda.is_available() and best_gpu is not None:
-                device = torch.device(f'cuda:{best_gpu}')
-            else:
-                device = torch.device('cpu')
+
+            device = _get_device()
+            self._device = device  # store for reuse in predict/predict_batch
                 
             self._model = NuClick_NN(n_channels=5, n_classes=1)
             self._model.to(device=device)
@@ -167,13 +186,8 @@ class NuClickAdapter(ISegmentationModel):
         # Concatenate RGB + Nucleus Point + Other Points
         input_data = np.concatenate((patchs, nucPoints, otherPoints), axis=1, dtype=np.float32)
         
-        from app.infrastructure.config.gpu_selector import get_best_cuda_device
-        best_gpu = get_best_cuda_device()
-        if torch.cuda.is_available() and best_gpu is not None:
-            device = torch.device(f'cuda:{best_gpu}')
-        else:
-            device = torch.device('cpu')
-            
+        device = self._device  # set by _load_model; consistent with model weights location
+
         input_tensor = torch.from_numpy(input_data).to(device=device, dtype=torch.float32)
 
         # 4. Predict
@@ -281,12 +295,7 @@ class NuClickAdapter(ISegmentationModel):
         # A chunk size of 64 is safe for a 6GB GPU (RTX 2060) when Cellpose is also loaded.
         CHUNK_SIZE = 64
         all_polygons = []
-        from app.infrastructure.config.gpu_selector import get_best_cuda_device
-        best_gpu = get_best_cuda_device()
-        if torch.cuda.is_available() and best_gpu is not None:
-            device = torch.device(f'cuda:{best_gpu}')
-        else:
-            device = torch.device('cpu')
+        device = self._device  # set by _load_model; consistent with model weights location
 
         for i in range(0, len(cx), CHUNK_SIZE):
             cx_chunk = cx[i:i+CHUNK_SIZE]
