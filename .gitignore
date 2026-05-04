@@ -19,9 +19,8 @@ skills/
 .venv/
 venv/
 .icloud/
-hooks/
 dist/
-build/
+/build/
 skills/
 *.exe
 .gitnexus
