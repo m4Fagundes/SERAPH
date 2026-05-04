@@ -1,0 +1,20 @@
+# requirements-macos.txt — macOS ARM64 / Apple Silicon
+# Install with: pip install -r requirements-macos.txt
+#
+# No CUDA index — torch from PyPI default includes MPS support.
+# Do NOT add an extra index URL here; it breaks platform marker behavior
+# and is unnecessary for macOS (MPS is bundled in standard torch wheels).
+Pillow>=10.4.0
+openpyxl>=3.1.0
+PyQt6>=6.0.0
+openslide-python>=1.4.0
+openslide-bin>=4.0.0
+pyvips>=2.2.0
+pyvips-binary>=8.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+cellpose>=4.0,<5.0
+scikit-image>=0.21.0
+opencv-python>=4.8.0
+psutil>=5.9.0
+scipy>=1.11.0
