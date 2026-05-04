@@ -282,8 +282,8 @@ class CellposeAdapter(IBatchSegmentationModel):
                 future.cancel()
                 return []
             except Exception as e:
-                # Check if it is a CUDA OOM error — retry on CPU if so
-                if self._gpu and self._is_cuda_oom(e):
+                # Check if it is a GPU failure (CUDA OOM or MPS unsupported op) — retry on CPU if so
+                if self._gpu and self._is_gpu_failure(e):
                     return self._retry_on_cpu(
                         image, diameter, _flow, _cellprob, original_error=e,
                     )
@@ -318,7 +318,7 @@ class CellposeAdapter(IBatchSegmentationModel):
                         tile, diameter, flow_threshold, cellprob_threshold,
                     )
                 except Exception as e:
-                    if self._gpu and self._is_cuda_oom(e):
+                    if self._gpu and self._is_gpu_failure(e):
                         tile_polygons = self._retry_on_cpu(
                             tile, diameter, flow_threshold, cellprob_threshold,
                             original_error=e,
@@ -401,10 +401,22 @@ class CellposeAdapter(IBatchSegmentationModel):
     # ── Private Methods ─────────────────────────────────────────────────────
 
     @staticmethod
-    def _is_cuda_oom(exc: Exception) -> bool:
-        """Returns True if *exc* is a CUDA out-of-memory error."""
+    def _is_gpu_failure(exc: Exception) -> bool:
+        """Returns True if exc is a GPU error that should trigger CPU fallback.
+
+        Covers:
+        - CUDA out-of-memory errors
+        - cuDNN errors
+        - MPS NotImplementedError for unsupported ops (e.g., sparse tensors in
+          Cellpose 4.x mask creation on Apple Silicon — see Cellpose issue #1063)
+        """
         msg = str(exc).lower()
-        return "cuda out of memory" in msg or "cudnn error" in msg
+        return (
+            "cuda out of memory" in msg
+            or "cudnn error" in msg
+            or "not implemented" in msg
+            or "could not run" in msg
+        )
 
     @staticmethod
     def _clear_cuda_cache() -> None:
