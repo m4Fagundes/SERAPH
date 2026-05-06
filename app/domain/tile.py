@@ -39,8 +39,8 @@ class Tile:
         # Each layer groups all polygons from one segmentation run.
         # Structure: [
         #   {
-        #     "name": "Cellpose (nuclei)",       # Display name
-        #     "model": "cellpose_nuclei",         # Model identifier
+        #     "name": "Cellpose (cpsam)",       # Display name
+        #     "model": "cellpose_cpsam",         # Model identifier
         #     "polygons": [[(x,y), ...], ...],    # List of polygon contours
         #     "visible": True,                    # Toggle visibility
         #     "color": "#FF00FF",                 # Layer color
@@ -143,7 +143,7 @@ class Tile:
         """Create a new segmentation layer and return its index.
 
         Args:
-            name: Human-readable display name (e.g. "Cellpose (nuclei)").
+            name: Human-readable display name (e.g. "Cellpose (cpsam)").
             model: Model identifier string.
             polygons: List of polygon contours  [[(x,y), ...], ...].
             color: Optional hex color. Auto-assigned if None.

@@ -33,7 +33,7 @@ class CellposeAdapter(IBatchSegmentationModel):
     nucleus segmentation through the IBatchSegmentationModel port.
 
     Usage:
-        adapter = CellposeAdapter(model_type="nuclei")
+        adapter = CellposeAdapter(model_type="cpsam")
         polygons = adapter.segment(pil_image, diameter=30.0)
     """
 
@@ -44,7 +44,7 @@ class CellposeAdapter(IBatchSegmentationModel):
 
     def __init__(
         self,
-        model_type: str = "nuclei",
+        model_type: str = "cpsam",
         gpu: Optional[bool] = None,  # None = use auto-detect configuration
         flow_threshold: float = DEFAULT_FLOW_THRESHOLD,
         cellprob_threshold: float = DEFAULT_CELLPROB_THRESHOLD,
@@ -53,7 +53,7 @@ class CellposeAdapter(IBatchSegmentationModel):
     ):
         """
         Args:
-            model_type: Cellpose model type ("nuclei", "cyto", "cyto2", etc.).
+            model_type: Cellpose model type ("cpsam", "nuclei", "cyto", "cyto2", etc.).
             gpu: Whether to attempt GPU acceleration. None = auto-detect from config.
             flow_threshold: Flow error threshold for mask quality filtering.
             cellprob_threshold: Cell probability threshold.
@@ -365,7 +365,7 @@ class CellposeAdapter(IBatchSegmentationModel):
             raise TypeError(f"Unsupported image type: {type(image)}. Expected PIL Image or NumPy array.")
 
         # 2. Pass the original RGB image to Cellpose.
-        #    For H&E images, Cellpose officially recommends using the 'nuclei' model 
+        #    For H&E images, Cellpose officially recommends using the 'cpsam' model 
         #    with channels=[3,0] (which tells it to use the Blue channel, where hematoxylin 
         #    is most prominent). Custom per-tile min-max normalization causes severe 
         #    artifacts (like segmenting whole cells) because it stretches the contrast 

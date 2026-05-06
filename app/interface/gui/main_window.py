@@ -75,7 +75,7 @@ class SlicerLabApp(QMainWindow):
         batch_models = []
         try:
             # Use auto-configuration (gpu=None for auto-detect)
-            cellpose_adapter = CellposeAdapter(model_type="nuclei", gpu=None)
+            cellpose_adapter = CellposeAdapter(model_type="cpsam", gpu=None)
             batch_models.append(cellpose_adapter)
 
             # Log the configuration used

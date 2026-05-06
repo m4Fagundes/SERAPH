@@ -34,10 +34,10 @@ def test_cellpose_model_loading():
         from cellpose import models
         
         logger.info("Testing CellposeModel instantiation...")
-        model = models.CellposeModel(pretrained_model='nuclei', gpu=False)
+        model = models.CellposeModel(pretrained_model='cpsam', gpu=False)
         
         logger.info(f"✓ CellposeModel loaded successfully")
-        logger.info(f"  - Model type: nuclei")
+        logger.info(f"  - Model type: cpsam")
         logger.info(f"  - GPU: False")
         return True
     except Exception as e:
@@ -50,10 +50,10 @@ def test_adapter_instantiation():
         from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
         
         logger.info("Testing CellposeAdapter instantiation...")
-        adapter = CellposeAdapter(model_type='nuclei', gpu=False)
+        adapter = CellposeAdapter(model_type='cpsam', gpu=False)
         
         logger.info(f"✓ CellposeAdapter initialized successfully")
-        logger.info(f"  - Model type: nuclei")
+        logger.info(f"  - Model type: cpsam")
         logger.info(f"  - GPU: False")
         return True
     except Exception as e:
@@ -78,7 +78,7 @@ def test_adapter_with_sample_image():
         # Convert to PIL Image for consistency
         test_image = Image.fromarray(test_image_array, mode='L')
         
-        adapter = CellposeAdapter(model_type='nuclei', gpu=False)
+        adapter = CellposeAdapter(model_type='cpsam', gpu=False)
         polygons = adapter.segment(test_image, diameter=30.0)
         
         logger.info(f"✓ Segmentation completed")
@@ -100,7 +100,7 @@ def test_channels_compatibility():
         from cellpose import models
         
         logger.info("Testing CP4 channel handling...")
-        model = models.CellposeModel(pretrained_model='nuclei', gpu=False)
+        model = models.CellposeModel(pretrained_model='cpsam', gpu=False)
         
         # Create test image
         test_img = np.random.randint(0, 256, (100, 100), dtype=np.uint8)

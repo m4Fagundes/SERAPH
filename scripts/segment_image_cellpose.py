@@ -143,7 +143,7 @@ def visualize_segmentation(image, mask, num_nuclei):
     cmap = plt.cm.get_cmap('tab20')
     mask_colored = cmap(mask.astype(float) / (mask.max() + 1))
     axes[1].imshow(mask_colored)
-    axes[1].set_title(f"2️⃣ Máscara Cellpose ({num_nuclei} núcleos)", 
+    axes[1].set_title(f"2️⃣ Máscara Cellpose ({num_nuclei} objetos)", 
                       fontsize=13, fontweight='bold')
     axes[1].axis('off')
     
@@ -173,7 +173,7 @@ def print_statistics(mask, num_nuclei):
     print("="*70)
     
     print(f"\n🔢 Detecção:")
-    print(f"   Total de núcleos:           {num_nuclei}")
+    print(f"   Total de objetos:           {num_nuclei}")
     print(f"   Dimensões da máscara:       {mask.shape}")
     print(f"   Tipo de dados:              {mask.dtype}")
     

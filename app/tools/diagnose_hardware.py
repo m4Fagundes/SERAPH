@@ -158,7 +158,7 @@ def test_cellpose_import():
 
         # Try to load model with GPU=False first (more reliable)
         try:
-            model = models.CellposeModel(pretrained_model='nuclei', gpu=False)
+            model = models.CellposeModel(pretrained_model='cpsam', gpu=False)
             print("✅ Cellpose CPU model loaded successfully")
             del model
         except Exception as e:
@@ -191,7 +191,7 @@ def test_cellpose_adapter():
         print("Testing CellposeAdapter initialization...")
 
         # Test with auto-config (gpu=None)
-        adapter = CellposeAdapter(model_type="nuclei", gpu=None)
+        adapter = CellposeAdapter(model_type="cpsam", gpu=None)
         print(f"✅ CellposeAdapter initialized")
         print(f"   Model type: {adapter._model_type}")
         print(f"   GPU enabled: {adapter._gpu}")

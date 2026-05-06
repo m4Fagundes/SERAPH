@@ -204,7 +204,7 @@ class MacroPipelinePanel(QDockWidget):
     def _start_pipeline(self):
         s = self.main_window.current_session
         
-        cellpose_model = "Cellpose (nuclei)"
+        cellpose_model = "Cellpose (cpsam)"
         nuclick_model = "NuClick (PyTorch)"
 
         diameter = self.main_window.spin_diameter.value()
