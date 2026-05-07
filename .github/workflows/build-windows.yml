@@ -12,6 +12,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
     - name: Checkout Repository
@@ -56,9 +58,32 @@ jobs:
       run: |
         python -m PyInstaller docs\build\main_release.spec --clean --noconfirm
 
+    - name: Verify PyInstaller output
+      run: |
+        if (-not (Test-Path "dist\GridAnalyzer\GridAnalyzer.exe")) {
+          Write-Error "PyInstaller did not produce dist\GridAnalyzer\GridAnalyzer.exe"
+          exit 1
+        }
+        Write-Host "PyInstaller output OK:"
+        Get-ChildItem dist\GridAnalyzer | Select-Object -First 20
+
     - name: Build Windows installer
       run: |
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" docs\build\installer.iss
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Inno Setup failed with exit code $LASTEXITCODE"
+          exit $LASTEXITCODE
+        }
+
+    - name: Verify installer output
+      run: |
+        if (-not (Test-Path "build_installer\GridAnalyzer_Setup.exe")) {
+          Write-Error "Inno Setup did not produce build_installer\GridAnalyzer_Setup.exe"
+          Get-ChildItem build_installer -ErrorAction SilentlyContinue
+          exit 1
+        }
+        $size = (Get-Item "build_installer\GridAnalyzer_Setup.exe").Length / 1MB
+        Write-Host "Installer created: $([math]::Round($size, 1)) MB"
 
     - name: Upload Installer Artifact
       uses: actions/upload-artifact@v4
