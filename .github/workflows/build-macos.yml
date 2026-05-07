@@ -12,6 +12,7 @@ on:
       - 'docs/build/main_release.spec'
       - 'hooks/rthook_cellpose.py'
       - 'hooks/rthook_openslide.py'
+      - 'hooks/rthook_pyvips.py'
       - '.github/workflows/build-macos.yml'
   workflow_dispatch:
 
@@ -39,6 +40,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
+      - name: Cache Cellpose model weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cellpose/models
+          key: cellpose-models-nuclei-cyto2
+
       - name: Install Homebrew dependencies
         run: |
           brew install libvips openslide
@@ -48,6 +55,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-macos.txt
           pip install pyinstaller
+
+      - name: Download Cellpose Models
+        run: |
+          python -c "from cellpose import models; models.CellposeModel(model_type='nuclei', gpu=False); models.CellposeModel(model_type='cyto2', gpu=False)"
 
       - name: Build with PyInstaller
         run: |

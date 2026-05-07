@@ -77,6 +77,28 @@ class ExportHandler:
         """)
         toolbar.addWidget(export_nuc_btn)
 
+        export_h5_btn = QPushButton("📦 Export Nuclei (HDF5)")
+        export_h5_btn.clicked.connect(self.export_nuclei_h5)
+        export_h5_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #8e44ad; 
+                color: white; 
+                border: none; 
+                border-radius: 4px; 
+                padding: 6px 15px;
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+                font-weight: bold;
+                margin-left: 5px;
+            }
+            QPushButton:hover {
+                background-color: #9b59b6;
+            }
+            QPushButton:pressed {
+                background-color: #732d91;
+            }
+        """)
+        toolbar.addWidget(export_h5_btn)
+
     def _format_changed(self, text):
         formats = {"PNG": ".png", "JPEG": ".jpg", "TIFF": ".tiff", "BMP": ".bmp", "WebP": ".webp"}
         self.mw.export_format = formats.get(text, ".png")
@@ -163,5 +185,56 @@ class ExportHandler:
             
             QMessageBox.information(self.mw, "Export Complete", f"Successfully exported {total_exported} nuclei images.")
             self.mw.statusBar().showMessage("Nuclei export complete.")
+        except Exception as e:
+            QMessageBox.critical(self.mw, "Export Error", str(e))
+
+    def export_nuclei_h5(self):
+        s = self.mw.current_session
+        if not s:
+            QMessageBox.warning(self.mw, "Export HDF5", "No image loaded.")
+            return
+            
+        if not s.tiles:
+            QMessageBox.warning(self.mw, "Export HDF5", "No slices available (please select slices first).")
+            return
+
+        available_layers = set()
+        for tile in s.tiles:
+            for layer in tile.segmentation_layers:
+                available_layers.add(layer.get("name", "Unknown"))
+                
+        if not available_layers:
+            QMessageBox.warning(self.mw, "Export HDF5", "No segmentations found in any slice.")
+            return
+            
+        from PyQt6.QtWidgets import QInputDialog
+        layer_list = ["All Segmentations"] + sorted(list(available_layers))
+        selected_layer, ok = QInputDialog.getItem(
+            self.mw, 
+            "Select Layer", 
+            "Choose which segmentation type to export to HDF5:", 
+            layer_list, 
+            0, 
+            False
+        )
+        
+        if not ok or not selected_layer:
+            return
+
+        export_file, _ = QFileDialog.getSaveFileName(
+            self.mw, "Save HDF5 File", "", "HDF5 Files (*.h5)"
+        )
+        if not export_file:
+            return
+
+        try:
+            total_exported = self.mw.export_service.export_nuclei_to_h5(
+                s, export_file, selected_layer
+            )
+            if total_exported == 0:
+                QMessageBox.information(self.mw, "Export Complete", "No nuclei found to export.")
+            else:
+                QMessageBox.information(self.mw, "Export Complete", f"Successfully exported {total_exported} nuclei to HDF5.")
+            self.mw.statusBar().showMessage("HDF5 export complete.")
         except Exception as e:
             QMessageBox.critical(self.mw, "Export Error", str(e))

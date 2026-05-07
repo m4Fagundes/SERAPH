@@ -6,8 +6,8 @@
 Pillow>=10.4.0
 openpyxl>=3.1.0
 PyQt6>=6.0.0
-openslide-python>=1.3.1
-openslide-bin>=1.4.3
+openslide-python>=1.4.0
+openslide-bin>=4.0.0
 torch==2.6.0+cu124
 torchvision==0.21.0+cu124
 cellpose>=4.0,<5.0
@@ -15,3 +15,5 @@ scikit-image>=0.21.0
 opencv-python>=4.8.0
 psutil>=5.9.0
 scipy>=1.11.0
+numpy>=1.26.0
+h5py>=3.10.0

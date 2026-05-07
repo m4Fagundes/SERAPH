@@ -60,6 +60,10 @@ packages_to_collect = [
     'numba',
     'llvmlite',
     'fastremap',
+    'numpy',      # bundles npdi and all C-extensions — prevents DLL-not-found on Windows
+    'scipy',      # bundles C-extensions used by skimage and cellpose
+    'cv2',        # bundles opencv binary extensions
+    'h5py',       # bundles HDF5 DLLs
 ]
 
 # Platform-specific native library packages
@@ -94,11 +98,27 @@ hiddenimports += [
     'torch.nn.functional',
     'torch.utils',
     'torch.utils.data',
-    # Scientific stack
+    # NumPy C-extension internals (prevents "npdi DLL not found" on Windows)
     'numpy',
+    'numpy.core',
+    'numpy.core._methods',
+    'numpy.core._multiarray_umath',
+    'numpy._core',
+    'numpy._core._multiarray_umath',
+    'numpy._core._methods',
+    # Scientific stack
     'scipy',
     'scipy.ndimage',
+    'scipy.ndimage._filters',
+    'scipy.ndimage._interpolation',
+    # OpenCV
     'cv2',
+    # HDF5
+    'h5py',
+    'h5py._hl',
+    'h5py._hl.files',
+    'h5py._hl.group',
+    'h5py._hl.dataset',
     # Imaging
     'PIL',
     'PIL.Image',
@@ -196,7 +216,7 @@ if IS_MAC:
         info_plist={
             'NSHighResolutionCapable': 'True',
             'NSRequiresIPhoneOS': False,
-            'CFBundleShortVersionString': '1.0.2',
+            'CFBundleShortVersionString': '1.2.0',
         },
     )
 

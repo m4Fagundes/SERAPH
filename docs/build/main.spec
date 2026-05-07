@@ -51,39 +51,54 @@ hiddenimports = []
 # PyTorch falha facilmente ao encontrar a libiomp5md.dll.
 # Cellpose é coletado integralmente aqui.
 packages_to_collect = [
-    'torch', 
-    'openslide_bin', 
-    'cellpose', 
-    'skimage', 
-    'numba', 
+    'torch',
+    'openslide_bin',
+    'cellpose',
+    'skimage',
+    'numba',
     'llvmlite',
-    'fastremap'
+    'fastremap',
+    'numpy',      # bundles npdi and all C-extensions — prevents DLL-not-found on Windows
+    'scipy',
+    'cv2',
+    'h5py',
 ]
 
 for pkg in packages_to_collect:
-    tmp_ret = collect_all(pkg)
-    datas     += tmp_ret[0]
-    binaries  += tmp_ret[1]
-    hiddenimports += tmp_ret[2]
+    try:
+        tmp_ret = collect_all(pkg)
+        datas     += tmp_ret[0]
+        binaries  += tmp_ret[1]
+        hiddenimports += tmp_ret[2]
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # 4. Explicit hidden imports (Fallback explícito complementar)
 # ---------------------------------------------------------------------------
 hiddenimports += [
-    # PyTorch internals (often missed on CPU-only pipelines)
+    # PyTorch internals
     'torch',
     'torch.nn',
     'torch.nn.functional',
     'torch.utils',
     'torch.utils.data',
-    'torchaudio',
-    'vtorch', # in case torchvision fails occasionally
-    # Scientific stack
+    'torchvision',
+    # NumPy C-extension internals (prevents "npdi DLL not found" on Windows)
     'numpy',
+    'numpy.core',
+    'numpy.core._methods',
+    'numpy.core._multiarray_umath',
+    'numpy._core',
+    'numpy._core._multiarray_umath',
+    # Scientific stack
     'scipy',
     'scipy.ndimage',
     'cv2',
-    # NuClick dependencies (deferred imports in adapter)
+    # HDF5
+    'h5py',
+    'h5py._hl',
+    # Imaging
     'PIL',
     'PIL.Image',
 ]

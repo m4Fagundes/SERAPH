@@ -45,7 +45,7 @@ class ExportService:
             # Apply freehand polygon mask if this is a brush slice
             if poly and len(poly) >= 3:
                 # If there's a polygon, invert mask to fully transparent (0) then paint the polygon opaque (255)
-                mask.paste(0, [0, 0, w, h])
+                mask.paste(0, (0, 0, w, h))
                 draw = ImageDraw.Draw(mask)
                 local_pts = [(x - bx1, y - by1) for (x, y) in poly]
                 draw.polygon(local_pts, fill=255)
@@ -222,3 +222,86 @@ class ExportService:
                 count += 1
                 
         return count
+
+    def export_nuclei_to_h5(self, session, output_filepath, selected_layer="All Segmentations", patient_id=0, patient_label=0, slide_id=0):
+        """
+        Extracts all nuclei from the session and exports them into an HDF5 file
+        matching the specific schema of patient_001.h5.
+        """
+        import h5py
+        import numpy as np
+        from app.application.nuclei_extraction_service import NucleiExtractionService
+        
+        extractor = NucleiExtractionService()
+        all_nuclei = []
+        
+        for i in range(len(session.tiles)):
+            nuclei_data = extractor.extract_nuclei_from_tile(session, i, selected_layer)
+            if nuclei_data:
+                all_nuclei.extend(nuclei_data)
+                
+        if not all_nuclei:
+            return 0
+            
+        max_h = 0
+        max_w = 0
+        for img, meta in all_nuclei:
+            w, h = img.size
+            if h > max_h: max_h = h
+            if w > max_w: max_w = w
+            
+        H, W = max_h, max_w
+        N = len(all_nuclei)
+        
+        images = np.zeros((N, H, W, 3), dtype=np.uint8)
+        masks = np.zeros((N, H, W), dtype=np.uint8)
+        patient_ids = np.full((N,), patient_id, dtype=np.int32)
+        patient_labels = np.full((N,), patient_label, dtype=np.int8)
+        slide_ids = np.full((N,), slide_id, dtype=np.int32)
+        roi_ids = np.zeros((N,), dtype=np.int32)
+        roi_labels = np.zeros((N,), dtype=np.int8)
+        roi_dimension = np.zeros((N, 4), dtype=np.float64)
+        
+        for i, (img, meta) in enumerate(all_nuclei):
+            w, h = img.size
+            
+            # The tensor requires fixed shape (H, W). We paste the crop at the top-left (0,0)
+            padded_img = Image.new("RGB", (W, H), (0, 0, 0))
+            padded_img.paste(img, (0, 0), mask=img.split()[3])
+            images[i] = np.array(padded_img)
+            
+            padded_mask = Image.new("L", (W, H), 0)
+            padded_mask.paste(img.split()[3], (0, 0))
+            masks[i] = np.array(padded_mask)
+            
+            gx1, gy1, gx2, gy2 = meta["global_bbox"]
+            roi_width = gx2 - gx1
+            roi_height = gy2 - gy1
+            x_coord_roi_center = gx1 + roi_width / 2.0
+            y_coord_roi_center = gy1 + roi_height / 2.0
+            
+            roi_dimension[i] = [x_coord_roi_center, y_coord_roi_center, roi_width, roi_height]
+            roi_ids[i] = meta["tile_intersection"]
+            
+        mpp = 1.0
+        if session.tiles and len(session.tiles) > 0:
+            mpp_str = session.tiles[0].metadata.get("microns_per_pixel", "")
+            try:
+                mpp = float(mpp_str) if mpp_str else 1.0
+            except (ValueError, TypeError):
+                mpp = 1.0
+                
+        pixel_size_um = np.array([mpp], dtype=np.float64)
+        
+        with h5py.File(output_filepath, 'w') as f:
+            f.create_dataset('images', data=images)
+            f.create_dataset('masks', data=masks)
+            f.create_dataset('patient_ids', data=patient_ids)
+            f.create_dataset('patient_labels', data=patient_labels)
+            f.create_dataset('slide_ids', data=slide_ids)
+            f.create_dataset('roi_ids', data=roi_ids)
+            f.create_dataset('roi_labels', data=roi_labels)
+            f.create_dataset('pixel_size_um', data=pixel_size_um)
+            f.create_dataset('roi_dimension', data=roi_dimension)
+            
+        return N

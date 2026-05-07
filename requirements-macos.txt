@@ -18,3 +18,5 @@ scikit-image>=0.21.0
 opencv-python>=4.8.0
 psutil>=5.9.0
 scipy>=1.11.0
+numpy>=1.26.0
+h5py>=3.10.0
