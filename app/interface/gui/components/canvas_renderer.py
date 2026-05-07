@@ -6,6 +6,7 @@ from PyQt6.QtGui import QPainter, QPixmap, QImage, QWheelEvent, QMouseEvent, QPe
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QObject, QRunnable, QThreadPool
 import io
 import time
+from PIL import Image
 from app.domain.selection import subtract_from_slice
 from app.application.pixel_mask_service import PixelMaskService
 from app.domain.geometry import is_point_in_polygon
@@ -138,13 +139,25 @@ class CanvasRenderer(QGraphicsView):
     def isolated_slice_idx(self, val):
         self._isolated_slice_idx = val
         self.main_window.update_tool_context(val is not None)
-        
+
         # When entering or leaving isolated mode, immediately clear all active graphics tiles
         # to guarantee strict isolation boundaries and no artifact bleeding from cached pyvips tiles.
         for k, item in list(self.tile_items.items()):
             if item != "fetching" and item.scene() == self.scene:
                 self.scene.removeItem(item)
         self.tile_items.clear()
+
+        # Sync pixel overlay here (not on every frame): build on enter, clear on exit.
+        # Scene items are in scene-space, so they move correctly with pan/zoom without rebuilding.
+        s = self.main_window.current_session
+        if val is not None and s:
+            self._rebuild_pixel_overlay(s, val)
+        else:
+            for item in self._pixel_overlay_items:
+                if item.scene() == self.scene:
+                    self.scene.removeItem(item)
+            self._pixel_overlay_items.clear()
+
         self.redraw()
 
     # ------------------------------------------------------------------
@@ -400,18 +413,6 @@ class CanvasRenderer(QGraphicsView):
                 if item != "fetching" and item.scene() == self.scene:
                     self.scene.removeItem(item)
 
-        # Sync scene-based pixel removal overlay with current mask state.
-        # This ensures correct alignment on every render: when isolation mode
-        # is activated, when the user navigates, or after session loads.
-        if self.isolated_slice_idx is not None:
-            self._rebuild_pixel_overlay(s, self.isolated_slice_idx)
-        else:
-            # Clear overlay when leaving isolation mode
-            for item in self._pixel_overlay_items:
-                if item.scene() == self.scene:
-                    self.scene.removeItem(item)
-            self._pixel_overlay_items.clear()
-        
         # Force a foreground redraw without changing tiles
         self.viewport().update()
 
@@ -510,16 +511,25 @@ class CanvasRenderer(QGraphicsView):
             show_membrane = self.main_window.chk_show_membrane.isChecked()
 
         if show_membrane:
+            _pen_cache: dict = {}
+            _brush_cache: dict = {}
+            pen_width = max(2.0 / self.viewport_zoom, 1.0)
             for tile in s.tiles:
+                # Skip tiles completely outside the visible viewport
+                sx1, sy1, sx2, sy2 = tile.bounding_box
+                if not (sx2 > left and sx1 < right and sy2 > top and sy1 < bottom):
+                    continue
                 for poly, color_hex in tile.get_visible_polygons():
-                    base_color = QColor(color_hex)
-                    fill_color = QColor(base_color)
-                    fill_color.setAlpha(80)
-                    painter.setBrush(QBrush(fill_color))
-                    poly_pen = QPen(base_color, max(2.0 / self.viewport_zoom, 1.0))
-                    poly_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                    painter.setPen(poly_pen)
-                    
+                    if color_hex not in _pen_cache:
+                        base_color = QColor(color_hex)
+                        fill_color = QColor(base_color)
+                        fill_color.setAlpha(80)
+                        pen = QPen(base_color, pen_width)
+                        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                        _pen_cache[color_hex] = pen
+                        _brush_cache[color_hex] = QBrush(fill_color)
+                    painter.setBrush(_brush_cache[color_hex])
+                    painter.setPen(_pen_cache[color_hex])
                     poly_f = QPolygonF()
                     for pt in poly:
                         poly_f.append(QPointF(pt[0], pt[1]))
