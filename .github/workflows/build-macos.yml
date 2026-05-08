@@ -94,17 +94,10 @@ jobs:
           retention-days: 30
         continue-on-error: true
 
-      - name: Compress .app to .zip
-        run: |
-          cd dist
-          zip -r GridAnalyzer-macOS.zip GridAnalyzer.app
-
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/GridAnalyzer.dmg
-            dist/GridAnalyzer-macOS.zip
+          files: dist/GridAnalyzer.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
