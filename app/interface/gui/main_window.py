@@ -55,14 +55,10 @@ class SlicerLabApp(QMainWindow):
         _cr_logger = _logging.getLogger(__name__)
 
         # Interactive models (click-based)
-        from pathlib import Path
-        _project_root = Path(__file__).resolve().parents[3]  # main_window.py → gui → interface → app → project root
 
         ml_models = []
         try:
-            nuclick_adapter = NuClickAdapter(
-                model_path=str(_project_root / "app" / "infrastructure" / "ml_models" / "nuclick_torch" / "weights" / "nuclick.pth")
-            )
+            nuclick_adapter = NuClickAdapter()
             ml_models.append(nuclick_adapter)
         except Exception as e:
             _cr_logger.error("Failed to load NuClick adapter: %s", e)

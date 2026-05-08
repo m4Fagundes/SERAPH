@@ -147,7 +147,6 @@ hiddenimports = list(set(hiddenimports))  # Remove duplicates
 # Build excludes list before Analysis — PyInstaller cannot receive None entries.
 _excludes = [
     'PyQt5', 'wx', 'PySide2', 'PySide6',
-    'nvidia',           # CPU-only build, no CUDA
     'torchaudio',       # not used by this app
     'objc' if not IS_MAC else None,   # objc only on macOS
     'win32' if not IS_WINDOWS else None,  # win32 only excluded on non-Windows
