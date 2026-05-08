@@ -4,7 +4,7 @@ tags:
   - readme
   - grid-image-analyzer
 ---
-# Tiles Grid Analyzer
+# SERAPH — Segmentation Engine for Research in Anatomical Pathology and Histology
 
 **Image and Multimedia Data Science Laboratory (IMSCIENCE)**
 
@@ -99,6 +99,7 @@ Uses a **3-tier quality strategy** to minimize RAM and maximize rendering speed:
 | ≥ 94% | Pixel-perfect — original data, no resampling | pyvips / Pillow |
 
 Two backends are supported transparently:
+
 - **pyvips** — for standard formats (TIFF, PNG, JPEG, WebP, BMP). Lazy random-access — only requested pixels are decoded.
 - **OpenSlide** — for WSI formats (`.ndpi`, `.svs`, `.mrxs`, `.scn`, `.bif`, etc.). Uses the multi-resolution pyramid embedded in the file.
 
@@ -111,12 +112,14 @@ Rubber-band selection marks rectangular grid cells as one tile. When the user re
 ### AI Segmentation Models
 
 **Interactive (click-based) — NuClick**
+
 - User clicks on the nucleus of interest inside an isolated tile
 - Screen coordinate is mapped to the absolute image pixel space (factoring zoom, camera offset, DPI)
 - NuClick model returns a binary mask → converted to a vector polygon via contour detection
 - Model weights downloaded on first use from HuggingFace (~100 MB)
 
 **Batch (whole-tile) — Cellpose**
+
 - Segments all nuclei in the entire tile in a single inference pass
 - Model: `cpsam` by default (supports `nuclei`, `cyto`, `cyto2`, and any Cellpose model type)
 - GPU auto-detected at startup (CUDA on Windows, MPS on Apple Silicon)
@@ -124,6 +127,7 @@ Rubber-band selection marks rectangular grid cells as one tile. When the user re
 - Results written to a named segmentation layer — original image is never modified
 
 **Automated Macro Pipeline**
+
 - Runs Cellpose → NuClick in sequence across every tile in the session
 - Pause / Resume / Cancel controls
 - Progress bar with per-phase timing
@@ -131,6 +135,7 @@ Rubber-band selection marks rectangular grid cells as one tile. When the user re
 ### Segmentation Layers
 
 Every inference run creates an independent **named layer** on the tile:
+
 - Multiple layers per tile (e.g., "Cellpose (cpsam)", "NuClick", "Manual")
 - Individual visibility toggle per layer
 - Per-layer color coding
