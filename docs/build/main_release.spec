@@ -148,6 +148,12 @@ hiddenimports = list(set(hiddenimports))  # Remove duplicates
 _excludes = [
     'PyQt5', 'wx', 'PySide2', 'PySide6',
     'torchaudio',       # not used by this app
+    # Exclude heavy NVIDIA packages NOT needed for inference (saves ~750 MB).
+    # We KEEP: cuda_runtime, cublas, cudnn, curand, nvjitlink, nvtx
+    'nvidia.nccl',      # multi-GPU communication — single-GPU inference only
+    'nvidia.cufft',     # FFT — not used by Cellpose/NuClick forward pass
+    'nvidia.cusolver',  # dense linear algebra solver — not needed for inference
+    'nvidia.cusparse',  # sparse matrix ops — not used
     'objc' if not IS_MAC else None,   # objc only on macOS
     'win32' if not IS_WINDOWS else None,  # win32 only excluded on non-Windows
 ]
