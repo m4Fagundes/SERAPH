@@ -38,13 +38,13 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~\.cellpose\models
-        key: cellpose-models-nuclei-cyto2
+        key: cellpose-models-cpsam
 
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
         pip install "Pillow>=10.4.0" "openpyxl>=3.1.0" "PyQt6>=6.0.0" "openslide-python>=1.4.0" "openslide-bin>=4.0.0" "cellpose>=4.0,<5.0" "scikit-image>=0.21.0" "opencv-python>=4.8.0" "psutil>=5.9.0" "scipy>=1.11.0" "numpy>=1.26.0" "h5py>=3.10.0"
-        pip install torch==2.6.0+cpu torchvision==0.21.0+cpu --index-url https://download.pytorch.org/whl/cpu
+        pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 --index-url https://download.pytorch.org/whl/cu124
         pip install pyinstaller
 
     - name: Install Inno Setup
@@ -52,7 +52,7 @@ jobs:
 
     - name: Download Cellpose Models
       run: |
-        python -c "from cellpose import models; models.CellposeModel(model_type='nuclei', gpu=False); models.CellposeModel(model_type='cyto2', gpu=False)"
+        python -c "from cellpose import models; models.CellposeModel(model_type='cpsam', gpu=False)"
 
     - name: Build app files with PyInstaller
       run: |

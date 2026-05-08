@@ -44,7 +44,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cellpose/models
-          key: cellpose-models-nuclei-cyto2
+          key: cellpose-models-cpsam
 
       - name: Install Homebrew dependencies
         run: |
@@ -58,7 +58,7 @@ jobs:
 
       - name: Download Cellpose Models
         run: |
-          python -c "from cellpose import models; models.CellposeModel(model_type='nuclei', gpu=False); models.CellposeModel(model_type='cyto2', gpu=False)"
+          python -c "from cellpose import models; models.CellposeModel(model_type='cpsam', gpu=False)"
 
       - name: Build with PyInstaller
         run: |

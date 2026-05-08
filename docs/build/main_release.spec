@@ -215,7 +215,7 @@ if IS_MAC:
         info_plist={
             'NSHighResolutionCapable': 'True',
             'NSRequiresIPhoneOS': False,
-            'CFBundleShortVersionString': '1.2.1',
+            'CFBundleShortVersionString': '1.2.2',
         },
     )
 
