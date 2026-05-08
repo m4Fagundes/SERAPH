@@ -88,7 +88,7 @@ class PropertiesPanel(QDockWidget):
         self.input_comment.setPlaceholderText("Any additional comments...")
         
         self.form_layout.addRow("Name:", self.input_name)
-        self.form_layout.addRow("Microns/Pixel:", self.input_microns)
+        self.form_layout.addRow("µm/px (WSI):", self.input_microns)
         self.form_layout.addRow("Description:", self.input_desc)
         self.form_layout.addRow("Comment:", self.input_comment)
         
@@ -159,15 +159,19 @@ class PropertiesPanel(QDockWidget):
         
     def load_tile(self, tile):
         """Populate the panel with a specific Tile's metadata block and enable edits."""
-        self._current_tile = None # unbind temporarily to prevent auto-save triggering on load
-        
-        # Default fallback
+        self._current_tile = None  # unbind temporarily to prevent auto-save triggering on load
+
         meta = tile.metadata
         self.input_name.setText(meta.get("name", ""))
-        self.input_microns.setText(meta.get("microns_per_pixel", ""))
+
+        # Resolution is WSI-level — read from session, fallback to tile for old projects
+        session = getattr(self._main_window, "current_session", None)
+        mpp = session.microns_per_pixel if session else meta.get("microns_per_pixel", "")
+        self.input_microns.setText(mpp)
+
         self.input_desc.setPlainText(meta.get("description", ""))
         self.input_comment.setPlainText(meta.get("comment", ""))
-        
+
         self.container.setEnabled(True)
         self._current_tile = tile
 
@@ -184,9 +188,16 @@ class PropertiesPanel(QDockWidget):
         """Auto-save changes to the currently bound Tile entity."""
         if self._current_tile is None:
             return
-            
+
         m = self._current_tile.metadata
         m["name"] = self.input_name.text()
-        m["microns_per_pixel"] = self.input_microns.text()
         m["description"] = self.input_desc.toPlainText()
         m["comment"] = self.input_comment.toPlainText()
+
+        # Resolution is WSI-level — propagate to all tiles via session
+        mpp_value = self.input_microns.text()
+        session = getattr(self._main_window, "current_session", None)
+        if session is not None:
+            session.set_microns_per_pixel(mpp_value)
+        else:
+            m["microns_per_pixel"] = mpp_value

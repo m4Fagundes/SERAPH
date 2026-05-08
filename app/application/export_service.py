@@ -242,19 +242,12 @@ class ExportService:
                 
         if not all_nuclei:
             return 0
-            
-        max_h = 0
-        max_w = 0
-        for img, meta in all_nuclei:
-            w, h = img.size
-            if h > max_h: max_h = h
-            if w > max_w: max_w = w
-            
-        H, W = max_h, max_w
+
+        CANVAS = 300
         N = len(all_nuclei)
-        
-        images = np.zeros((N, H, W, 3), dtype=np.uint8)
-        masks = np.zeros((N, H, W), dtype=np.uint8)
+
+        images = np.zeros((N, CANVAS, CANVAS, 3), dtype=np.uint8)
+        masks = np.zeros((N, CANVAS, CANVAS), dtype=np.uint8)
         patient_ids = np.full((N,), patient_id, dtype=np.int32)
         patient_labels = np.full((N,), patient_label, dtype=np.int8)
         slide_ids = np.full((N,), slide_id, dtype=np.int32)
@@ -264,14 +257,22 @@ class ExportService:
         
         for i, (img, meta) in enumerate(all_nuclei):
             w, h = img.size
-            
-            # The tensor requires fixed shape (H, W). We paste the crop at the top-left (0,0)
-            padded_img = Image.new("RGB", (W, H), (0, 0, 0))
-            padded_img.paste(img, (0, 0), mask=img.split()[3])
+
+            # Downscale if nucleus is larger than the canvas
+            if w > CANVAS or h > CANVAS:
+                ratio = min(CANVAS / w, CANVAS / h)
+                img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+                w, h = img.size
+
+            ox = (CANVAS - w) // 2
+            oy = (CANVAS - h) // 2
+
+            padded_img = Image.new("RGB", (CANVAS, CANVAS), (0, 0, 0))
+            padded_img.paste(img, (ox, oy), mask=img.split()[3])
             images[i] = np.array(padded_img)
-            
-            padded_mask = Image.new("L", (W, H), 0)
-            padded_mask.paste(img.split()[3], (0, 0))
+
+            padded_mask = Image.new("L", (CANVAS, CANVAS), 0)
+            padded_mask.paste(img.split()[3], (ox, oy))
             masks[i] = np.array(padded_mask)
             
             gx1, gy1, gx2, gy2 = meta["global_bbox"]
@@ -284,18 +285,23 @@ class ExportService:
             roi_ids[i] = meta["tile_intersection"]
             
         mpp = 1.0
-        if session.tiles and len(session.tiles) > 0:
-            mpp_str = session.tiles[0].metadata.get("microns_per_pixel", "")
-            try:
-                mpp = float(mpp_str) if mpp_str else 1.0
-            except (ValueError, TypeError):
-                mpp = 1.0
+        mpp_str = getattr(session, "microns_per_pixel", "") or (
+            session.tiles[0].metadata.get("microns_per_pixel", "") if session.tiles else ""
+        )
+        try:
+            mpp = float(mpp_str) if mpp_str else 1.0
+        except (ValueError, TypeError):
+            mpp = 1.0
                 
         pixel_size_um = np.array([mpp], dtype=np.float64)
         
         with h5py.File(output_filepath, 'w') as f:
-            f.create_dataset('images', data=images)
-            f.create_dataset('masks', data=masks)
+            f.create_dataset('images', data=images,
+                             chunks=(1, CANVAS, CANVAS, 3),
+                             compression='gzip', compression_opts=4)
+            f.create_dataset('masks', data=masks,
+                             chunks=(1, CANVAS, CANVAS),
+                             compression='gzip', compression_opts=4)
             f.create_dataset('patient_ids', data=patient_ids)
             f.create_dataset('patient_labels', data=patient_labels)
             f.create_dataset('slide_ids', data=slide_ids)

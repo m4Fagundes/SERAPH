@@ -298,30 +298,32 @@ class SlicePreviews(QWidget):
         layout = QFormLayout(dialog)
         
         name_input = QLineEdit(meta.get("name", ""))
-        microns_input = QLineEdit(meta.get("microns_per_pixel", ""))
-        
+        # Resolution is WSI-level — read from session
+        microns_input = QLineEdit(s.microns_per_pixel)
+
         desc_input = QTextEdit()
         desc_input.setPlainText(meta.get("description", ""))
         desc_input.setMaximumHeight(80)
-        
+
         comment_input = QTextEdit()
         comment_input.setPlainText(meta.get("comment", ""))
         comment_input.setMaximumHeight(80)
-        
+
         layout.addRow("Name:", name_input)
-        layout.addRow("Microns/Pixel:", microns_input)
+        layout.addRow("µm/px (WSI):", microns_input)
         layout.addRow("Description:", desc_input)
         layout.addRow("Comment:", comment_input)
-        
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addRow(buttons)
-        
+
         if dialog.exec() == QDialog.DialogCode.Accepted:
             meta["name"] = name_input.text().strip()
-            meta["microns_per_pixel"] = microns_input.text().strip()
             meta["description"] = desc_input.toPlainText().strip()
             meta["comment"] = comment_input.toPlainText().strip()
+            # Resolution is WSI-level — propagate to all tiles
+            s.set_microns_per_pixel(microns_input.text().strip())
             # Force UI update if name changed
             self.update_previews()

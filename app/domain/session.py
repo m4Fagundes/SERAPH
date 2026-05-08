@@ -46,6 +46,8 @@ class ImageSession:
         self.tiles: List[Tile] = []
         self.segmentations: List[List[Tuple[int, int]]] = []
 
+        self.microns_per_pixel: str = ""
+
         self.export_dir: Optional[str] = None
         self.export_format: Optional[str] = None
 
@@ -69,6 +71,12 @@ class ImageSession:
         """Move the camera position."""
         self.camera_x = camera_x
         self.camera_y = camera_y
+
+    def set_microns_per_pixel(self, value: str) -> None:
+        """Set resolution at WSI level and propagate to all tiles."""
+        self.microns_per_pixel = value
+        for tile in self.tiles:
+            tile.metadata["microns_per_pixel"] = value
 
     def set_export_settings(self, export_dir: str, export_format: str) -> None:
         """Set the export directory and format."""

@@ -107,6 +107,11 @@ class ProjectService:
                     color = LAYER_COLORS[i % len(LAYER_COLORS)]
                     s.tiles[0].add_layer(model, model, polys, color)
             
+            # WSI-level resolution — backfill from first tile for old projects
+            s.microns_per_pixel = item.get("microns_per_pixel", "")
+            if not s.microns_per_pixel and s.tiles:
+                s.microns_per_pixel = s.tiles[0].metadata.get("microns_per_pixel", "")
+
             s.grid_color = item.get("grid_color", "#FFFF00")
             # Resolve export_dir relative path
             raw_export_dir = item.get("export_dir", None)
@@ -151,6 +156,7 @@ class ProjectService:
                 "abs_path": os.path.abspath(s.path),
                 "grid_w": s.grid_w,
                 "grid_h": s.grid_h,
+                "microns_per_pixel": s.microns_per_pixel,
                 "tiles": [t.serialize() for t in s.tiles],
                 "segmentations": [],  # kept empty for backward compat; actual data is in tiles
                 "grid_color": s.grid_color,
