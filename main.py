@@ -37,9 +37,18 @@ def main() -> None:
             stacklevel=1,
         )
     from PyQt6.QtWidgets import QApplication
+    from app.interface.gui.splash_screen import SeraphSplashScreen
+
     app = QApplication(sys.argv)
+
+    splash = SeraphSplashScreen()
+    splash.show()
+    app.processEvents()
+
+    splash.set_status("Loading models and services…")
     window = SlicerLabApp()
-    window.show()
+
+    splash.finish(window)
     sys.exit(app.exec())
 
 
