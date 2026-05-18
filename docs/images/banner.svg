@@ -1,0 +1,121 @@
+<svg width="900" height="300" viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#080d18"/>
+    </linearGradient>
+    <radialGradient id="centerGlow" cx="50%" cy="42%" r="42%">
+      <stop offset="0%"   stop-color="#0e2640" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0d1117" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="titleGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/>
+      <feColorMatrix in="blur" type="matrix"
+        values="0 0 0 0 0.31  0 0 0 0 0.76  0 0 0 0 0.97  0 0 0 0.55 0" result="colored"/>
+      <feMerge>
+        <feMergeNode in="colored"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="300" rx="16" fill="url(#bg)"/>
+  <rect width="900" height="300" rx="16" fill="url(#centerGlow)"/>
+  <!-- Border -->
+  <rect x="1" y="1" width="898" height="298" rx="15" fill="none" stroke="#1e4060" stroke-width="1.5"/>
+  <!-- Inner border glow -->
+  <rect x="3" y="3" width="894" height="294" rx="14" fill="none" stroke="#1a3555" stroke-width="0.4" opacity="0.5"/>
+
+  <!-- ── Top-right cell cluster ── -->
+  <circle cx="840" cy="62"  r="55" fill="none" stroke="#152a40" stroke-width="1.2"/>
+  <circle cx="840" cy="62"  r="37" fill="none" stroke="#1a3555" stroke-width="0.9"/>
+  <circle cx="840" cy="62"  r="20" fill="none" stroke="#4FC3F7"  stroke-width="0.6" opacity="0.3"/>
+  <circle cx="840" cy="62"  r="6"  fill="#4FC3F7" opacity="0.12"/>
+  <!-- nucleus dot -->
+  <circle cx="840" cy="62"  r="2.5" fill="#4FC3F7" opacity="0.4"/>
+
+  <circle cx="878" cy="118" r="26" fill="none" stroke="#152a40" stroke-width="0.9"/>
+  <circle cx="878" cy="118" r="14" fill="none" stroke="#1a3555" stroke-width="0.6"/>
+  <circle cx="878" cy="118" r="4"  fill="#1a3555" opacity="0.6"/>
+
+  <circle cx="808" cy="22"  r="13" fill="none" stroke="#152a40" stroke-width="0.7"/>
+  <circle cx="808" cy="22"  r="6"  fill="none" stroke="#1a3555" stroke-width="0.5"/>
+
+  <!-- ── Bottom-left cell cluster ── -->
+  <circle cx="62"  cy="242" r="48" fill="none" stroke="#152a40" stroke-width="1.1"/>
+  <circle cx="62"  cy="242" r="30" fill="none" stroke="#1a3555" stroke-width="0.8"/>
+  <circle cx="62"  cy="242" r="14" fill="none" stroke="#4FC3F7"  stroke-width="0.5" opacity="0.25"/>
+  <circle cx="62"  cy="242" r="2.5" fill="#4FC3F7" opacity="0.3"/>
+
+  <circle cx="22"  cy="198" r="20" fill="none" stroke="#152a40" stroke-width="0.8"/>
+  <circle cx="22"  cy="198" r="9"  fill="none" stroke="#1a3555" stroke-width="0.5"/>
+
+  <!-- ── Bottom-right accent ── -->
+  <circle cx="862" cy="258" r="22" fill="none" stroke="#152a40" stroke-width="0.8"/>
+  <circle cx="862" cy="258" r="10" fill="none" stroke="#1a3555" stroke-width="0.5"/>
+  <circle cx="862" cy="258" r="2.5" fill="#1a3555" opacity="0.5"/>
+
+  <!-- ── Top-left accent ── -->
+  <circle cx="32"  cy="48"  r="16" fill="none" stroke="#152a40" stroke-width="0.7"/>
+  <circle cx="32"  cy="48"  r="7"  fill="none" stroke="#1a3555" stroke-width="0.5"/>
+
+  <!-- ── Subtle horizontal scan lines (scientific feel) ── -->
+  <line x1="120" y1="50"  x2="680" y2="50"  stroke="#1a2a38" stroke-width="0.4" stroke-dasharray="3 8"/>
+  <line x1="120" y1="260" x2="680" y2="260" stroke="#1a2a38" stroke-width="0.4" stroke-dasharray="3 8"/>
+
+  <!-- ── Main title ── -->
+  <text x="450" y="124"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="76"
+        font-weight="700"
+        fill="#4FC3F7"
+        text-anchor="middle"
+        letter-spacing="18"
+        filter="url(#titleGlow)">SERAPH</text>
+
+  <!-- ── Divider ── -->
+  <line x1="155" y1="148" x2="745" y2="148" stroke="#1e4060" stroke-width="1"/>
+  <circle cx="155" cy="148" r="2.5" fill="#1e4060"/>
+  <circle cx="745" cy="148" r="2.5" fill="#1e4060"/>
+  <!-- center diamond -->
+  <polygon points="450,144 454,148 450,152 446,148" fill="#4FC3F7" opacity="0.45"/>
+
+  <!-- ── Acronym subtitle ── -->
+  <text x="450" y="178"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="14.5"
+        text-anchor="middle"
+        fill="#8899aa"
+        letter-spacing="0.2">
+    <tspan fill="#4FC3F7" font-weight="700">S</tspan><tspan>egmentation </tspan><tspan fill="#4FC3F7" font-weight="700">E</tspan><tspan>ngine for </tspan><tspan fill="#4FC3F7" font-weight="700">R</tspan><tspan>esearch in </tspan><tspan fill="#4FC3F7" font-weight="700">A</tspan><tspan>natomical </tspan><tspan fill="#4FC3F7" font-weight="700">P</tspan><tspan>athology and </tspan><tspan fill="#4FC3F7" font-weight="700">H</tspan><tspan>istology</tspan>
+  </text>
+
+  <!-- ── Bottom thin rule ── -->
+  <line x1="310" y1="213" x2="590" y2="213" stroke="#192838" stroke-width="1"/>
+
+  <!-- ── Lab name ── -->
+  <text x="450" y="238"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="11.5"
+        text-anchor="middle"
+        fill="#3d6070"
+        letter-spacing="0.5">Image and Multimedia Data Science Laboratory · IMSCIENCE</text>
+
+  <!-- ── Tech stack pill ── -->
+  <rect x="330" y="252" width="240" height="24" rx="12" fill="#0b1e30" stroke="#1e4060" stroke-width="1"/>
+  <text x="450" y="268"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="11"
+        text-anchor="middle"
+        fill="#4FC3F7"
+        opacity="0.65"
+        letter-spacing="0.8">PyQt6 · Cellpose · NuClick · OpenSlide</text>
+</svg>
