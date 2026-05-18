@@ -221,6 +221,19 @@ class ExportHandler:
         if not ok or not selected_layer:
             return
 
+        label_items = ["0 — Low Risk", "1 — High Risk"]
+        label_text, ok = QInputDialog.getItem(
+            self.mw,
+            "Patient Label",
+            "Is this patient High Risk or Low Risk?",
+            label_items,
+            0,
+            False
+        )
+        if not ok:
+            return
+        patient_label = int(label_text[0])
+
         export_file, _ = QFileDialog.getSaveFileName(
             self.mw, "Save HDF5 File", "", "HDF5 Files (*.h5)"
         )
@@ -229,7 +242,7 @@ class ExportHandler:
 
         try:
             total_exported = self.mw.export_service.export_nuclei_to_h5(
-                s, export_file, selected_layer
+                s, export_file, selected_layer, patient_label=patient_label
             )
             if total_exported == 0:
                 QMessageBox.information(self.mw, "Export Complete", "No nuclei found to export.")

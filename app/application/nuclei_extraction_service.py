@@ -93,7 +93,8 @@ class NucleiExtractionService:
                     metadata = {
                         "nucleus_id": nucleus_id,
                         "global_bbox": poly_rect,
-                        "tile_intersection": tile_idx
+                        "tile_intersection": tile_idx,
+                        "roi_name": tile.metadata.get("name", "")
                     }
                     
                     extracted_nuclei.append((nucleus_img, metadata))

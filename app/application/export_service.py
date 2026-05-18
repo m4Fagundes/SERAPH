@@ -223,23 +223,30 @@ class ExportService:
                 
         return count
 
-    def export_nuclei_to_h5(self, session, output_filepath, selected_layer="All Segmentations", patient_id=0, patient_label=0, slide_id=0):
+    def export_nuclei_to_h5(self, session, output_filepath, selected_layer="All Segmentations", patient_label=0):
         """
         Extracts all nuclei from the session and exports them into an HDF5 file
         matching the specific schema of patient_001.h5.
         """
+        import re
         import h5py
         import numpy as np
         from app.application.nuclei_extraction_service import NucleiExtractionService
-        
+
+        # Derive patient_id and slide_id from the filename
+        base_name = os.path.splitext(session.name)[0]
+        m = re.search(r'\d+', base_name)
+        patient_id = int(m.group()) if m else 0
+        slide_id_str = base_name
+
         extractor = NucleiExtractionService()
         all_nuclei = []
-        
+
         for i in range(len(session.tiles)):
             nuclei_data = extractor.extract_nuclei_from_tile(session, i, selected_layer)
             if nuclei_data:
                 all_nuclei.extend(nuclei_data)
-                
+
         if not all_nuclei:
             return 0
 
@@ -250,11 +257,10 @@ class ExportService:
         masks = np.zeros((N, CANVAS, CANVAS), dtype=np.uint8)
         patient_ids = np.full((N,), patient_id, dtype=np.int32)
         patient_labels = np.full((N,), patient_label, dtype=np.int8)
-        slide_ids = np.full((N,), slide_id, dtype=np.int32)
-        roi_ids = np.zeros((N,), dtype=np.int32)
         roi_labels = np.zeros((N,), dtype=np.int8)
         roi_dimension = np.zeros((N, 4), dtype=np.float64)
-        
+        roi_id_list = []
+
         for i, (img, meta) in enumerate(all_nuclei):
             w, h = img.size
 
@@ -274,16 +280,18 @@ class ExportService:
             padded_mask = Image.new("L", (CANVAS, CANVAS), 0)
             padded_mask.paste(img.split()[3], (ox, oy))
             masks[i] = np.array(padded_mask)
-            
+
             gx1, gy1, gx2, gy2 = meta["global_bbox"]
             roi_width = gx2 - gx1
             roi_height = gy2 - gy1
             x_coord_roi_center = gx1 + roi_width / 2.0
             y_coord_roi_center = gy1 + roi_height / 2.0
-            
             roi_dimension[i] = [x_coord_roi_center, y_coord_roi_center, roi_width, roi_height]
-            roi_ids[i] = meta["tile_intersection"]
-            
+
+            roi_name = meta.get("roi_name", "")
+            roi_id_list.append(roi_name)
+            roi_labels[i] = 1 if "INV" in roi_name.upper() else 0
+
         mpp = 1.0
         mpp_str = getattr(session, "microns_per_pixel", "") or (
             session.tiles[0].metadata.get("microns_per_pixel", "") if session.tiles else ""
@@ -292,9 +300,10 @@ class ExportService:
             mpp = float(mpp_str) if mpp_str else 1.0
         except (ValueError, TypeError):
             mpp = 1.0
-                
+
         pixel_size_um = np.array([mpp], dtype=np.float64)
-        
+        str_dt = h5py.string_dtype()
+
         with h5py.File(output_filepath, 'w') as f:
             f.create_dataset('images', data=images,
                              chunks=(1, CANVAS, CANVAS, 3),
@@ -304,10 +313,10 @@ class ExportService:
                              compression='gzip', compression_opts=4)
             f.create_dataset('patient_ids', data=patient_ids)
             f.create_dataset('patient_labels', data=patient_labels)
-            f.create_dataset('slide_ids', data=slide_ids)
-            f.create_dataset('roi_ids', data=roi_ids)
+            f.create_dataset('slide_ids', data=np.array([slide_id_str] * N, dtype=object), dtype=str_dt)
+            f.create_dataset('roi_ids', data=np.array(roi_id_list, dtype=object), dtype=str_dt)
             f.create_dataset('roi_labels', data=roi_labels)
             f.create_dataset('pixel_size_um', data=pixel_size_um)
             f.create_dataset('roi_dimension', data=roi_dimension)
-            
+
         return N
