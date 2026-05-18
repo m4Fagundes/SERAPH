@@ -225,12 +225,21 @@ class ExportService:
 
     def export_nuclei_to_h5(self, session, output_filepath, selected_layer="All Segmentations", patient_label=0, progress_callback=None):
         """
-        Exports all nuclei to HDF5 using the fastest path available.
+        Exports all nuclei to HDF5.
 
-        Fast path  — tries to allocate all pixel arrays in RAM and write in one
-                     bulk operation (fastest I/O).
-        Stream path — falls back automatically if RAM is insufficient; writes one
-                      nucleus at a time so memory usage stays constant (~2 MB).
+        Schema (confirmed with Shifat):
+          images         (N,300,300,3) uint8
+          masks          (N,300,300)   uint8
+          patient_ids    (N,)          int32   — numeric from filename
+          patient_labels (N,)          str     — 'LR' or 'HR'
+          slide_ids      (N,)          str     — filename without extension
+          roi_ids        (N,)          int32   — unique sequential ID per nucleus
+          roi_labels     (N,)          str     — ROI name ('INV', 'M', 'N', ...)
+          pixel_size_um  (1,)          float64
+          roi_dimension  (N,4)         float64 — cx, cy, w, h in global pixels
+
+        Fast path  — allocates all pixel arrays in RAM, writes in one shot.
+        Stream path — automatic fallback when RAM is insufficient (~1 MB constant).
         """
         import re
         import h5py
@@ -239,10 +248,11 @@ class ExportService:
 
         base_name = os.path.splitext(session.name)[0]
         m = re.search(r'\d+', base_name)
-        patient_id = int(m.group()) if m else 0
-        slide_id_str = base_name
+        patient_id    = int(m.group()) if m else 0
+        slide_id_str  = base_name
+        patient_lbl_str = 'HR' if patient_label == 1 else 'LR'
 
-        # Count total nuclei without extracting pixels (cheap)
+        # Count total nuclei without pixel extraction (cheap)
         N = 0
         for tile in session.tiles:
             for layer in tile.segmentation_layers:
@@ -254,7 +264,6 @@ class ExportService:
             return 0
 
         CANVAS = 300
-        str_dt = h5py.string_dtype()
 
         mpp = 1.0
         mpp_str = getattr(session, "microns_per_pixel", "") or (
@@ -265,124 +274,106 @@ class ExportService:
         except (ValueError, TypeError):
             mpp = 1.0
 
+        str_dt    = h5py.string_dtype()
         extractor = NucleiExtractionService()
 
-        # ── Probe available RAM before doing any pixel work ───────────────────
+        def _process_nucleus(img):
+            w, h = img.size
+            if w > CANVAS or h > CANVAS:
+                ratio = min(CANVAS / w, CANVAS / h)
+                img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+                w, h = img.size
+            ox, oy = (CANVAS - w) // 2, (CANVAS - h) // 2
+            padded_img = Image.new("RGB", (CANVAS, CANVAS), (0, 0, 0))
+            padded_img.paste(img, (ox, oy), mask=img.split()[3])
+            padded_msk = Image.new("L", (CANVAS, CANVAS), 0)
+            padded_msk.paste(img.split()[3], (ox, oy))
+            return np.array(padded_img), np.array(padded_msk)
+
+        # ── Probe RAM ────────────────────────────────────────────────────────
         try:
-            images       = np.zeros((N, CANVAS, CANVAS, 3), dtype=np.uint8)
-            masks        = np.zeros((N, CANVAS, CANVAS),    dtype=np.uint8)
-            patient_ids  = np.full((N,), patient_id,    dtype=np.int32)
-            patient_lbls = np.full((N,), patient_label, dtype=np.int8)
-            roi_labels   = np.zeros((N,),    dtype=np.int8)
-            roi_dim      = np.zeros((N, 4),  dtype=np.float64)
-            roi_id_list  = [""] * N
-            fast_path    = True
+            images    = np.zeros((N, CANVAS, CANVAS, 3), dtype=np.uint8)
+            masks     = np.zeros((N, CANVAS, CANVAS),    dtype=np.uint8)
+            fast_path = True
         except MemoryError:
             fast_path = False
-            logger.warning("Not enough RAM for bulk HDF5 export (%d nuclei) — switching to streaming mode.", N)
+            logger.warning("RAM insuficiente para %d núcleos — usando modo streaming.", N)
 
-        # ── FAST PATH: fill arrays in RAM, write everything at once ──────────
+        # ── FAST PATH ────────────────────────────────────────────────────────
         if fast_path:
+            patient_ids  = np.full((N,), patient_id, dtype=np.int32)
+            roi_ids      = np.zeros((N,), dtype=np.int32)  # unique ID per slide/ROI
+            roi_dim      = np.zeros((N, 4), dtype=np.float64)
+            pat_lbl_arr  = np.array([patient_lbl_str] * N, dtype=object)
+            slide_id_arr = np.array([slide_id_str]    * N, dtype=object)
+            roi_lbl_arr  = np.empty(N, dtype=object)
+
             idx = 0
             for tile_idx in range(len(session.tiles)):
                 for img, meta in extractor.extract_nuclei_from_tile(session, tile_idx, selected_layer):
-                    w, h = img.size
-                    if w > CANVAS or h > CANVAS:
-                        ratio = min(CANVAS / w, CANVAS / h)
-                        img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
-                        w, h = img.size
-
-                    ox, oy = (CANVAS - w) // 2, (CANVAS - h) // 2
-
-                    padded = Image.new("RGB", (CANVAS, CANVAS), (0, 0, 0))
-                    padded.paste(img, (ox, oy), mask=img.split()[3])
-                    images[idx] = np.array(padded)
-
-                    pmask = Image.new("L", (CANVAS, CANVAS), 0)
-                    pmask.paste(img.split()[3], (ox, oy))
-                    masks[idx] = np.array(pmask)
+                    images[idx], masks[idx] = _process_nucleus(img)
 
                     gx1, gy1, gx2, gy2 = meta["global_bbox"]
                     rw, rh = gx2 - gx1, gy2 - gy1
                     roi_dim[idx] = [gx1 + rw / 2.0, gy1 + rh / 2.0, rw, rh]
-
-                    roi_name = meta.get("roi_name", "")
-                    roi_id_list[idx] = roi_name
-                    roi_labels[idx]  = 1 if "INV" in roi_name.upper() else 0
+                    roi_ids[idx]     = meta["tile_intersection"]
+                    roi_lbl_arr[idx] = meta.get("roi_name", "")
 
                     idx += 1
                     if progress_callback:
                         progress_callback(idx, N)
 
             with h5py.File(output_filepath, 'w') as f:
-                f.create_dataset('images',    data=images,
+                f.create_dataset('images',         data=images,
                                  chunks=(1, CANVAS, CANVAS, 3),
                                  compression='gzip', compression_opts=4)
-                f.create_dataset('masks',     data=masks,
+                f.create_dataset('masks',          data=masks,
                                  chunks=(1, CANVAS, CANVAS),
                                  compression='gzip', compression_opts=4)
                 f.create_dataset('patient_ids',    data=patient_ids)
-                f.create_dataset('patient_labels', data=patient_lbls)
-                f.create_dataset('slide_ids',  data=np.array([slide_id_str] * N, dtype=object), dtype=str_dt)
-                f.create_dataset('roi_ids',    data=np.array(roi_id_list, dtype=object),         dtype=str_dt)
-                f.create_dataset('roi_labels', data=roi_labels)
+                f.create_dataset('patient_labels', data=pat_lbl_arr,  dtype=str_dt)
+                f.create_dataset('slide_ids',      data=slide_id_arr, dtype=str_dt)
+                f.create_dataset('roi_ids',        data=roi_ids)
+                f.create_dataset('roi_labels',     data=roi_lbl_arr,  dtype=str_dt)
                 f.create_dataset('pixel_size_um',  data=np.array([mpp], dtype=np.float64))
                 f.create_dataset('roi_dimension',  data=roi_dim)
 
-        # ── STREAM PATH: one nucleus at a time, constant ~2 MB RAM ───────────
+        # ── STREAM PATH ──────────────────────────────────────────────────────
         else:
             buf_img  = np.zeros((CANVAS, CANVAS, 3), dtype=np.uint8)
             buf_mask = np.zeros((CANVAS, CANVAS),    dtype=np.uint8)
 
             with h5py.File(output_filepath, 'w') as f:
-                ds_images = f.create_dataset('images', shape=(N, CANVAS, CANVAS, 3),
-                                             dtype=np.uint8,
-                                             chunks=(1, CANVAS, CANVAS, 3),
-                                             compression='gzip', compression_opts=4)
-                ds_masks  = f.create_dataset('masks', shape=(N, CANVAS, CANVAS),
-                                             dtype=np.uint8,
-                                             chunks=(1, CANVAS, CANVAS),
-                                             compression='gzip', compression_opts=4)
-                ds_pat_ids   = f.create_dataset('patient_ids',    shape=(N,), dtype=np.int32)
-                ds_pat_lbls  = f.create_dataset('patient_labels', shape=(N,), dtype=np.int8)
-                ds_slide_ids = f.create_dataset('slide_ids',      shape=(N,), dtype=str_dt)
-                ds_roi_ids   = f.create_dataset('roi_ids',        shape=(N,), dtype=str_dt)
-                ds_roi_lbls  = f.create_dataset('roi_labels',     shape=(N,), dtype=np.int8)
-                ds_roi_dim   = f.create_dataset('roi_dimension',  shape=(N, 4), dtype=np.float64)
+                ds_img  = f.create_dataset('images',  shape=(N, CANVAS, CANVAS, 3), dtype=np.uint8,
+                                           chunks=(1, CANVAS, CANVAS, 3),
+                                           compression='gzip', compression_opts=4)
+                ds_msk  = f.create_dataset('masks',   shape=(N, CANVAS, CANVAS),    dtype=np.uint8,
+                                           chunks=(1, CANVAS, CANVAS),
+                                           compression='gzip', compression_opts=4)
+                ds_pid  = f.create_dataset('patient_ids',    shape=(N,), dtype=np.int32)
+                ds_plbl = f.create_dataset('patient_labels', shape=(N,), dtype=str_dt)
+                ds_sid  = f.create_dataset('slide_ids',      shape=(N,), dtype=str_dt)
+                ds_rid  = f.create_dataset('roi_ids',        shape=(N,), dtype=np.int32)
+                ds_rlbl = f.create_dataset('roi_labels',     shape=(N,), dtype=str_dt)
+                ds_rdim = f.create_dataset('roi_dimension',  shape=(N, 4), dtype=np.float64)
                 f.create_dataset('pixel_size_um', data=np.array([mpp], dtype=np.float64))
 
                 idx = 0
                 for tile_idx in range(len(session.tiles)):
                     for img, meta in extractor.extract_nuclei_from_tile(session, tile_idx, selected_layer):
-                        w, h = img.size
-                        if w > CANVAS or h > CANVAS:
-                            ratio = min(CANVAS / w, CANVAS / h)
-                            img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
-                            w, h = img.size
-
-                        ox, oy = (CANVAS - w) // 2, (CANVAS - h) // 2
-
-                        padded = Image.new("RGB", (CANVAS, CANVAS), (0, 0, 0))
-                        padded.paste(img, (ox, oy), mask=img.split()[3])
-                        buf_img[:] = np.array(padded)
-
-                        pmask = Image.new("L", (CANVAS, CANVAS), 0)
-                        pmask.paste(img.split()[3], (ox, oy))
-                        buf_mask[:] = np.array(pmask)
-
-                        ds_images[idx] = buf_img
-                        ds_masks[idx]  = buf_mask
+                        buf_img[:], buf_mask[:] = _process_nucleus(img)
+                        ds_img[idx] = buf_img
+                        ds_msk[idx] = buf_mask
 
                         gx1, gy1, gx2, gy2 = meta["global_bbox"]
                         rw, rh = gx2 - gx1, gy2 - gy1
-                        ds_roi_dim[idx] = [gx1 + rw / 2.0, gy1 + rh / 2.0, rw, rh]
+                        ds_rdim[idx] = [gx1 + rw / 2.0, gy1 + rh / 2.0, rw, rh]
 
-                        roi_name = meta.get("roi_name", "")
-                        ds_pat_ids[idx]   = patient_id
-                        ds_pat_lbls[idx]  = patient_label
-                        ds_slide_ids[idx] = slide_id_str
-                        ds_roi_ids[idx]   = roi_name
-                        ds_roi_lbls[idx]  = 1 if "INV" in roi_name.upper() else 0
+                        ds_pid[idx]  = patient_id
+                        ds_plbl[idx] = patient_lbl_str
+                        ds_sid[idx]  = slide_id_str
+                        ds_rid[idx]  = meta["tile_intersection"]    # unique per slide/ROI
+                        ds_rlbl[idx] = meta.get("roi_name", "")
 
                         idx += 1
                         if progress_callback:
