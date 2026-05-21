@@ -12,20 +12,20 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter
+from app.interface.gui.theme import PALETTE, btn_danger
 
 logger = logging.getLogger(__name__)
 
 
-def _color_icon(hex_color: str, size: int = 12) -> QIcon:
-    """Generate a tiny square icon filled with *hex_color*."""
+def _color_icon(hex_color: str, size: int = 14) -> QIcon:
+    """Generate a rounded color swatch icon filled with *hex_color*."""
     pix = QPixmap(size, size)
-    pix.fill(QColor(hex_color))
-    # Rounded corners
+    pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(hex_color))
-    painter.drawRoundedRect(0, 0, size, size, 3, 3)
+    painter.drawRoundedRect(0, 0, size, size, 4, 4)
     painter.end()
     return QIcon(pix)
 
@@ -38,49 +38,25 @@ class LayerDropdown(QToolButton):
     """
     layerVisibilityChanged = pyqtSignal()
 
-    _BUTTON_STYLE = """
-        QToolButton {
-            background-color: #3c3c3c;
-            color: #ffffff;
-            border: 1px solid #555555;
-            border-radius: 4px;
-            padding: 4px 12px 4px 8px;
-            font-size: 8pt;
-            font-family: 'Segoe UI', Tahoma, sans-serif;
-            min-width: 120px;
-            text-align: left;
-        }
-        QToolButton:hover { border: 1px solid #007acc; background-color: #444; }
-        QToolButton::menu-indicator {
-            subcontrol-origin: padding;
-            subcontrol-position: center right;
-            right: 6px;
-        }
-    """
-
-    _MENU_STYLE = """
-        QMenu {
-            background-color: #2d2d2d;
-            border: 1px solid #555;
-            border-radius: 4px;
-            padding: 4px 0;
-            font-family: 'Segoe UI', Tahoma, sans-serif;
-        }
-        QMenu::item {
-            padding: 6px 16px 6px 8px;
-            color: #cccccc;
-            font-size: 8pt;
-        }
-        QMenu::item:selected {
-            background-color: #0e639c;
-            color: #ffffff;
-        }
-        QMenu::separator {
-            height: 1px;
-            background-color: #444;
-            margin: 4px 8px;
-        }
-    """
+    _BUTTON_STYLE = (
+        f"QToolButton {{"
+        f" background-color: {PALETTE['bg_control']};"
+        f" color: {PALETTE['text_primary']};"
+        f" border: 1px solid {PALETTE['border']};"
+        f" border-radius: 4px;"
+        f" padding: 4px 12px 4px 8px;"
+        f" font-size: 8pt;"
+        f" font-family: 'Segoe UI', Tahoma, sans-serif;"
+        f" min-width: 120px;"
+        f" text-align: left;"
+        f" }}"
+        f" QToolButton:hover {{ border: 1px solid {PALETTE['border_focus']}; background-color: {PALETTE['bg_hover']}; }}"
+        f" QToolButton::menu-indicator {{"
+        f" subcontrol-origin: padding;"
+        f" subcontrol-position: center right;"
+        f" right: 6px;"
+        f" }}"
+    )
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -88,13 +64,12 @@ class LayerDropdown(QToolButton):
         self._current_tile = None
 
         self.setText("Layers (0)")
-        self.setToolTip("Toggle segmentation layer visibility")
+        self.setToolTip("Toggle per-layer segmentation visibility for the active tile")
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.setStyleSheet(self._BUTTON_STYLE)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self._menu = QMenu(self)
-        self._menu.setStyleSheet(self._MENU_STYLE)
         self.setMenu(self._menu)
 
         # Actions stored for cleanup
@@ -163,11 +138,6 @@ class LayerDropdown(QToolButton):
             chk_visible = QCheckBox(f"  {name}  ({poly_count})")
             chk_visible.setIcon(_color_icon(color_hex))
             chk_visible.setChecked(is_visible)
-            chk_visible.setStyleSheet("""
-                QCheckBox { color: #cccccc; font-size: 8pt; font-family: 'Segoe UI', Tahoma, sans-serif; }
-                QCheckBox::indicator { width: 14px; height: 14px; background-color: #3c3c3c; border: 1px solid #555; border-radius: 3px; }
-                QCheckBox::indicator:checked { background-color: #0e639c; border: 1px solid #0e639c; }
-            """)
 
             # Capture index by value
             def make_handler(idx=i):
@@ -184,10 +154,10 @@ class LayerDropdown(QToolButton):
             btn_delete.setText("🗑️")
             btn_delete.setToolTip("Delete this segmentation")
             btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_delete.setStyleSheet("""
-                QToolButton { border: none; background: transparent; font-size: 10pt; }
-                QToolButton:hover { background-color: #c0392b; border-radius: 3px; }
-            """)
+            btn_delete.setStyleSheet(
+                f"QToolButton {{ border: none; background: transparent; font-size: 10pt; }} "
+                f"QToolButton:hover {{ background-color: {PALETTE['btn_danger']}; border-radius: 3px; }}"
+            )
             
             def make_delete_handler(idx=i):
                 def handler():

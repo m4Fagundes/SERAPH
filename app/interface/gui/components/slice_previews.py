@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtCore import Qt
 from app.application.pixel_mask_service import PixelMaskService
+from app.interface.gui.theme import PALETTE, label_section
 
 logger = logging.getLogger(__name__)
 
@@ -44,31 +45,31 @@ class _SliceRow(QWidget):
         self.name_edit.setReadOnly(True)
         self.name_edit.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.name_edit.setCursorPosition(0)
-        self.name_edit.setStyleSheet("""
-            QLineEdit[readOnly="true"] {
-                background: transparent;
-                color: #ffffff;
-                border: none;
-                font-weight: bold;
-                font-size: 10pt;
-                font-family: 'Segoe UI', Tahoma, sans-serif;
-            }
-            QLineEdit[readOnly="false"] {
-                background: #1e1e1e;
-                color: #ffffff;
-                border: 1px solid #0e639c;
-                border-radius: 3px;
-                padding: 2px 4px;
-                font-size: 10pt;
-                font-family: 'Segoe UI', Tahoma, sans-serif;
-            }
-        """)
+        self.name_edit.setStyleSheet(
+            f'QLineEdit[readOnly="true"] {{'
+            f' background: transparent;'
+            f" color: {PALETTE['text_primary']};"
+            f' border: none;'
+            f' font-weight: bold;'
+            f' font-size: 10pt;'
+            f" font-family: 'Segoe UI', Tahoma, sans-serif;"
+            f' }}'
+            f' QLineEdit[readOnly="false"] {{'
+            f" background: {PALETTE['bg_surface']};"
+            f" color: {PALETTE['text_primary']};"
+            f" border: 1px solid {PALETTE['border_focus']};"
+            f' border-radius: 3px;'
+            f' padding: 2px 4px;'
+            f' font-size: 10pt;'
+            f" font-family: 'Segoe UI', Tahoma, sans-serif;"
+            f' }}'
+        )
         self.name_edit.editingFinished.connect(self.finish_edit)
         row.addWidget(self.name_edit, stretch=1)
 
         # Tile count
         count_lbl = QLabel(f"({tile_count} tiles)")
-        count_lbl.setStyleSheet("color: #aaaaaa; font-size: 8pt; font-family: 'Segoe UI', Tahoma, sans-serif;")
+        count_lbl.setStyleSheet(f"color: {PALETTE['text_muted']}; font-size: 8pt; font-family: 'Segoe UI', Tahoma, sans-serif;")
         row.addWidget(count_lbl)
 
         # Edit button
@@ -76,17 +77,17 @@ class _SliceRow(QWidget):
         edit_btn.setFixedSize(24, 24)
         edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         edit_btn.setToolTip("Rename slice")
-        edit_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: #cccccc;
-                border: none;
-                font-size: 11pt;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background: #3e3e42; }
-            QPushButton:pressed { background: #252526; }
-        """)
+        edit_btn.setStyleSheet(
+            f"QPushButton {{"
+            f" background: transparent;"
+            f" color: {PALETTE['text_muted']};"
+            f" border: none;"
+            f" font-size: 11pt;"
+            f" border-radius: 4px;"
+            f" }}"
+            f" QPushButton:hover {{ background: {PALETTE['bg_hover']}; }}"
+            f" QPushButton:pressed {{ background: {PALETTE['bg_panel']}; }}"
+        )
         edit_btn.clicked.connect(self.start_edit)
         row.addWidget(edit_btn)
 
@@ -95,18 +96,18 @@ class _SliceRow(QWidget):
         del_btn.setFixedSize(24, 24)
         del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         del_btn.setToolTip("Delete this slice")
-        del_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: #bbbbbb;
-                border: none;
-                font-size: 12pt;
-                font-weight: bold;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background: #e81123; color: white; }
-            QPushButton:pressed { background: #b00b1b; }
-        """)
+        del_btn.setStyleSheet(
+            f"QPushButton {{"
+            f" background: transparent;"
+            f" color: {PALETTE['text_muted']};"
+            f" border: none;"
+            f" font-size: 12pt;"
+            f" font-weight: bold;"
+            f" border-radius: 4px;"
+            f" }}"
+            f" QPushButton:hover {{ background: {PALETTE['btn_danger_hover']}; color: white; }}"
+            f" QPushButton:pressed {{ background: {PALETTE['btn_danger_press']}; }}"
+        )
         del_btn.clicked.connect(on_delete)
         row.addWidget(del_btn)
 
@@ -148,35 +149,11 @@ class SlicePreviews(QWidget):
         self.layout.setSpacing(10)
 
         lbl = QLabel("PROJECT SLICES")
-        lbl.setStyleSheet(
-            "color: #aaaaaa; font-size: 8pt; font-weight: bold; letter-spacing: 1px;"
-        )
+        lbl.setStyleSheet(label_section())
         self.layout.addWidget(lbl)
 
         self.list_widget = QListWidget()
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list_widget.setStyleSheet("""
-            QListWidget {
-                background-color: transparent;
-                border: none;
-                color: #cccccc;
-                outline: none;
-            }
-            QListWidget::item {
-                background-color: rgba(255, 255, 255, 0.03);
-                border-radius: 6px;
-                margin-bottom: 6px;
-                border: 1px solid transparent;
-            }
-            QListWidget::item:hover {
-                background-color: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-            }
-            QListWidget::item:selected {
-                background-color: rgba(14, 99, 156, 0.3);
-                border: 1px solid #0e639c;
-            }
-        """)
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list_widget.itemClicked.connect(self.on_item_clicked)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -189,6 +166,15 @@ class SlicePreviews(QWidget):
         self.list_widget.clear()
         s = self.mw.current_session
         if not s:
+            return
+
+        if not s.tiles:
+            placeholder = QListWidgetItem("No slices — import a tile to get started")
+            placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
+            font = placeholder.font()
+            font.setItalic(True)
+            placeholder.setFont(font)
+            self.list_widget.addItem(placeholder)
             return
 
         for i, tile in enumerate(s.tiles):
@@ -265,10 +251,6 @@ class SlicePreviews(QWidget):
             return
         idx = item.data(Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu { background-color: #2d2d2d; color: #eeeeee; border: 1px solid #555; }
-            QMenu::item:selected { background-color: #3e3e4f; }
-        """)
         action_nav   = menu.addAction("🔍 Focus on Canvas")
         action_edit  = menu.addAction("✏️ Edit Properties")
         menu.addSeparator()
@@ -293,7 +275,6 @@ class SlicePreviews(QWidget):
         dialog = QDialog(self)
         dialog.setWindowTitle("Edit Properties")
         dialog.setMinimumWidth(350)
-        dialog.setStyleSheet("QDialog { background-color: #1e1e1e; color: #cccccc; } QLabel { color: #cccccc; } QLineEdit, QTextEdit { background-color: #333; color: white; border: 1px solid #555;}")
         
         layout = QFormLayout(dialog)
         

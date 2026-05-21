@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from app.domain.geometry import get_polygon_centroid
+from app.interface.gui.theme import PALETTE, btn_primary, btn_success, label_section, label_timer
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ class MacroPipelineWorker(QThread):
                             self.nuclick_model, self.session, i, centroids
                         )
                         if nuclick_polys:
-                            tile.add_layer("Macro NuClick", self.nuclick_model, nuclick_polys, "#00FFFF")
+                            tile.add_layer("Macro NuClick", self.nuclick_model, nuclick_polys, "#00E5FF")
 
                     self.current_slice_idx = i + 1
 
@@ -125,34 +126,27 @@ class MacroPipelinePanel(QDockWidget):
         super().__init__("🚀 Macro Batch Pipeline", parent)
         self.main_window = parent
         self.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures | QDockWidget.DockWidgetFeature.DockWidgetMovable)
-        
-        self.setStyleSheet("""
-            QDockWidget { background-color: #252526; color: #ccc; font-family: 'Segoe UI', Tahoma, sans-serif; font-weight: bold; }
-            QLabel { color: #cccccc; font-size: 9pt; }
-            QPushButton { background-color: #0e639c; color: white; padding: 6px; font-weight: bold; border-radius: 4px; border: none; font-family: 'Segoe UI', Tahoma, sans-serif; }
-            QPushButton:hover { background-color: #1177bb; }
-            QPushButton:disabled { background-color: #555555; color: #888888; }
-            QProgressBar { border: 1px solid #555; border-radius: 3px; text-align: center; color: white; background-color: #3c3c3c; }
-            QProgressBar::chunk { background-color: #00FF88; }
-        """)
 
         self.container = QWidget()
         self.layout = QVBoxLayout(self.container)
         
         self.lbl_info = QLabel("Segments all slices with Cellpose\nand refines all with NuClick.")
         self.lbl_info.setWordWrap(True)
-        self.lbl_info.setStyleSheet("color: #aaaaaa; font-size: 8pt; margin-bottom: 8px;")
+        self.lbl_info.setStyleSheet(label_section())
         self.layout.addWidget(self.lbl_info)
 
         self.chk_run_nuclick = QCheckBox("Refine with NuClick after Cellpose")
         self.chk_run_nuclick.setChecked(True)
-        self.chk_run_nuclick.setStyleSheet("color: #cccccc;")
+        # QCheckBox style covered by global stylesheet
         self.layout.addWidget(self.chk_run_nuclick)
 
         self.btn_start = QPushButton("▶️ Start Pipeline")
+        self.btn_start.setStyleSheet(btn_success())
+        self.btn_start.setToolTip("Run Cellpose on all slices, then optionally refine with NuClick")
         self.btn_start.clicked.connect(self._toggle_start_pause)
-        
+
         self.btn_cancel = QPushButton("⏹️ Cancel")
+        self.btn_cancel.setToolTip("Stop the pipeline after the current slice finishes")
         self.btn_cancel.clicked.connect(self._cancel)
         self.btn_cancel.setEnabled(False)
 
@@ -169,11 +163,11 @@ class MacroPipelinePanel(QDockWidget):
         self.layout.addWidget(self.lbl_status)
 
         self.lbl_time_cellpose = QLabel("Cellpose Time: --")
-        self.lbl_time_cellpose.setStyleSheet("color: #F1C40F; font-weight: bold;")
+        self.lbl_time_cellpose.setStyleSheet(label_timer())
         self.layout.addWidget(self.lbl_time_cellpose)
 
         self.lbl_time_nuclick = QLabel("NuClick Time: --")
-        self.lbl_time_nuclick.setStyleSheet("color: #F1C40F; font-weight: bold;")
+        self.lbl_time_nuclick.setStyleSheet(label_timer())
         self.layout.addWidget(self.lbl_time_nuclick)
 
         self.layout.addStretch()
@@ -239,7 +233,7 @@ class MacroPipelinePanel(QDockWidget):
             self.worker.cancel()
             self.worker.wait()
             self.worker = None
-            self.btn_start.setText("▶️ Iniciar Pipeline")
+            self.btn_start.setText("▶️ Start Pipeline")
             self.btn_cancel.setEnabled(False)
             self.lbl_status.setText("Cancelled by user.")
             self.progress_bar.setValue(0)
@@ -252,16 +246,16 @@ class MacroPipelinePanel(QDockWidget):
     def _on_time_update(self, phase, elapsed):
         if phase == "Cellpose":
             self.lbl_time_cellpose.setText(f"Cellpose Time: {elapsed:.2f}s")
-            self.lbl_time_cellpose.setStyleSheet("color: #00FF88; font-weight: bold;")
+            self.lbl_time_cellpose.setStyleSheet(f"color: {PALETTE['exec_time_done']}; font-weight: bold;")
         elif phase == "NuClick":
             self.lbl_time_nuclick.setText(f"NuClick Time: {elapsed:.2f}s")
-            self.lbl_time_nuclick.setStyleSheet("color: #00FF88; font-weight: bold;")
+            self.lbl_time_nuclick.setStyleSheet(f"color: {PALETTE['exec_time_done']}; font-weight: bold;")
             
         if hasattr(self.main_window, 'layer_dropdown'):
             self.main_window.layer_dropdown.refresh()
 
     def _on_finished(self):
-        self.btn_start.setText("▶️ Iniciar Pipeline")
+        self.btn_start.setText("▶️ Start Pipeline")
         self.btn_cancel.setEnabled(False)
         self.lbl_status.setText("Pipeline completed successfully!")
         self.progress_bar.setValue(self.progress_bar.maximum())

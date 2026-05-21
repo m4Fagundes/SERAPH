@@ -3,6 +3,7 @@ import logging
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget, QHBoxLayout, QLabel, QLineEdit
 from PyQt6.QtGui import QAction
 from app.domain.session import ImageSession
+from app.interface.gui.theme import label_section
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +22,7 @@ class ProjectManager:
         open_action.triggered.connect(self.open_project)
         toolbar.addAction(open_action)
 
-        # 💾 Save — saves to current file if open, otherwise prompts
         save_action = QAction("💾 Save", self.mw)
-        save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self.save_project)
         toolbar.addAction(save_action)
 
@@ -34,22 +33,20 @@ class ProjectManager:
 
     def setup_grid_inputs(self, toolbar):
         lbl_w = QLabel(" W: ")
-        lbl_w.setStyleSheet("color: #aaaaaa; font-weight: bold;")
+        lbl_w.setStyleSheet(label_section())
         toolbar.addWidget(lbl_w)
-        
+
         self.entry_w = QLineEdit("1000")
         self.entry_w.setFixedWidth(60)
-        self.entry_w.setStyleSheet("background: #3c3c3c; border: 1px solid #555555; border-radius: 4px; padding: 4px; color: white; font-family: 'Segoe UI', Tahoma, sans-serif;")
         self.entry_w.textChanged.connect(self._grid_changed)
         toolbar.addWidget(self.entry_w)
-        
+
         lbl_h = QLabel("  H: ")
-        lbl_h.setStyleSheet("color: #aaaaaa; font-weight: bold;")
+        lbl_h.setStyleSheet(label_section())
         toolbar.addWidget(lbl_h)
-        
+
         self.entry_h = QLineEdit("1000")
         self.entry_h.setFixedWidth(60)
-        self.entry_h.setStyleSheet("background: #3c3c3c; border: 1px solid #555555; border-radius: 4px; padding: 4px; color: white; font-family: 'Segoe UI', Tahoma, sans-serif;")
         self.entry_h.textChanged.connect(self._grid_changed)
         toolbar.addWidget(self.entry_h)
 
@@ -69,7 +66,7 @@ class ProjectManager:
         self.mw.current_session = None
         self.mw.canvas_renderer.scene.clear()
         self._current_project_path = None
-        self.mw.setWindowTitle("Tiles Grid Analyzer")
+        self.mw.setWindowTitle("SERAPH")
 
     def open_project(self):
         f, _ = QFileDialog.getOpenFileName(self.mw, "Open Project", "", "Lab Project (*.lab)")
@@ -84,7 +81,7 @@ class ProjectManager:
                     self._activate_session(self.mw.sessions[0])
                 # Remember path for subsequent auto-saves
                 self._current_project_path = f
-                self.mw.setWindowTitle(f"Tiles Grid Analyzer — {os.path.basename(f)}")
+                self.mw.setWindowTitle(f"SERAPH — {os.path.basename(f)}")
             except Exception as e:
                 QMessageBox.critical(self.mw, "Error", f"Could not load project: {e}")
 
@@ -104,7 +101,7 @@ class ProjectManager:
         if f:
             self.mw.project_service.save_project(f, self.mw.sessions)
             self._current_project_path = f
-            self.mw.setWindowTitle(f"Tiles Grid Analyzer — {os.path.basename(f)}")
+            self.mw.setWindowTitle(f"SERAPH — {os.path.basename(f)}")
             self.mw.statusBar().showMessage(f"✅ Saved — {os.path.basename(f)}")
 
 

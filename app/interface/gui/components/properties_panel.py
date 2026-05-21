@@ -1,9 +1,10 @@
 import logging
 from PyQt6.QtWidgets import (
     QDockWidget, QWidget, QFormLayout, QLineEdit, QTextEdit, QLabel,
-    QVBoxLayout, QScrollArea, QSlider
+    QVBoxLayout, QScrollArea, QSlider, QGroupBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt
+from app.interface.gui.theme import PALETTE, label_section, label_value
 
 logger = logging.getLogger(__name__)
 
@@ -17,36 +18,6 @@ class PropertiesPanel(QDockWidget):
         super().__init__(title, parent)
         self._main_window = parent
         self.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures | QDockWidget.DockWidgetFeature.DockWidgetMovable)
-        self.setStyleSheet("""
-            QDockWidget { 
-                background-color: #252526; 
-                color: #ccc; 
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            }
-            QLabel { 
-                color: #cccccc; 
-                font-size: 8pt;
-            }
-            QLineEdit, QTextEdit { 
-                background-color: #3c3c3c; 
-                color: #ffffff; 
-                border: 1px solid #555555; 
-                border-radius: 4px;
-                padding: 4px;
-                selection-background-color: #007acc;
-            }
-            QLineEdit:focus, QTextEdit:focus {
-                border: 1px solid #007acc;
-                background-color: #444444;
-            }
-            QScrollArea {
-                border: none;
-                background-color: transparent;
-            }
-            QWidget#ScrollContent {
-                background-color: #252526;
-            }
-        """)
         
         self._current_tile = None
         
@@ -64,7 +35,7 @@ class PropertiesPanel(QDockWidget):
         
         # Title Label
         self.lbl_title = QLabel("TILE METADATA")
-        self.lbl_title.setStyleSheet("color: #aaaaaa; font-size: 8pt; font-weight: bold; letter-spacing: 1px;")
+        self.lbl_title.setStyleSheet(label_section())
         self.main_layout.addWidget(self.lbl_title)
         
         # Form Layout for inputs
@@ -96,7 +67,7 @@ class PropertiesPanel(QDockWidget):
         
         # ── Brush Settings Section ─────────────────────────────────────────────
         self.lbl_brush_title = QLabel("BRUSH SETTINGS")
-        self.lbl_brush_title.setStyleSheet("color: #aaaaaa; font-size: 8pt; font-weight: bold; letter-spacing: 1px; margin-top: 20px;")
+        self.lbl_brush_title.setStyleSheet(label_section())
         self.main_layout.addWidget(self.lbl_brush_title)
         
         self.brush_layout = QVBoxLayout()
@@ -104,37 +75,13 @@ class PropertiesPanel(QDockWidget):
         self.brush_layout.setSpacing(5)
         
         self.lbl_brush_value = QLabel("Brush Size: 10 px")
-        self.lbl_brush_value.setStyleSheet("color: #cccccc; font-size: 8pt;")
+        self.lbl_brush_value.setStyleSheet(label_value())
         
         self.slider_brush_size = QSlider(Qt.Orientation.Horizontal)
         self.slider_brush_size.setRange(1, 500)
         self.slider_brush_size.setValue(10)
         self.slider_brush_size.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.slider_brush_size.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border: none;
-                height: 6px;
-                background: #444444;
-                border-radius: 3px;
-            }
-            QSlider::sub-page:horizontal {
-                background: #0e639c;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #cccccc;
-                border: 2px solid #252526;
-                width: 16px;
-                height: 16px;
-                margin: -5px 0;
-                border-radius: 8px;
-            }
-            QSlider::handle:horizontal:hover {
-                background: #ffffff;
-                border: 2px solid #0e639c;
-            }
-        """)
-        
+
         self.slider_brush_size.valueChanged.connect(
             lambda v: self.lbl_brush_value.setText(f"Brush Size: {v} px")
         )
@@ -157,6 +104,44 @@ class PropertiesPanel(QDockWidget):
         
         self.clear() # Start disabled and clear
         
+    def setup_cellpose_params(self, spin_diameter, spin_flow, spin_cellprob):
+        """Inject the Cellpose parameter spinboxes from main_window into a panel section.
+
+        Called once after PropertiesPanel is created. The spinboxes are owned by
+        main_window so their values are accessible from _run_batch_segmentation().
+        """
+        self._cellpose_group = QGroupBox("SEGMENTATION PARAMETERS")
+
+        form = QFormLayout(self._cellpose_group)
+        form.setContentsMargins(8, 12, 8, 8)
+        form.setSpacing(8)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        lbl_d = QLabel("⌀ Diameter")
+        lbl_d.setToolTip("Expected nucleus diameter in pixels. 0 = auto-detect (shows 'Auto').")
+        form.addRow(lbl_d, spin_diameter)
+
+        lbl_f = QLabel("Flow Thr.")
+        lbl_f.setToolTip("Flow error threshold: lower = stricter mask quality (0.0–1.0)")
+        form.addRow(lbl_f, spin_flow)
+
+        lbl_c = QLabel("Cell Prob.")
+        lbl_c.setToolTip("Cell probability threshold: lower = more detections (−6 to +6)")
+        form.addRow(lbl_c, spin_cellprob)
+
+        # Insert before the stretch at the bottom
+        self._cellpose_group.setVisible(False)
+        # Remove the trailing stretch, insert group, re-add stretch
+        count = self.main_layout.count()
+        stretch_item = self.main_layout.takeAt(count - 1)
+        self.main_layout.addWidget(self._cellpose_group)
+        self.main_layout.addStretch(1)
+
+    def show_cellpose_params(self, visible: bool):
+        """Show or hide the Cellpose parameter section."""
+        if hasattr(self, "_cellpose_group"):
+            self._cellpose_group.setVisible(visible)
+
     def load_tile(self, tile):
         """Populate the panel with a specific Tile's metadata block and enable edits."""
         self._current_tile = None  # unbind temporarily to prevent auto-save triggering on load

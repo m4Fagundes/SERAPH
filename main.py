@@ -41,6 +41,9 @@ def main() -> None:
 
     app = QApplication(sys.argv)
 
+    from app.interface.gui.theme import global_stylesheet
+    app.setStyleSheet(global_stylesheet())
+
     splash = SeraphSplashScreen()
     splash.show()
     app.processEvents()

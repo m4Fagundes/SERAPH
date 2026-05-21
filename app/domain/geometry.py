@@ -1,3 +1,4 @@
+import math
 from typing import List, Tuple
 
 def is_point_in_polygon(x: float, y: float, polygon: List[Tuple[int, int]]) -> bool:
@@ -78,18 +79,54 @@ def is_rect_overlapping(rect1: Tuple[int, int, int, int], rect2: Tuple[int, int,
 def get_polygon_centroid(polygon: List[Tuple[int, int]]) -> Tuple[int, int]:
     """
     Computes the centroid of a given polygon.
-    
+
     Args:
         polygon: List of (x, y) coordinates.
-        
+
     Returns:
         A tuple of (x, y) coordinates for the centroid.
     """
     if not polygon:
         return (0, 0)
-        
+
     x_sum = sum(pt[0] for pt in polygon)
     y_sum = sum(pt[1] for pt in polygon)
     n = len(polygon)
-    
+
     return (int(x_sum / n), int(y_sum / n))
+
+
+def polygon_area(polygon: List[Tuple[float, float]]) -> float:
+    """Shoelace formula — returns area in pixels²."""
+    n = len(polygon)
+    if n < 3:
+        return 0.0
+    area = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        area += polygon[i][0] * polygon[j][1]
+        area -= polygon[j][0] * polygon[i][1]
+    return abs(area) / 2.0
+
+
+def polygon_perimeter(polygon: List[Tuple[float, float]]) -> float:
+    """Sum of Euclidean distances between consecutive vertices."""
+    n = len(polygon)
+    if n < 2:
+        return 0.0
+    total = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        dx = polygon[j][0] - polygon[i][0]
+        dy = polygon[j][1] - polygon[i][1]
+        total += math.sqrt(dx * dx + dy * dy)
+    return total
+
+
+def polygon_circularity(polygon: List[Tuple[float, float]]) -> float:
+    """4π·area/perimeter². Returns ~1.0 for circles, ~0.0 for degenerate shapes."""
+    area = polygon_area(polygon)
+    perim = polygon_perimeter(polygon)
+    if perim < 1e-9:
+        return 0.0
+    return (4.0 * math.pi * area) / (perim * perim)

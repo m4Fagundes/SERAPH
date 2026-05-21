@@ -30,6 +30,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtCore import Qt, QPointF, QRectF, QObject, QRunnable, QThreadPool, pyqtSignal
 
 from app.domain.geometry import is_point_in_polygon, get_polygon_centroid
+from app.interface.gui.theme import PALETTE
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,7 @@ class TileRenderer(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setStyleSheet("QGraphicsView { background-color: #1a1a1a; }")
+        self.setStyleSheet(f"QGraphicsView {{ background-color: {PALETTE['tile_bg']}; }}")
 
         # Track mouse for brush preview
         self.setMouseTracking(True)
@@ -399,7 +400,7 @@ class TileRenderer(QGraphicsView):
             for poly, color_hex in tile.get_visible_polygons():
                 base_color = QColor(color_hex)
                 membrane_color = QColor(base_color)
-                membrane_color.setAlpha(120)
+                membrane_color.setAlpha(155)
                 painter.setBrush(QBrush(membrane_color))
 
                 border_pen = QPen(base_color, 0)
@@ -415,7 +416,7 @@ class TileRenderer(QGraphicsView):
 
         # ── Pixel removal overlay (batch QPainterPath for performance) ────────
         if tile.pixel_mask:
-            fill_color = QColor(210, 40, 40, 160)
+            fill_color = QColor(255, 140, 0, 180)
             painter.setBrush(QBrush(fill_color))
             painter.setPen(Qt.PenStyle.NoPen)
 
@@ -512,7 +513,7 @@ class TileRenderer(QGraphicsView):
         model_name = self.main_window.combo_model.currentText()
 
         # Check if clicked inside an existing segmentation to remove it (works for ML tools, but NOT for Manual Fine Tune)
-        if tool == "segment" and model_name != "🖌️ Manual Fine Tune" and event.button() == Qt.MouseButton.LeftButton:
+        if tool == "segment" and model_name != "Manual Fine Tune" and event.button() == Qt.MouseButton.LeftButton:
             scene_pt = self.mapToScene(event.position().toPoint())
             gx, gy = self._scene_to_global(math.floor(scene_pt.x()), math.floor(scene_pt.y()))
             gx, gy = int(gx), int(gy)
@@ -538,7 +539,7 @@ class TileRenderer(QGraphicsView):
                         return
 
         # ── Manual Fine Tune tool ─────────────────────────────────────────────
-        if tool == "segment" and model_name == "🖌️ Manual Fine Tune":
+        if tool == "segment" and model_name == "Manual Fine Tune":
             if event.button() == Qt.MouseButton.LeftButton:
                 self._start_stroke(event, s, idx, False)
                 return
@@ -583,7 +584,7 @@ class TileRenderer(QGraphicsView):
             # Route to the correct service based on model type
             batch_service = self.main_window.batch_segmentation_service
             
-            if model_name == "🧠 Nuclick All":
+            if model_name == "Nuclick All":
                 self.run_nuclick_all(s, idx, self.main_window.segmentation_service)
                 return
                 
@@ -645,7 +646,7 @@ class TileRenderer(QGraphicsView):
                 self.viewport().unsetCursor()
 
         # Manual Fine Tune stroke drawing
-        if tool == "segment" and model_name == "🖌️ Manual Fine Tune" and self._is_drawing_stroke:
+        if tool == "segment" and model_name == "Manual Fine Tune" and self._is_drawing_stroke:
             self._continue_stroke(event, s, self._slice_idx)
             return
 
@@ -660,7 +661,7 @@ class TileRenderer(QGraphicsView):
             return
 
         # Manual Fine Tune stroke completion
-        if tool == "segment" and model_name == "🖌️ Manual Fine Tune" and self._is_drawing_stroke:
+        if tool == "segment" and model_name == "Manual Fine Tune" and self._is_drawing_stroke:
             self._is_drawing_stroke = False
             self._current_stroke = []
             return
@@ -782,7 +783,7 @@ class TileRenderer(QGraphicsView):
             if "manual" in layer.get("model", "").lower():
                 return i
         from app.domain.tile import LAYER_COLORS
-        tile.add_layer("Manual Fine Tune", "manual_fine_tune", [], "#00FF88")
+        tile.add_layer("Manual Fine Tune", "manual_fine_tune", [], "#00E676")
         return len(tile.segmentation_layers) - 1
 
 
@@ -844,7 +845,7 @@ class TileRenderer(QGraphicsView):
         start_time = time.monotonic()
         if hasattr(self.main_window, "lbl_execution_time"):
             self.main_window.lbl_execution_time.setText("⏱️ Processing...")
-            self.main_window.lbl_execution_time.setStyleSheet("color: #F1C40F; font-weight: bold; font-family: 'Segoe UI', sans-serif; font-size: 9pt; margin-left: 8px;")
+            self.main_window.lbl_execution_time.setStyleSheet(f"color: {PALETTE['timer_label']}; font-weight: bold; font-size: 9pt; margin-left: 8px;")
             self.main_window.lbl_execution_time.show()
 
         worker = _BatchSegWorker(
@@ -876,10 +877,10 @@ class TileRenderer(QGraphicsView):
             if hasattr(self.main_window, "lbl_execution_time"):
                 if polygons:
                     self.main_window.lbl_execution_time.setText(f"⏱️ {len(polygons)} nuclei detected in {elapsed:.2f}s")
-                    self.main_window.lbl_execution_time.setStyleSheet("color: #00FF88; font-weight: bold; font-family: 'Segoe UI', sans-serif; font-size: 9pt; margin-left: 8px;")
+                    self.main_window.lbl_execution_time.setStyleSheet(f"color: {PALETTE['exec_time_done']}; font-weight: bold; font-size: 9pt; margin-left: 8px;")
                 else:
                     self.main_window.lbl_execution_time.setText(f"⏱️ 0 nuclei in {elapsed:.2f}s")
-                    self.main_window.lbl_execution_time.setStyleSheet("color: #E74C3C; font-weight: bold; font-family: 'Segoe UI', sans-serif; font-size: 9pt; margin-left: 8px;")
+                    self.main_window.lbl_execution_time.setStyleSheet(f"color: {PALETTE['exec_time_error']}; font-weight: bold; font-size: 9pt; margin-left: 8px;")
                 self.main_window.lbl_execution_time.show()
 
         if polygons:
@@ -925,7 +926,7 @@ class TileRenderer(QGraphicsView):
         start_time = time.monotonic()
         if hasattr(self.main_window, "lbl_execution_time"):
             self.main_window.lbl_execution_time.setText(f"⏱️ Processing {len(centroids)} nuclei...")
-            self.main_window.lbl_execution_time.setStyleSheet("color: #F1C40F; font-weight: bold; font-family: 'Segoe UI', sans-serif; font-size: 9pt; margin-left: 8px;")
+            self.main_window.lbl_execution_time.setStyleSheet(f"color: {PALETTE['timer_label']}; font-weight: bold; font-size: 9pt; margin-left: 8px;")
             self.main_window.lbl_execution_time.show()
 
         worker = _NuclickAllWorker(seg_service, session, slice_idx, centroids)

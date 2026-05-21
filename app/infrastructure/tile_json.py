@@ -107,8 +107,8 @@ def _build_descriptor_from_points(points: list, meta: dict) -> dict | None:
     bx2 = int(math.ceil(max(xs)))
     by2 = int(math.ceil(max(ys)))
 
-    # Class label / name
-    class_name = meta.get("short_text", "") or "Unknown"
+    # Class label / name — keep empty string as-is; "Unknown" was misleading
+    class_name = meta.get("short_text", "").strip()
     feat_id = meta.get("id", "") or meta.get("annotation_id", "")
 
     return {

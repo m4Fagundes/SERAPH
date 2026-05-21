@@ -3,16 +3,16 @@ from PIL import Image
 
 # ── Predefined layer colors (cycle through these for new layers) ──────────
 LAYER_COLORS = [
-    "#00FFFF",  # Cyan  (NuClick default)
-    "#FF00FF",  # Magenta (Cellpose default)
-    "#00FF88",  # Emerald (Manual default)
-    "#FFD43B",  # Amber
-    "#74C0FC",  # Light blue
-    "#FF6B6B",  # Coral
-    "#A9E34B",  # Lime
-    "#CC5DE8",  # Purple
-    "#20C997",  # Teal
-    "#F06595",  # Pink
+    "#00E5FF",  # Vivid Cyan      — contrasts eosin pink
+    "#AAFF00",  # Chartreuse      — contrasts hematoxylin purple
+    "#FF8C00",  # Orange          — visible against both stains
+    "#00E676",  # Spring Green    — contrasts pink tissue
+    "#FFD600",  # Vivid Yellow    — maximum contrast on dark nuclei
+    "#1DE9B6",  # Aquamarine      — distinct from pink/purple
+    "#76FF03",  # Lime            — pops against hematoxylin
+    "#FF6D00",  # Deep Orange     — bold, distinct from tissue
+    "#00BCD4",  # Teal            — calm, readable on pink bg
+    "#FFEA00",  # Electric Yellow — extreme contrast fallback
 ]
 
 

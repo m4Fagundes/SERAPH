@@ -1,6 +1,7 @@
 import logging
 from PyQt6.QtWidgets import QWidget, QLabel, QComboBox, QPushButton, QMessageBox, QFileDialog, QProgressDialog, QInputDialog
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from app.interface.gui.theme import btn_primary, btn_nuclei, btn_hdf5, label_section
 
 logger = logging.getLogger(__name__)
 
@@ -42,23 +43,11 @@ class ExportHandler:
 
     def setup_toolbar(self, toolbar):
         lbl_fmt = QLabel(" Format: ")
-        lbl_fmt.setStyleSheet("color: #aaaaaa; font-weight: bold;")
+        lbl_fmt.setStyleSheet(label_section())
         toolbar.addWidget(lbl_fmt)
 
         self.format_combo = QComboBox()
         self.format_combo.addItems(["PNG", "JPEG", "TIFF", "BMP", "WebP"])
-        self.format_combo.setStyleSheet("""
-            QComboBox {
-                background-color: #3c3c3c;
-                color: #ffffff;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-family: 'Segoe UI', Tahoma, sans-serif;
-            }
-            QComboBox:focus { border: 1px solid #007acc; background-color: #444444; }
-            QComboBox::drop-down { border: none; }
-        """)
         self.format_combo.currentTextChanged.connect(self._format_changed)
         toolbar.addWidget(self.format_combo)
 
@@ -67,56 +56,21 @@ class ExportHandler:
         toolbar.addWidget(spacing)
 
         export_btn = QPushButton("🚀 Export Slices")
+        export_btn.setToolTip("Export all slice images to a folder in the selected format")
         export_btn.clicked.connect(self.export_slices)
-        export_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #007acc;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 15px;
-                font-family: 'Segoe UI', Tahoma, sans-serif;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #0098ff; }
-            QPushButton:pressed { background-color: #005a9e; }
-        """)
+        export_btn.setStyleSheet(btn_primary())
         toolbar.addWidget(export_btn)
 
         export_nuc_btn = QPushButton("🦠 Export Nuclei")
+        export_nuc_btn.setToolTip("Export individual nucleus crops to a folder")
         export_nuc_btn.clicked.connect(self.export_nuclei)
-        export_nuc_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #d81b60;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 15px;
-                font-family: 'Segoe UI', Tahoma, sans-serif;
-                font-weight: bold;
-                margin-left: 5px;
-            }
-            QPushButton:hover { background-color: #e91e63; }
-            QPushButton:pressed { background-color: #c2185b; }
-        """)
+        export_nuc_btn.setStyleSheet(btn_nuclei())
         toolbar.addWidget(export_nuc_btn)
 
         export_h5_btn = QPushButton("📦 Export Nuclei (HDF5)")
+        export_h5_btn.setToolTip("Export nucleus dataset to HDF5 format  [Ctrl+E]")
         export_h5_btn.clicked.connect(self.export_nuclei_h5)
-        export_h5_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #8e44ad;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 15px;
-                font-family: 'Segoe UI', Tahoma, sans-serif;
-                font-weight: bold;
-                margin-left: 5px;
-            }
-            QPushButton:hover { background-color: #9b59b6; }
-            QPushButton:pressed { background-color: #732d91; }
-        """)
+        export_h5_btn.setStyleSheet(btn_hdf5())
         toolbar.addWidget(export_h5_btn)
 
     def _format_changed(self, text):
