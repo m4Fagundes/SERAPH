@@ -19,7 +19,7 @@ from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
 from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
 from app.infrastructure.ml_models.cellvit_adapter import CellViTAdapter
 from PyQt6.QtWidgets import QComboBox, QCheckBox
-from app.interface.gui.theme import PALETTE, btn_primary, btn_success, btn_add, btn_add_tile, label_section
+from app.interface.gui.theme import PALETTE, btn_primary, btn_success, btn_add, btn_add_tile, label_section, create_seraph_icon
 
 # Import the new PyQt Components (to be rewritten in subsequent steps)
 from .components import (
@@ -40,6 +40,8 @@ class SlicerLabApp(QMainWindow):
         
         self.setWindowTitle("SERAPH")
         self.resize(1400, 900)
+        from PyQt6.QtGui import QIcon
+        self.setWindowIcon(QIcon(create_seraph_icon(64)))
         self.setStyleSheet(f"QMainWindow {{ background-color: {PALETTE['bg_base']}; color: {PALETTE['text_primary']}; }}")
 
         self.sessions = []

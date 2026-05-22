@@ -41,7 +41,9 @@ def main() -> None:
 
     app = QApplication(sys.argv)
 
-    from app.interface.gui.theme import global_stylesheet
+    from PyQt6.QtGui import QIcon
+    from app.interface.gui.theme import global_stylesheet, create_seraph_icon
+    app.setWindowIcon(QIcon(create_seraph_icon(256)))
     app.setStyleSheet(global_stylesheet())
 
     splash = SeraphSplashScreen()

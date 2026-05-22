@@ -83,6 +83,67 @@ PALETTE: Dict[str, str] = {
 _FONT = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
 
 
+# ── SERAPH Icon ───────────────────────────────────────────────────────────────
+
+def create_seraph_icon(size: int = 64) -> "QPixmap":
+    """
+    Render the SERAPH symbol as a QPixmap at any resolution.
+
+    Design: flat-top hexagon (cell cross-section) with a filled cyan nucleus at
+    the centre and three organelle dots at alternating vertices. Transparent
+    background so it composites cleanly over any surface.
+    """
+    import math
+    from PyQt6.QtCore import Qt, QPointF
+    from PyQt6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap, QPolygonF
+
+    px = QPixmap(size, size)
+    px.fill(Qt.GlobalColor.transparent)
+
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    c = size / 2
+    stroke = max(1.5, size * 0.055)
+    cyan   = QColor("#4FC3F7")
+    bg     = QColor("#0d1117")
+
+    # Flat-top regular hexagon
+    hex_r = c * 0.87
+    pts = [
+        QPointF(c + hex_r * math.cos(math.radians(60 * i - 30)), c + hex_r * math.sin(math.radians(60 * i - 30)))
+        for i in range(6)
+    ]
+    hex_poly = QPolygonF(pts)
+
+    # Dark fill inside hexagon
+    p.setBrush(QBrush(bg))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawPolygon(hex_poly)
+
+    # Cyan hexagon border
+    pen = QPen(cyan, stroke)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.GlobalColor.transparent)
+    p.drawPolygon(hex_poly)
+
+    # Nucleus — filled cyan circle at centre
+    p.setBrush(QBrush(cyan))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawEllipse(QPointF(c, c), c * 0.27, c * 0.27)
+
+    # Three organelle dots at every other vertex (inner orbit)
+    dot_r   = max(1.0, c * 0.09)
+    orbit_r = c * 0.56
+    for i in range(3):
+        angle = math.radians(60 * (i * 2) - 30)
+        p.drawEllipse(QPointF(c + orbit_r * math.cos(angle), c + orbit_r * math.sin(angle)), dot_r, dot_r)
+
+    p.end()
+    return px
+
+
 # ── Global Stylesheet ─────────────────────────────────────────────────────────
 
 def global_stylesheet() -> str:
