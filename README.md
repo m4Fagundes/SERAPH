@@ -1,4 +1,16 @@
+---
+tags:
+  - IC
+  - readme
+  - grid-image-analyzer
+---
+
+<p align="center">
+  <img src="docs/images/banner.svg" alt="SERAPH banner" width="100%"/>
+</p>
+
 # SERAPH — Segmentation Engine for Research in Anatomical Pathology and Histology
+
 
 **Image and Multimedia Data Science Laboratory (IMSCIENCE)**
 
