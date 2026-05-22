@@ -27,6 +27,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Clone CellViT Repository
+        run: |
+          git clone https://github.com/TIO-IKIM/CellViT CellViT
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:

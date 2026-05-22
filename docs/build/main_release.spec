@@ -64,6 +64,7 @@ packages_to_collect = [
     'scipy',      # bundles C-extensions used by skimage and cellpose
     'cv2',        # bundles opencv binary extensions
     'h5py',       # bundles HDF5 DLLs
+    'einops',     # bundles einops for CellViT
 ]
 
 # Platform-specific native library packages
@@ -133,6 +134,35 @@ hiddenimports += [
     # Config modules used lazily by adapters
     'app.infrastructure.config.gpu_selector',
     'app.infrastructure.config.performance_config',
+    # CellViT custom modules
+    'models',
+    'models.segmentation',
+    'models.segmentation.cell_segmentation',
+    'models.segmentation.cell_segmentation.cellvit',
+    'models.segmentation.cell_segmentation.cellvit_cpp_net',
+    'models.segmentation.cell_segmentation.cellvit_shared',
+    'models.segmentation.cell_segmentation.cellvit_stardist',
+    'models.segmentation.cell_segmentation.cellvit_stardist_shared',
+    'models.segmentation.cell_segmentation.cpp_net_stardist_rn50',
+    'models.segmentation.cell_segmentation.utils',
+    'models.encoders',
+    'models.encoders.VIT',
+    'models.encoders.VIT.vits_histo',
+    'models.encoders.VIT.SAM',
+    'models.encoders.VIT.SAM.image_encoder',
+    'models.encoders.VIT.SAM.utils',
+    'models.utils',
+    'models.utils.attention',
+    'models.utils.dense',
+    'models.utils.residual',
+    'models.utils.tf_utils',
+    'models.utils.tools',
+    'cell_segmentation',
+    'cell_segmentation.utils',
+    'cell_segmentation.utils.post_proc_cellvit',
+    'cell_segmentation.utils.post_proc_stardist',
+    'cell_segmentation.utils.tools',
+    'cell_segmentation.utils.metrics',
     # macOS-specific (if on macOS)
     'objc' if IS_MAC else None,
 ]
@@ -161,7 +191,7 @@ _excludes = [e for e in _excludes if e is not None]
 
 a = Analysis(
     [str(pathlib.Path(REPO_ROOT) / 'main.py')],
-    pathex=[REPO_ROOT],
+    pathex=[REPO_ROOT, str(pathlib.Path(REPO_ROOT) / 'CellViT')],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

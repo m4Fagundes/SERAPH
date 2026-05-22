@@ -62,6 +62,7 @@ packages_to_collect = [
     'scipy',
     'cv2',
     'h5py',
+    'einops',     # bundles einops for CellViT
 ]
 
 for pkg in packages_to_collect:
@@ -101,6 +102,35 @@ hiddenimports += [
     # Imaging
     'PIL',
     'PIL.Image',
+    # CellViT custom modules
+    'models',
+    'models.segmentation',
+    'models.segmentation.cell_segmentation',
+    'models.segmentation.cell_segmentation.cellvit',
+    'models.segmentation.cell_segmentation.cellvit_cpp_net',
+    'models.segmentation.cell_segmentation.cellvit_shared',
+    'models.segmentation.cell_segmentation.cellvit_stardist',
+    'models.segmentation.cell_segmentation.cellvit_stardist_shared',
+    'models.segmentation.cell_segmentation.cpp_net_stardist_rn50',
+    'models.segmentation.cell_segmentation.utils',
+    'models.encoders',
+    'models.encoders.VIT',
+    'models.encoders.VIT.vits_histo',
+    'models.encoders.VIT.SAM',
+    'models.encoders.VIT.SAM.image_encoder',
+    'models.encoders.VIT.SAM.utils',
+    'models.utils',
+    'models.utils.attention',
+    'models.utils.dense',
+    'models.utils.residual',
+    'models.utils.tf_utils',
+    'models.utils.tools',
+    'cell_segmentation',
+    'cell_segmentation.utils',
+    'cell_segmentation.utils.post_proc_cellvit',
+    'cell_segmentation.utils.post_proc_stardist',
+    'cell_segmentation.utils.tools',
+    'cell_segmentation.utils.metrics',
 ]
 
 # Remover duplicados
@@ -111,7 +141,7 @@ hiddenimports = list(set(hiddenimports))
 # ---------------------------------------------------------------------------
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=['.', 'CellViT'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

@@ -11,15 +11,20 @@ REM ============================================================================
 
 setlocal enabledelayedexpansion
 
-if not exist ".venv\Scripts\python.exe" (
+set "PYTHON_EXE="
+if exist ".venv\Scripts\python.exe" (
+    set "PYTHON_EXE=.venv\Scripts\python.exe"
+) else if exist "venv\Scripts\python.exe" (
+    set "PYTHON_EXE=venv\Scripts\python.exe"
+)
+
+if not defined PYTHON_EXE (
     echo.
-    echo [ERROR] No .venv virtual environment found.
+    echo [ERROR] No virtual environment found in .venv or venv.
     echo        Create and activate the venv with Python 3.12 before building.
     pause
     exit /b 1
 )
-
-set "PYTHON_EXE=.venv\Scripts\python.exe"
 set "PYTHON_ARGS=-m PyInstaller"
 
 echo.
