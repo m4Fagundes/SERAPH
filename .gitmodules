@@ -1,0 +1,3 @@
+[submodule "CellViT"]
+	path = CellViT
+	url = https://github.com/TIO-IKIM/CellViT
