@@ -17,6 +17,7 @@ from app.application.batch_segmentation_service import BatchSegmentationService
 from app.application.manual_adjustment_service import ManualAdjustmentService
 from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
 from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
+from app.infrastructure.ml_models.cellvit_adapter import CellViTAdapter
 from PyQt6.QtWidgets import QComboBox, QCheckBox
 from app.interface.gui.theme import PALETTE, btn_primary, btn_success, btn_add, btn_add_tile, label_section
 
@@ -87,6 +88,13 @@ class SlicerLabApp(QMainWindow):
             )
         except Exception as e:
             _cr_logger.error("Failed to load Cellpose adapter: %s", e)
+
+        try:
+            cellvit_adapter = CellViTAdapter()
+            batch_models.append(cellvit_adapter)
+            _cr_logger.info("CellViTAdapter registered: %s", cellvit_adapter.name)
+        except Exception as e:
+            _cr_logger.error("Failed to load CellViT adapter: %s", e)
 
         self.batch_segmentation_service = BatchSegmentationService(
             models=batch_models
