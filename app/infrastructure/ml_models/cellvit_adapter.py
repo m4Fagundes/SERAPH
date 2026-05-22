@@ -57,6 +57,9 @@ TYPE_NUCLEI_DICT = {
 
 def _add_cellvit_to_path() -> bool:
     """Insert CellViT repo root into sys.path so model classes can be imported."""
+    if getattr(sys, "frozen", False):
+        return True  # Under PyInstaller, hidden imports are already compiled/available
+
     if not _CELLVIT_REPO.exists():
         logger.error(
             "CellViT repository not found at '%s'. "

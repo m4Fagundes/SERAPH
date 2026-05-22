@@ -25,21 +25,4 @@ if getattr(sys, 'frozen', False):
     except Exception:
         pass
 
-    # ── Portable cleanup ─────────────────────────────────────────────────
-    # For --onefile builds, _MEIPASS is a temp directory that PyInstaller
-    # normally cleans up. This is a safety net to ensure cleanup even in
-    # crash scenarios.
-    def _portable_cleanup():
-        """Best-effort cleanup of the extraction directory."""
-        import time
-        meipass = getattr(sys, '_MEIPASS', None)
-        if not meipass or not os.path.isdir(meipass):
-            return
-        # Give a moment for file handles to release
-        time.sleep(0.2)
-        try:
-            shutil.rmtree(meipass, ignore_errors=True)
-        except Exception:
-            pass
 
-    atexit.register(_portable_cleanup)

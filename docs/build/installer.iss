@@ -9,7 +9,7 @@
 [Setup]
 ; Program Identification
 AppName=Grid Image Analyzer
-AppVersion=1.2.3
+AppVersion=1.2.4
 AppPublisher=M4Fagundes
 AppPublisherURL=https://github.com/m4Fagundes/grid-image-analyzer
 AppSupportURL=https://github.com/m4Fagundes/grid-image-analyzer
@@ -52,9 +52,9 @@ Source: "dist\GridAnalyzer\*"; DestDir: "{app}"; Flags: ignoreversion recursesub
 ; NOTE: Do not use "ignoreversion" on shared system files
 
 [Icons]
-Name: "{group}\Grid Image Analyzer"; Filename: "{app}\GridAnalyzer.exe"
-Name: "{group}\{cm:UninstallProgram,Grid Image Analyzer}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Grid Image Analyzer"; Filename: "{app}\GridAnalyzer.exe"; Tasks: desktopicon
+Name: "{group}\Grid Image Analyzer"; Filename: "{app}\GridAnalyzer.exe"; WorkingDir: "{app}"
+Name: "{group}\{cm:UninstallProgram,Grid Image Analyzer}"; Filename: "{uninstallexe}"; WorkingDir: "{app}"
+Name: "{autodesktop}\Grid Image Analyzer"; Filename: "{app}\GridAnalyzer.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\GridAnalyzer.exe"; Description: "{cm:LaunchProgram,Grid Image Analyzer}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\GridAnalyzer.exe"; Description: "{cm:LaunchProgram,Grid Image Analyzer}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent

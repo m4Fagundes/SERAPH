@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "grid-image-analyzer"
-version = "1.2.3"
+version = "1.2.4"
 description = "Interactive tool for analyzing and annotating tile grids in microscopy images"
 requires-python = ">=3.10"
 dependencies = [
