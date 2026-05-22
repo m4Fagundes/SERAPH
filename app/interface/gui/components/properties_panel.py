@@ -142,6 +142,21 @@ class PropertiesPanel(QDockWidget):
         if hasattr(self, "_cellpose_group"):
             self._cellpose_group.setVisible(visible)
 
+    def setup_overlay_controls(self, chk_show_membrane, layer_dropdown):
+        """Inject the membrane toggle and layer dropdown into a panel section."""
+        from PyQt6.QtWidgets import QGroupBox, QVBoxLayout
+        self._overlay_group = QGroupBox("OVERLAY & LAYERS")
+        layout = QVBoxLayout(self._overlay_group)
+        layout.setContentsMargins(8, 12, 8, 8)
+        layout.setSpacing(8)
+        layout.addWidget(chk_show_membrane)
+        layout.addWidget(layer_dropdown)
+
+        count = self.main_layout.count()
+        stretch_item = self.main_layout.takeAt(count - 1)
+        self.main_layout.addWidget(self._overlay_group)
+        self.main_layout.addStretch(1)
+
     def load_tile(self, tile):
         """Populate the panel with a specific Tile's metadata block and enable edits."""
         self._current_tile = None  # unbind temporarily to prevent auto-save triggering on load

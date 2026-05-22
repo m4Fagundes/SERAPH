@@ -3,10 +3,11 @@ import platform
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QToolBar, QDockWidget, QListWidget, QPushButton,
                              QLabel, QFrame, QScrollArea, QSplitter, QStackedWidget,
-                             QDoubleSpinBox, QDialog, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QMessageBox)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon, QAction, QActionGroup, QKeySequence, QShortcut, QColor, QFont
+                             QDoubleSpinBox, QDialog, QFormLayout, QDialogButtonBox,
+                             QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+                             QMenu, QSizePolicy, QSpinBox)
+from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtGui import QIcon, QAction, QKeySequence, QShortcut, QColor, QFont
 
 from app.domain.history import UndoManager
 from app.application.project_service import ProjectService
@@ -19,7 +20,10 @@ from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
 from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
 from app.infrastructure.ml_models.cellvit_adapter import CellViTAdapter
 from PyQt6.QtWidgets import QComboBox, QCheckBox
-from app.interface.gui.theme import PALETTE, btn_primary, btn_success, btn_add, btn_add_tile, label_section, create_seraph_icon
+from app.interface.gui.theme import (
+    PALETTE, btn_primary, btn_success, btn_add, btn_add_tile, label_section,
+    create_seraph_icon, logo_wordmark, breadcrumb_label, tool_pill, overflow_btn,
+)
 
 # Import the new PyQt Components (to be rewritten in subsequent steps)
 from .components import (
@@ -119,91 +123,78 @@ class SlicerLabApp(QMainWindow):
         # 2. Top Toolbar
         self.toolbar = QToolBar("Main Toolbar")
         self.toolbar.setMovable(False)
-        self.toolbar.setFixedHeight(48)
+        self.toolbar.setFixedHeight(40)
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
 
         # Initialize sub-modules
         self.project_manager = ProjectManager(self)
         self.export_handler = ExportHandler(self)
-        
-        # Setup Toolbar Actions
-        self.project_manager.setup_toolbar(self.toolbar)
-        self.toolbar.addSeparator()
+        self.export_format = ".png"
 
-        # Tool selection mode (Exclusive Group)
-        self.tool_group = QActionGroup(self)
-        self.tool_group.setExclusive(True)
-
-        self.action_grid = QAction("Grid", self)
-        self.action_grid.setToolTip("Grid Tool — rubber-band rectangle selection  [G]")
-        self.action_grid.setCheckable(True)
-        self.action_grid.setChecked(True)
-        self.action_grid.triggered.connect(lambda: self._activate_tool("grid"))
-        self.tool_group.addAction(self.action_grid)
-        self.toolbar.addAction(self.action_grid)
-
-        self.action_brush = QAction("Brush", self)
-        self.action_brush.setToolTip("Brush Tool — freehand polygon selection  [B]")
-        self.action_brush.setCheckable(True)
-        self.action_brush.triggered.connect(lambda: self._activate_tool("brush"))
-        self.tool_group.addAction(self.action_brush)
-        self.toolbar.addAction(self.action_brush)
+        # ── Logo + Wordmark ──────────────────────────────────────────────────
+        _logo_container = QWidget()
+        _logo_layout = QHBoxLayout(_logo_container)
+        _logo_layout.setContentsMargins(6, 0, 8, 0)
+        _logo_layout.setSpacing(7)
+        _logo_icon = QLabel()
+        _logo_icon.setPixmap(create_seraph_icon(18))
+        _logo_name = QLabel("SERAPH")
+        _logo_name.setStyleSheet(logo_wordmark())
+        _logo_layout.addWidget(_logo_icon)
+        _logo_layout.addWidget(_logo_name)
+        self.toolbar.addWidget(_logo_container)
 
         self.toolbar.addSeparator()
 
-        # Tools exclusively for Tile/Slice Isolation mode
-        self.action_segment = QAction("Segment", self)
-        self.action_segment.setToolTip("Segment Nucleus — NuClick click-based inference  [S]")
-        self.action_segment.setCheckable(True)
-        self.action_segment.triggered.connect(lambda: self._activate_tool("segment"))
-        self.tool_group.addAction(self.action_segment)
-        self.toolbar.addAction(self.action_segment)
+        # ── Breadcrumb ───────────────────────────────────────────────────────
+        self.lbl_breadcrumb = QLabel("No project open")
+        self.lbl_breadcrumb.setStyleSheet(breadcrumb_label())
+        self.toolbar.addWidget(self.lbl_breadcrumb)
 
-        self.action_brush_eraser = QAction("Eraser", self)
-        self.action_brush_eraser.setToolTip("Eraser Brush — remove polygon regions  [E]")
-        self.action_brush_eraser.setCheckable(True)
-        self.action_brush_eraser.triggered.connect(lambda: self._activate_tool("brush_eraser"))
-        self.tool_group.addAction(self.action_brush_eraser)
-        self.toolbar.addAction(self.action_brush_eraser)
+        # ── Flexible spacer ──────────────────────────────────────────────────
+        _spacer = QWidget()
+        _spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.toolbar.addWidget(_spacer)
 
-        self.action_brush_select = QAction("Select", self)
-        self.action_brush_select.setToolTip("Selection Brush — select polygon regions  [A]")
-        self.action_brush_select.setCheckable(True)
-        self.action_brush_select.triggered.connect(lambda: self._activate_tool("brush_select"))
-        self.tool_group.addAction(self.action_brush_select)
-        self.toolbar.addAction(self.action_brush_select)
+        # ── Tool Pill ────────────────────────────────────────────────────────
+        self.btn_tool_pill = QPushButton("Grid  ▾")
+        self.btn_tool_pill.setToolTip("Active tool — click to switch  [G / B / S / E / A]")
+        self.btn_tool_pill.setFixedHeight(28)
+        self.btn_tool_pill.setStyleSheet(tool_pill())
+        self.btn_tool_pill.clicked.connect(self._show_tool_menu)
+        self.toolbar.addWidget(self.btn_tool_pill)
 
-        # Brush size UI moved to PropertiesPanel side bar
-
-        # Model Selector Combobox in Toolbar
-        # Combines both interactive (click) and batch (whole-tile) models
+        # ── Model Selector (tile mode only) ──────────────────────────────────
         self.combo_model = QComboBox()
         all_model_names = (
             self.segmentation_service.get_available_models()
             + self.batch_segmentation_service.get_available_models()
         )
-        # Add Manual Fine Tune and Nuclick All options
         all_model_names = list(all_model_names) + ["Manual Fine Tune", "Nuclick All"]
         self.combo_model.addItems(all_model_names)
-        self.combo_model.setToolTip("Select inference model — batch models enable 'Segment All'  [F5]")
+        self.combo_model.setToolTip("Select inference model  [F5]")
         self.combo_model.currentTextChanged.connect(self._on_model_changed)
+        self.combo_model.setVisible(False)
         self.toolbar.addWidget(self.combo_model)
 
-        # "Segment All" button — visible only for batch models
-        self.btn_segment_all = QPushButton("Segment All")
-        self.btn_segment_all.setToolTip("Run batch segmentation on the entire tile  [F5]")
-        self.btn_segment_all.setStyleSheet(btn_success())
-        self.btn_segment_all.clicked.connect(self._run_batch_segmentation)
-        self.btn_segment_all.setVisible(False)  # hidden until a batch model is selected
-        self.toolbar.addWidget(self.btn_segment_all)
+        # ── Run button (tile mode only) ──────────────────────────────────────
+        self.btn_run = QPushButton("▶  Run")
+        self.btn_run.setToolTip("Run batch segmentation on the entire tile  [F5]")
+        self.btn_run.setStyleSheet(btn_success())
+        self.btn_run.clicked.connect(self._run_batch_segmentation)
+        self.btn_run.setVisible(False)
+        self.toolbar.addWidget(self.btn_run)
 
-        self.lbl_execution_time = QLabel("")
-        self.lbl_execution_time.setStyleSheet(f"color: {PALETTE['exec_time_done']}; font-weight: bold; font-size: 9pt; margin-left: 8px;")
-        self.lbl_execution_time.hide()
-        self.toolbar.addWidget(self.lbl_execution_time)
+        # ── Overflow menu button ─────────────────────────────────────────────
+        self.btn_overflow = QPushButton("⋯")
+        self.btn_overflow.setFixedHeight(28)
+        self.btn_overflow.setToolTip("Layers, grid settings, export and more")
+        self.btn_overflow.setStyleSheet(overflow_btn())
+        self.btn_overflow.clicked.connect(self._show_overflow_menu)
+        self.toolbar.addWidget(self.btn_overflow)
 
-        # ── Cellpose parameters — owned here, displayed in PropertiesPanel ────
+        # ── Cellpose parameters — owned here, displayed in PropertiesPanel ──
         self.spin_diameter = QDoubleSpinBox()
         self.spin_diameter.setRange(0.0, 500.0)
         self.spin_diameter.setValue(30.0)
@@ -228,37 +219,30 @@ class SlicerLabApp(QMainWindow):
         self.spin_cellprob.setDecimals(1)
         self.spin_cellprob.setToolTip("Cell probability threshold — lower = more detections (default 0.0)")
         self.spin_cellprob.setFixedWidth(70)
-        
-        # Checkbox for Segmentation Membrane Overlay
+
+        # ── Membrane toggle + layer dropdown (injected into PropertiesPanel) ─
         self.chk_show_membrane = QCheckBox("Show Membrane")
         self.chk_show_membrane.setChecked(True)
         self.chk_show_membrane.setToolTip("Toggle polygon/membrane overlay visibility")
-        
+
         def _on_membrane_toggled():
             if hasattr(self, 'canvas_renderer') and self.canvas_renderer:
                 self.canvas_renderer.viewport().update()
             if hasattr(self, 'tile_renderer') and self.tile_renderer:
                 self.tile_renderer.viewport().update()
-                
-        self.chk_show_membrane.stateChanged.connect(_on_membrane_toggled)
-        self.toolbar.addWidget(self.chk_show_membrane)
 
-        # ── Layer Visibility Dropdown ──────────────────────────────────────────
+        self.chk_show_membrane.stateChanged.connect(_on_membrane_toggled)
+
         self.layer_dropdown = LayerDropdown(parent=self)
         self.layer_dropdown.layerVisibilityChanged.connect(_on_membrane_toggled)
-        self.toolbar.addWidget(self.layer_dropdown)
 
-        self.toolbar.addSeparator()
-        
-        # Grid Size Inputs (Moved to ProjectManager or Toolbar)
-        self.project_manager.setup_grid_inputs(self.toolbar)
-        
-        # Push the Export controls to the far right edge of the screen
-        spacer = QWidget()
-        spacer.setSizePolicy(spacer.sizePolicy().Policy.Expanding, spacer.sizePolicy().Policy.Preferred)
-        self.toolbar.addWidget(spacer)
-        
-        self.export_handler.setup_toolbar(self.toolbar)
+        # ── Execution time label — lives in status bar, updated by tile_renderer
+        self.lbl_execution_time = QLabel("")
+        self.lbl_execution_time.setStyleSheet(
+            f"color: {PALETTE['exec_time_done']}; font-weight: bold; font-size: 8pt; "
+            f"background: transparent; padding: 0 8px;"
+        )
+        self.lbl_execution_time.hide()
 
         # 3. Left Dock (Sidebar)
         self.sidebar_dock = QDockWidget("Project Workspace", self)
@@ -319,6 +303,9 @@ class SlicerLabApp(QMainWindow):
         self.properties_dock.setup_cellpose_params(
             self.spin_diameter, self.spin_flow, self.spin_cellprob
         )
+        self.properties_dock.setup_overlay_controls(
+            self.chk_show_membrane, self.layer_dropdown
+        )
         
         # 4. Status Bar
         self.statusBar().showMessage("Ready. Add an image to start.")
@@ -354,9 +341,10 @@ class SlicerLabApp(QMainWindow):
         _sb_layout.addWidget(self._sb_tool)
 
         self.statusBar().addPermanentWidget(self._sb_perm)
+        self.statusBar().addPermanentWidget(self.lbl_execution_time)
         # ─────────────────────────────────────────────────────────────────
 
-        # Initial model button visibility
+        # Initial state
         self._on_model_changed(self.combo_model.currentText())
 
         # Phase 1 — menu bar and keyboard shortcuts
@@ -366,20 +354,17 @@ class SlicerLabApp(QMainWindow):
 
     def _activate_tool(self, tool_name):
         self.active_tool = tool_name
-        self.statusBar().showMessage(f"Tool selected: {tool_name}")
         self.canvas_renderer.set_tool(tool_name)
-
-        is_isolated = self._central_stack.currentIndex() == 1
+        self._update_tool_pill()
         self._sb_refresh()
 
     def _on_model_changed(self, model_name: str) -> None:
-        """Show/hide the 'Segment All' button and parameter controls
-        based on whether the selected model is a batch model."""
         is_batch = self.batch_segmentation_service.is_batch_model(model_name)
         if model_name == "Nuclick All":
             is_batch = True
 
-        self.btn_segment_all.setVisible(is_batch)
+        is_isolated = self._central_stack.currentIndex() == 1
+        self.btn_run.setVisible(is_isolated and is_batch)
         show_params = is_batch and model_name != "Nuclick All"
         if hasattr(self, "properties_dock"):
             self.properties_dock.show_cellpose_params(show_params)
@@ -421,21 +406,20 @@ class SlicerLabApp(QMainWindow):
         )
 
     def update_tool_context(self, is_isolated: bool):
-        """Enable/Disable tools based on whether the user is in global view or inside an isolated tile."""
-        self.action_grid.setEnabled(not is_isolated)
-        self.action_brush.setEnabled(not is_isolated)
-        self.action_segment.setEnabled(is_isolated)
-        self.action_brush_eraser.setEnabled(is_isolated)
-        self.action_brush_select.setEnabled(is_isolated)
-        self.combo_model.setEnabled(is_isolated)
-
-        # Auto-switch to an available tool safely to avoid undefined states
+        """Switch toolbar to the tool set that is valid for the current environment."""
         if is_isolated and self.active_tool in ("grid", "brush"):
-            self.action_segment.setChecked(True)
             self._activate_tool("segment")
         elif not is_isolated and self.active_tool in ("segment", "brush_eraser", "brush_select"):
-            self.action_grid.setChecked(True)
             self._activate_tool("grid")
+
+        self.combo_model.setVisible(is_isolated)
+        is_batch = (
+            self.batch_segmentation_service.is_batch_model(self.combo_model.currentText())
+            or self.combo_model.currentText() == "Nuclick All"
+        )
+        self.btn_run.setVisible(is_isolated and is_batch)
+        self._update_tool_pill()
+        self._update_breadcrumb()
 
     def _add_tile(self):
         """Slot for the 'Add Tile' button — delegates to project_manager."""
@@ -459,6 +443,7 @@ class SlicerLabApp(QMainWindow):
         
         self._central_stack.setCurrentIndex(1)
         self.update_tool_context(True)
+        self._update_breadcrumb()
         self._sb_refresh()
 
     def switch_to_canvas(self) -> None:
@@ -485,6 +470,7 @@ class SlicerLabApp(QMainWindow):
 
         self._central_stack.setCurrentIndex(0)
         self.update_tool_context(False)
+        self._update_breadcrumb()
         self.canvas_renderer.redraw()
         self._sb_refresh()
 
@@ -615,39 +601,29 @@ class SlicerLabApp(QMainWindow):
 
         act_tool_grid = QAction("Grid Tool  [G]", self)
         act_tool_grid.setStatusTip("Rubber-band rectangle selection for grid tiles")
-        act_tool_grid.triggered.connect(
-            lambda: (self.action_grid.setChecked(True), self._activate_tool("grid"))
-        )
+        act_tool_grid.triggered.connect(lambda: self._activate_tool("grid"))
         tools_menu.addAction(act_tool_grid)
 
         act_tool_brush = QAction("Brush Tool  [B]", self)
         act_tool_brush.setStatusTip("Freehand brush for creating polygon tiles")
-        act_tool_brush.triggered.connect(
-            lambda: (self.action_brush.setChecked(True), self._activate_tool("brush"))
-        )
+        act_tool_brush.triggered.connect(lambda: self._activate_tool("brush"))
         tools_menu.addAction(act_tool_brush)
 
         tools_menu.addSeparator()
 
         act_tool_seg = QAction("Segment Nucleus  [S]", self)
         act_tool_seg.setStatusTip("Click-based NuClick segmentation (tile view only)")
-        act_tool_seg.triggered.connect(
-            lambda: (self.action_segment.setChecked(True), self._activate_tool("segment"))
-        )
+        act_tool_seg.triggered.connect(lambda: self._activate_tool("segment"))
         tools_menu.addAction(act_tool_seg)
 
         act_tool_eraser = QAction("Eraser Brush  [E]", self)
         act_tool_eraser.setStatusTip("Brush eraser for removing polygon areas (tile view only)")
-        act_tool_eraser.triggered.connect(
-            lambda: (self.action_brush_eraser.setChecked(True), self._activate_tool("brush_eraser"))
-        )
+        act_tool_eraser.triggered.connect(lambda: self._activate_tool("brush_eraser"))
         tools_menu.addAction(act_tool_eraser)
 
         act_tool_select = QAction("Selection Brush  [A]", self)
         act_tool_select.setStatusTip("Brush-based selection for polygon editing (tile view only)")
-        act_tool_select.triggered.connect(
-            lambda: (self.action_brush_select.setChecked(True), self._activate_tool("brush_select"))
-        )
+        act_tool_select.triggered.connect(lambda: self._activate_tool("brush_select"))
         tools_menu.addAction(act_tool_select)
 
         tools_menu.addSeparator()
@@ -701,13 +677,13 @@ class SlicerLabApp(QMainWindow):
             sc.activated.connect(slot)
 
         # Canvas-mode tools
-        _canvas_sc("G", lambda: (self.action_grid.setChecked(True),    self._activate_tool("grid")))
-        _canvas_sc("B", lambda: (self.action_brush.setChecked(True),   self._activate_tool("brush")))
+        _canvas_sc("G", lambda: self._activate_tool("grid"))
+        _canvas_sc("B", lambda: self._activate_tool("brush"))
 
         # Tile-mode tools
-        _canvas_sc("S", lambda: (self.action_segment.setChecked(True),      self._activate_tool("segment")))
-        _canvas_sc("E", lambda: (self.action_brush_eraser.setChecked(True), self._activate_tool("brush_eraser")))
-        _canvas_sc("A", lambda: (self.action_brush_select.setChecked(True), self._activate_tool("brush_select")))
+        _canvas_sc("S", lambda: self._activate_tool("segment"))
+        _canvas_sc("E", lambda: self._activate_tool("brush_eraser"))
+        _canvas_sc("A", lambda: self._activate_tool("brush_select"))
 
         # Edit
         _canvas_sc("C", self._clear_polygons)
@@ -819,6 +795,141 @@ class SlicerLabApp(QMainWindow):
     def _back_to_canvas(self):
         if self._central_stack.currentIndex() == 1:
             self.switch_to_canvas()
+
+    # ── Topbar: tool pill, breadcrumb, overflow ──────────────────────────────
+
+    _TOOL_LABELS = {
+        "grid":         "Grid  ▾",
+        "brush":        "Brush  ▾",
+        "segment":      "Segment  ▾",
+        "brush_eraser": "Eraser  ▾",
+        "brush_select": "Select  ▾",
+    }
+
+    def _update_tool_pill(self):
+        self.btn_tool_pill.setText(self._TOOL_LABELS.get(self.active_tool, "Tool  ▾"))
+
+    def _update_breadcrumb(self):
+        s = self.current_session
+        if not s:
+            self.lbl_breadcrumb.setText("No project open")
+            return
+        if self._central_stack.currentIndex() == 1:
+            idx = getattr(self.tile_renderer, "slice_idx", None)
+            if idx is not None and s and idx < len(s.tiles):
+                custom = s.tiles[idx].metadata.get("name", "")
+                tile_label = custom if custom else f"Tile {idx + 1}"
+            else:
+                tile_label = "Tile"
+            self.lbl_breadcrumb.setText(f"{s.name}  ›  {tile_label}")
+        else:
+            self.lbl_breadcrumb.setText(s.name)
+
+    def _show_tool_menu(self):
+        """Drop-down showing only the tools valid in the current mode."""
+        menu = QMenu(self)
+        is_isolated = self._central_stack.currentIndex() == 1
+
+        if not is_isolated:
+            tools = [("Grid  [G]", "grid"), ("Brush  [B]", "brush")]
+        else:
+            tools = [
+                ("Segment  [S]", "segment"),
+                ("Eraser  [E]",  "brush_eraser"),
+                ("Select  [A]",  "brush_select"),
+            ]
+
+        for label, tool_name in tools:
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(self.active_tool == tool_name)
+            act.triggered.connect(lambda _checked, t=tool_name: self._activate_tool(t))
+
+        menu.exec(self.btn_tool_pill.mapToGlobal(
+            QPoint(0, self.btn_tool_pill.height())
+        ))
+
+    def _show_overflow_menu(self):
+        """Secondary actions: layers, grid settings, export."""
+        menu = QMenu(self)
+
+        # ── Overlay ──────────────────────────────────────────────────────────
+        act_membrane = menu.addAction("Show Membrane Overlay")
+        act_membrane.setCheckable(True)
+        act_membrane.setChecked(self.chk_show_membrane.isChecked())
+        act_membrane.triggered.connect(self.chk_show_membrane.setChecked)
+
+        act_props = menu.addAction("Layers && Properties Panel")
+        act_props.triggered.connect(
+            lambda: self.properties_dock.setVisible(not self.properties_dock.isVisible())
+        )
+
+        # ── Grid settings ─────────────────────────────────────────────────────
+        menu.addSeparator()
+        act_grid = menu.addAction("Grid Settings...")
+        act_grid.triggered.connect(self._show_grid_settings_dialog)
+
+        # ── Export ───────────────────────────────────────────────────────────
+        menu.addSeparator()
+
+        fmt_menu = menu.addMenu("Export Format")
+        fmt_map = {"PNG": ".png", "JPEG": ".jpg", "TIFF": ".tiff", "BMP": ".bmp", "WebP": ".webp"}
+        for fmt_name, fmt_ext in fmt_map.items():
+            a = fmt_menu.addAction(fmt_name)
+            a.setCheckable(True)
+            a.setChecked(getattr(self, "export_format", ".png") == fmt_ext)
+            a.triggered.connect(lambda _c, ext=fmt_ext: setattr(self, "export_format", ext))
+
+        act_exp_slices = menu.addAction("Export Slices...")
+        act_exp_slices.triggered.connect(self.export_handler.export_slices)
+
+        act_exp_nuc = menu.addAction("Export Nuclei...")
+        act_exp_nuc.triggered.connect(self.export_handler.export_nuclei)
+
+        act_exp_h5 = menu.addAction("Export Nuclei (HDF5)...  Ctrl+E")
+        act_exp_h5.triggered.connect(self.export_handler.export_nuclei_h5)
+
+        # ── Help ─────────────────────────────────────────────────────────────
+        menu.addSeparator()
+        act_keys = menu.addAction("Keyboard Shortcuts  F1")
+        act_keys.triggered.connect(self._show_shortcuts_dialog)
+
+        hint = menu.sizeHint()
+        origin = self.btn_overflow.mapToGlobal(
+            QPoint(self.btn_overflow.width() - hint.width(), self.btn_overflow.height())
+        )
+        menu.exec(origin)
+
+    def _show_grid_settings_dialog(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Grid Settings")
+        dlg.setFixedWidth(220)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        form = QFormLayout()
+        spin_w = QSpinBox()
+        spin_w.setRange(32, 8192)
+        spin_w.setValue(self.project_manager.get_grid_w())
+        spin_w.setSuffix(" px")
+
+        spin_h = QSpinBox()
+        spin_h.setRange(32, 8192)
+        spin_h.setValue(self.project_manager.get_grid_h())
+        spin_h.setSuffix(" px")
+
+        form.addRow("Width:", spin_w)
+        form.addRow("Height:", spin_h)
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        if dlg.exec():
+            self.project_manager.set_grid(spin_w.value(), spin_h.value())
 
     # ── Help Dialogs ─────────────────────────────────────────────────────────
 

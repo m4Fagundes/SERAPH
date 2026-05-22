@@ -1,64 +1,31 @@
 import os
 import logging
-from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget, QHBoxLayout, QLabel, QLineEdit
-from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from app.domain.session import ImageSession
-from app.interface.gui.theme import label_section
 
 logger = logging.getLogger(__name__)
 
 class ProjectManager:
     def __init__(self, main_window):
         self.mw = main_window
-        # Track the currently open .lab file path for auto-save
         self._current_project_path: str | None = None
+        self._grid_w: int = 1000
+        self._grid_h: int = 1000
 
-    def setup_toolbar(self, toolbar):
-        new_action = QAction("📄 New", self.mw)
-        new_action.triggered.connect(self.new_project)
-        toolbar.addAction(new_action)
+    def get_grid_w(self) -> int:
+        return self._grid_w
 
-        open_action = QAction("📂 Open", self.mw)
-        open_action.triggered.connect(self.open_project)
-        toolbar.addAction(open_action)
+    def get_grid_h(self) -> int:
+        return self._grid_h
 
-        save_action = QAction("💾 Save", self.mw)
-        save_action.triggered.connect(self.save_project)
-        toolbar.addAction(save_action)
-
-        # 💾 Save As — always prompts for a new path
-        saveas_action = QAction("💾 Save As", self.mw)
-        saveas_action.triggered.connect(self.save_project_as)
-        toolbar.addAction(saveas_action)
-
-    def setup_grid_inputs(self, toolbar):
-        lbl_w = QLabel(" W: ")
-        lbl_w.setStyleSheet(label_section())
-        toolbar.addWidget(lbl_w)
-
-        self.entry_w = QLineEdit("1000")
-        self.entry_w.setFixedWidth(60)
-        self.entry_w.textChanged.connect(self._grid_changed)
-        toolbar.addWidget(self.entry_w)
-
-        lbl_h = QLabel("  H: ")
-        lbl_h.setStyleSheet(label_section())
-        toolbar.addWidget(lbl_h)
-
-        self.entry_h = QLineEdit("1000")
-        self.entry_h.setFixedWidth(60)
-        self.entry_h.textChanged.connect(self._grid_changed)
-        toolbar.addWidget(self.entry_h)
-
-    def _grid_changed(self):
+    def set_grid(self, w: int, h: int) -> None:
+        self._grid_w = w
+        self._grid_h = h
         s = self.mw.current_session
         if s:
-            try:
-                s.grid_w = int(self.entry_w.text())
-                s.grid_h = int(self.entry_h.text())
-                self.mw.canvas_renderer.redraw()
-            except ValueError:
-                pass
+            s.grid_w = w
+            s.grid_h = h
+            self.mw.canvas_renderer.redraw()
 
     def new_project(self):
         self.mw.sessions.clear()
@@ -110,8 +77,8 @@ class ProjectManager:
         if path:
             try:
                 s = ImageSession(path)
-                s.grid_w = int(self.entry_w.text())
-                s.grid_h = int(self.entry_h.text())
+                s.grid_w = self._grid_w
+                s.grid_h = self._grid_h
                 
                 self.mw.sessions.append(s)
                 self.mw.file_list.addItem(s.name)
@@ -127,8 +94,8 @@ class ProjectManager:
 
     def _activate_session(self, session):
         self.mw.current_session = session
-        self.entry_w.setText(str(session.grid_w))
-        self.entry_h.setText(str(session.grid_h))
+        self._grid_w = session.grid_w
+        self._grid_h = session.grid_h
 
         # Return to the Macro environment (full image view)
         self.mw.switch_to_canvas()
@@ -155,6 +122,8 @@ class ProjectManager:
         self.mw.statusBar().showMessage(f"Image: {session.name} | {session.real_width}x{session.real_height}px")
         self.mw.canvas_renderer.redraw()
         self.mw.slice_previews.update_previews()
+        if hasattr(self.mw, '_update_breadcrumb'):
+            self.mw._update_breadcrumb()
 
     # ── Tile Import ───────────────────────────────────────────────────────────
 

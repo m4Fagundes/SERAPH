@@ -643,3 +643,43 @@ def label_timer() -> str:
     """Pipeline phase timer label."""
     p = PALETTE
     return f"color: {p['timer_label']}; font-weight: bold; background: transparent;"
+
+
+# ── Topbar Component Styles ───────────────────────────────────────────────────
+
+def logo_wordmark() -> str:
+    p = PALETTE
+    return (
+        f"color: {p['accent']}; font-size: 11pt; font-weight: 700; "
+        f"font-family: {_FONT}; letter-spacing: 1.5px; background: transparent;"
+    )
+
+
+def breadcrumb_label() -> str:
+    p = PALETTE
+    return (
+        f"color: {p['text_muted']}; font-size: 9pt; "
+        f"font-family: {_FONT}; background: transparent;"
+    )
+
+
+def tool_pill() -> str:
+    p = PALETTE
+    return (
+        f"QPushButton {{ background-color: {p['bg_control']}; color: {p['text_primary']}; "
+        f"border: 1px solid {p['border']}; border-radius: 5px; "
+        f"padding: 3px 12px; font-size: 8pt; font-weight: 500; font-family: {_FONT}; min-width: 90px; }} "
+        f"QPushButton:hover {{ background-color: {p['bg_hover']}; border: 1px solid {p['border_focus']}; color: #ffffff; }} "
+        f"QPushButton:pressed {{ background-color: {p['bg_surface']}; }}"
+    )
+
+
+def overflow_btn() -> str:
+    p = PALETTE
+    return (
+        f"QPushButton {{ background-color: transparent; color: {p['text_muted']}; "
+        f"border: 1px solid transparent; border-radius: 5px; "
+        f"padding: 3px 10px; font-size: 13pt; font-weight: 700; font-family: {_FONT}; }} "
+        f"QPushButton:hover {{ background-color: {p['bg_hover']}; border: 1px solid {p['border']}; color: {p['text_primary']}; }} "
+        f"QPushButton:pressed {{ background-color: {p['bg_surface']}; }}"
+    )
