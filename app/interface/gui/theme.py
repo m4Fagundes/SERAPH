@@ -1,86 +1,29 @@
 """
-SERAPH Design System
-====================
-Single source of truth for all UI design tokens and stylesheets.
+SERAPH Design System — Theme layer.
+====================================
+Applies the global QSS stylesheet and exposes backward-compatible helpers.
 
-Apply the global stylesheet once at application startup:
+Tokens now live in design_system.py. Import from there in new code:
+    from app.interface.gui.design_system import COLORS, SPACE, SIZE, RADIUS
 
+Apply global stylesheet once at startup:
     from app.interface.gui.theme import global_stylesheet
     app.setStyleSheet(global_stylesheet())
-
-Use PALETTE and helper functions for component-specific overrides only.
 """
 from __future__ import annotations
 from typing import Dict
 
-# ── Design Tokens ────────────────────────────────────────────────────────────
+# Re-export everything from design_system for backward compatibility
+from app.interface.gui.design_system import (
+    COLORS as PALETTE,
+    COLORS,
+    SPACE,
+    SIZE,
+    RADIUS,
+    FONT_FAMILY,
+)
 
-PALETTE: Dict[str, str] = {
-    # Backgrounds — darkest to lightest
-    "bg_base":    "#0d1117",   # deepest canvas/window base
-    "bg_surface": "#161b22",   # elevated surface
-    "bg_panel":   "#21262d",   # toolbars, docks, sidebars
-    "bg_control": "#2d333b",   # inputs, buttons, dropdowns
-    "bg_hover":   "#373e47",   # hover state for controls
-
-    # Borders
-    "border":        "#444c56",  # default separator
-    "border_focus":  "#1f6feb",  # keyboard focus ring
-    "border_accent": "#1e4060",  # SERAPH brand accent border
-
-    # Text
-    "text_primary":   "#cdd9e5",  # body text
-    "text_muted":     "#8b949e",  # labels, section headers
-    "text_disabled":  "#545d68",  # disabled state
-
-    # Brand
-    "accent":     "#4FC3F7",  # SERAPH cyan — titles, selection indicators
-    "accent_dim": "#1e4060",  # dimmed accent for dividers / subtle borders
-
-    # Primary action — blue
-    "btn_primary":       "#1f6feb",
-    "btn_primary_hover": "#388bfd",
-    "btn_primary_press": "#0d419d",
-
-    # Success — green
-    "btn_success":       "#238636",
-    "btn_success_hover": "#2ea043",
-    "btn_success_press": "#196127",
-
-    # Danger — red
-    "btn_danger":       "#da3633",
-    "btn_danger_hover": "#f85149",
-    "btn_danger_press": "#b62324",
-
-    # Export — nuclei (magenta)
-    "btn_nuclei":       "#c2185b",
-    "btn_nuclei_hover": "#e91e63",
-    "btn_nuclei_press": "#880e4f",
-
-    # Export — HDF5 (purple)
-    "btn_hdf5":       "#7c3aed",
-    "btn_hdf5_hover": "#8b5cf6",
-    "btn_hdf5_press": "#6d28d9",
-
-    # Semantic / status
-    "progress_chunk":    "#00d68f",  # pipeline progress bar fill
-    "timer_label":       "#F1C40F",  # phase timer yellow
-    "exec_time_done":    "#00FF88",  # completed timing readout
-    "exec_time_error":   "#E74C3C",  # error timing readout
-
-    # Canvas (used programmatically via QColor, not CSS)
-    "canvas_bg": "#111111",
-    "tile_bg":   "#1a1a1a",
-
-    # Splash screen (intentionally distinct — deepest dark)
-    "splash_bg":     "#0d1117",
-    "splash_border": "#1e4060",
-    "splash_title":  "#4FC3F7",
-    "splash_sub":    "#8899aa",
-    "splash_status": "#3a5a70",
-}
-
-_FONT = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+_FONT = FONT_FAMILY
 
 
 # ── SERAPH Icon ───────────────────────────────────────────────────────────────
@@ -149,6 +92,8 @@ def create_seraph_icon(size: int = 64) -> "QPixmap":
 def global_stylesheet() -> str:
     """Return the full application QSS. Apply once via app.setStyleSheet()."""
     p = PALETTE
+    r = RADIUS
+    s = SPACE
     return f"""
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */
@@ -161,14 +106,15 @@ QMainWindow, QDialog, QWidget {{
 
 /* ── Toolbar ──────────────────────────────────────────────────────────────── */
 QToolBar {{
-    background-color: {p['bg_panel']};
-    border-bottom: 1px solid {p['border']};
+    background-color: {p['bg_elevated']};
+    border-top: 1px solid {p['border_subtle']};
+    border-bottom: 1px solid {p['border_default']};
     spacing: 6px;
     padding: 4px 8px;
 }}
 QToolBar::separator {{
     width: 1px;
-    background-color: {p['border']};
+    background-color: {p['border_default']};
     margin: 4px 2px;
 }}
 QToolButton {{
@@ -200,9 +146,9 @@ QToolButton:disabled {{
 
 /* ── Menu Bar ─────────────────────────────────────────────────────────────── */
 QMenuBar {{
-    background-color: {p['bg_panel']};
-    color: {p['text_primary']};
-    border-bottom: 1px solid {p['border']};
+    background-color: {p['bg_base']};
+    color: {p['text_secondary']};
+    border-bottom: 1px solid {p['border_default']};
     font-family: {_FONT};
     font-size: 9pt;
     padding: 2px 4px;
@@ -213,7 +159,8 @@ QMenuBar::item {{
     border-radius: 3px;
 }}
 QMenuBar::item:selected {{
-    background-color: {p['bg_hover']};
+    background-color: {p['bg_elevated']};
+    color: {p['text_primary']};
 }}
 QMenuBar::item:pressed {{
     background-color: {p['btn_primary']};
@@ -247,7 +194,7 @@ QMenu::separator {{
 
 /* ── Dock Widgets ─────────────────────────────────────────────────────────── */
 QDockWidget {{
-    background-color: {p['bg_panel']};
+    background-color: {p['bg_elevated']};
     color: {p['text_primary']};
     font-family: {_FONT};
     font-weight: bold;
@@ -255,7 +202,7 @@ QDockWidget {{
     titlebar-normal-icon: none;
 }}
 QDockWidget::title {{
-    background-color: {p['bg_panel']};
+    background-color: {p['bg_elevated']};
     padding: 6px 10px;
     border-bottom: 1px solid {p['border']};
     color: {p['text_muted']};
@@ -402,7 +349,7 @@ QListWidget::item:hover {{
     border: 1px solid {p['border']};
 }}
 QListWidget::item:selected {{
-    background-color: rgba(31, 111, 235, 0.22);
+    background-color: rgba(34, 139, 230, 0.15);
     border-left: 3px solid {p['accent']};
     color: #ffffff;
 }}
@@ -502,7 +449,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
 
 /* ── Status Bar ───────────────────────────────────────────────────────────── */
 QStatusBar {{
-    background-color: {p['bg_panel']};
+    background-color: {p['bg_elevated']};
     color: {p['text_muted']};
     border-top: 1px solid {p['border']};
     font-size: 8pt;
@@ -525,6 +472,46 @@ QScrollArea {{
     background-color: transparent;
 }}
 
+/* ── Image Tab Bar ────────────────────────────────────────────────────────── */
+QTabBar {{
+    background: transparent;
+    border: none;
+}}
+QTabBar::tab {{
+    background: {p['bg_panel']};
+    color: {p['text_muted']};
+    border: 1px solid {p['border']};
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 5px 14px 6px 14px;
+    margin-right: 2px;
+    font-size: 9pt;
+    font-family: {_FONT};
+    min-width: 80px;
+    max-width: 200px;
+}}
+QTabBar::tab:selected {{
+    background: {p['bg_elevated']};
+    color: {p['text_primary']};
+    border-top: 2px solid {p['btn_primary']};
+    border-bottom: 1px solid {p['bg_elevated']};
+}}
+QTabBar::tab:hover:!selected {{
+    background: {p['bg_hover']};
+    color: {p['text_primary']};
+}}
+QTabBar::close-button {{
+    subcontrol-position: right;
+    width: 14px;
+    height: 14px;
+    padding: 0 2px;
+    border-radius: 3px;
+}}
+QTabBar::close-button:hover {{
+    background: {p['btn_danger']};
+}}
+
 /* ── Tooltips ─────────────────────────────────────────────────────────────── */
 QToolTip {{
     background-color: {p['bg_panel']};
@@ -534,6 +521,89 @@ QToolTip {{
     padding: 4px 8px;
     font-size: 8pt;
     font-family: {_FONT};
+}}
+
+/* ── Semantic buttons (via objectName) ────────────────────────────────────── */
+QPushButton#btn_primary {{
+    background-color: {p['accent_primary']};
+    color: white; border: none;
+    border-radius: {r['md']}px;
+    padding: {s[2]}px {s[3]}px;
+    font-size: 13px; font-weight: 500;
+}}
+QPushButton#btn_primary:hover {{ background-color: {p['accent_primary_hover']}; }}
+QPushButton#btn_primary:pressed {{ background-color: {p['accent_primary_press']}; }}
+QPushButton#btn_primary:disabled {{
+    background-color: {p['bg_control']};
+    color: {p['text_disabled']};
+}}
+
+QPushButton#btn_action {{
+    background-color: {p['accent_action']};
+    color: white; border: none;
+    border-radius: {r['md']}px;
+    padding: {s[2]}px {s[3]}px;
+    font-size: 13px; font-weight: 500;
+}}
+QPushButton#btn_action:hover {{ background-color: {p['accent_action_hover']}; }}
+QPushButton#btn_action:pressed {{ background-color: {p['accent_action_press']}; }}
+QPushButton#btn_action:disabled {{
+    background-color: {p['bg_control']};
+    color: {p['text_disabled']};
+}}
+
+QPushButton#btn_success {{
+    background-color: {p['accent_success']};
+    color: white; border: none;
+    border-radius: {r['md']}px;
+    padding: {s[2]}px {s[3]}px;
+    font-size: 13px; font-weight: 500;
+}}
+QPushButton#btn_success:hover {{ background-color: {p['accent_success_hover']}; }}
+QPushButton#btn_success:pressed {{ background-color: {p['accent_success_press']}; }}
+
+QPushButton#btn_secondary {{
+    background-color: transparent;
+    color: {p['text_secondary']};
+    border: 1px solid {p['border_default']};
+    border-radius: {r['md']}px;
+    padding: 0 {s[3]}px;
+    font-size: 13px; font-weight: 400;
+}}
+QPushButton#btn_secondary:hover {{
+    background-color: {p['bg_hover']};
+    color: white;
+    border-color: {p['border_strong']};
+}}
+QPushButton#btn_secondary:pressed {{ background-color: {p['bg_elevated']}; }}
+
+QPushButton#btn_ghost {{
+    background-color: transparent;
+    color: {p['text_muted']};
+    border: none;
+    padding: {s[2]}px {s[3]}px;
+    font-size: 13px;
+}}
+QPushButton#btn_ghost:hover {{
+    background-color: {p['bg_hover']};
+    color: {p['text_primary']};
+}}
+
+QPushButton#btn_destructive {{
+    background-color: transparent;
+    color: {p['accent_danger']};
+    border: 1px solid {p['accent_danger']};
+    border-radius: {r['md']}px;
+    padding: {s[2]}px {s[3]}px;
+    font-size: 13px;
+}}
+QPushButton#btn_destructive:hover {{
+    background-color: {p['accent_danger']};
+    color: white;
+}}
+QPushButton#btn_destructive:pressed {{
+    background-color: {p['accent_danger_press']};
+    color: white;
 }}
 
 """
@@ -650,7 +720,7 @@ def label_timer() -> str:
 def logo_wordmark() -> str:
     p = PALETTE
     return (
-        f"color: {p['accent']}; font-size: 11pt; font-weight: 700; "
+        f"color: {p['brand']}; font-size: 11pt; font-weight: 700; "
         f"font-family: {_FONT}; letter-spacing: 1.5px; background: transparent;"
     )
 
@@ -658,7 +728,7 @@ def logo_wordmark() -> str:
 def breadcrumb_label() -> str:
     p = PALETTE
     return (
-        f"color: {p['text_muted']}; font-size: 9pt; "
+        f"color: {p['text_secondary']}; font-size: 9pt; "
         f"font-family: {_FONT}; background: transparent;"
     )
 
@@ -667,10 +737,10 @@ def tool_pill() -> str:
     p = PALETTE
     return (
         f"QPushButton {{ background-color: {p['bg_control']}; color: {p['text_primary']}; "
-        f"border: 1px solid {p['border']}; border-radius: 5px; "
+        f"border: 1px solid {p['border_default']}; border-radius: 5px; "
         f"padding: 3px 12px; font-size: 8pt; font-weight: 500; font-family: {_FONT}; min-width: 90px; }} "
-        f"QPushButton:hover {{ background-color: {p['bg_hover']}; border: 1px solid {p['border_focus']}; color: #ffffff; }} "
-        f"QPushButton:pressed {{ background-color: {p['bg_surface']}; }}"
+        f"QPushButton:hover {{ background-color: {p['bg_hover']}; border: 1px solid {p['border_strong']}; color: #ffffff; }} "
+        f"QPushButton:pressed {{ background-color: {p['bg_elevated']}; }}"
     )
 
 
@@ -680,6 +750,6 @@ def overflow_btn() -> str:
         f"QPushButton {{ background-color: transparent; color: {p['text_muted']}; "
         f"border: 1px solid transparent; border-radius: 5px; "
         f"padding: 3px 10px; font-size: 13pt; font-weight: 700; font-family: {_FONT}; }} "
-        f"QPushButton:hover {{ background-color: {p['bg_hover']}; border: 1px solid {p['border']}; color: {p['text_primary']}; }} "
-        f"QPushButton:pressed {{ background-color: {p['bg_surface']}; }}"
+        f"QPushButton:hover {{ background-color: {p['bg_hover']}; border: 1px solid {p['border_default']}; color: {p['text_primary']}; }} "
+        f"QPushButton:pressed {{ background-color: {p['bg_elevated']}; }}"
     )

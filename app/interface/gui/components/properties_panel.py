@@ -1,10 +1,13 @@
 import logging
 from PyQt6.QtWidgets import (
     QDockWidget, QWidget, QFormLayout, QLineEdit, QTextEdit, QLabel,
-    QVBoxLayout, QScrollArea, QSlider, QGroupBox, QDoubleSpinBox
+    QVBoxLayout, QHBoxLayout, QScrollArea, QSlider, QGroupBox,
+    QDoubleSpinBox, QSpinBox
 )
 from PyQt6.QtCore import Qt
-from app.interface.gui.theme import PALETTE, label_section, label_value
+from app.interface.gui.theme import PALETTE
+from app.interface.gui.design_system import COLORS, SPACE, SIZE
+from app.interface.gui.widgets.section_header import SectionHeader
 
 logger = logging.getLogger(__name__)
 
@@ -18,92 +21,114 @@ class PropertiesPanel(QDockWidget):
         super().__init__(title, parent)
         self._main_window = parent
         self.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures | QDockWidget.DockWidgetFeature.DockWidgetMovable)
-        
+
         self._current_tile = None
-        
+
         # Create a scroll area
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        
+
         # Inner container for the scroll area
         self.container = QWidget()
         self.container.setObjectName("ScrollContent")
         self.main_layout = QVBoxLayout(self.container)
-        self.main_layout.setContentsMargins(15, 15, 15, 15)
-        self.main_layout.setSpacing(12)
-        
-        # Title Label
-        self.lbl_title = QLabel("TILE METADATA")
-        self.lbl_title.setStyleSheet(label_section())
+        self.main_layout.setContentsMargins(SPACE[4], SPACE[4], SPACE[4], SPACE[4])
+        self.main_layout.setSpacing(SPACE[3])
+
+        # Title section header
+        self.lbl_title = SectionHeader("Tile Metadata")
         self.main_layout.addWidget(self.lbl_title)
-        
+
+        # ── Empty state placeholder ────────────────────────────────────────────
+        self._empty_lbl = QLabel("Select a slice from the\nleft panel to view properties.")
+        self._empty_lbl.setStyleSheet(
+            f"color: {COLORS['text_disabled']}; font-size: 11px; font-style: italic;"
+        )
+        self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_lbl.setVisible(True)
+        self.main_layout.addWidget(self._empty_lbl)
+
         # Form Layout for inputs
         self.form_layout = QFormLayout()
         self.form_layout.setContentsMargins(0, 0, 0, 0)
         self.form_layout.setSpacing(10)
-        
+
         # Inputs
         self.input_name = QLineEdit()
         self.input_name.setPlaceholderText("Enter tile name...")
-        
+
         self.input_microns = QLineEdit()
         self.input_microns.setPlaceholderText("e.g. 0.25")
-        
+
         self.input_desc = QTextEdit()
         self.input_desc.setMaximumHeight(80)
         self.input_desc.setPlaceholderText("Detailed description of this slice...")
-        
+
         self.input_comment = QTextEdit()
         self.input_comment.setMaximumHeight(80)
         self.input_comment.setPlaceholderText("Any additional comments...")
-        
+
         self.form_layout.addRow("Name:", self.input_name)
         self.form_layout.addRow("µm/px (WSI):", self.input_microns)
         self.form_layout.addRow("Description:", self.input_desc)
         self.form_layout.addRow("Comment:", self.input_comment)
-        
+
         self.main_layout.addLayout(self.form_layout)
-        
+
         # ── Brush Settings Section ─────────────────────────────────────────────
-        self.lbl_brush_title = QLabel("BRUSH SETTINGS")
-        self.lbl_brush_title.setStyleSheet(label_section())
+        self.lbl_brush_title = SectionHeader("Brush Settings")
         self.main_layout.addWidget(self.lbl_brush_title)
-        
+
         self.brush_layout = QVBoxLayout()
         self.brush_layout.setContentsMargins(0, 0, 0, 0)
         self.brush_layout.setSpacing(5)
-        
-        self.lbl_brush_value = QLabel("Brush Size: 10 px")
-        self.lbl_brush_value.setStyleSheet(label_value())
-        
+
+        # Horizontal row: slider (stretch) + spinbox (fixed 60px)
+        self._brush_row = QHBoxLayout()
+        self._brush_row.setSpacing(8)
+
         self.slider_brush_size = QSlider(Qt.Orientation.Horizontal)
         self.slider_brush_size.setRange(1, 500)
         self.slider_brush_size.setValue(10)
         self.slider_brush_size.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self.slider_brush_size.valueChanged.connect(
-            lambda v: self.lbl_brush_value.setText(f"Brush Size: {v} px")
-        )
-        
-        self.brush_layout.addWidget(self.lbl_brush_value)
-        self.brush_layout.addWidget(self.slider_brush_size)
+        self.spin_brush_size = QSpinBox()
+        self.spin_brush_size.setRange(1, 500)
+        self.spin_brush_size.setValue(10)
+        self.spin_brush_size.setSuffix(" px")
+        self.spin_brush_size.setFixedWidth(60)
+        self.spin_brush_size.setFixedHeight(SIZE["md"])
+        self.spin_brush_size.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        # Bidirectional sync
+        self.slider_brush_size.valueChanged.connect(self.spin_brush_size.setValue)
+        self.spin_brush_size.valueChanged.connect(self.slider_brush_size.setValue)
+
+        self._brush_row.addWidget(self.slider_brush_size, stretch=1)
+        self._brush_row.addWidget(self.spin_brush_size)
+
+        self.brush_layout.addLayout(self._brush_row)
         self.main_layout.addLayout(self.brush_layout)
 
         # Stretch spacer at the bottom to force everything to align to the TOP
         self.main_layout.addStretch(1)
-        
+
         self.scroll_area.setWidget(self.container)
         self.setWidget(self.scroll_area)
-        
+
         # Connect signals for auto-save
         self.input_name.textChanged.connect(self._save_metadata)
         self.input_microns.textChanged.connect(self._save_metadata)
         self.input_desc.textChanged.connect(self._save_metadata)
         self.input_comment.textChanged.connect(self._save_metadata)
-        
-        self.clear() # Start disabled and clear
-        
+
+        self.clear()  # Start disabled and clear
+
+    @property
+    def brush_size(self) -> int:
+        return self.slider_brush_size.value()
+
     def setup_cellpose_params(self, spin_diameter, spin_flow, spin_cellprob):
         """Inject the Cellpose parameter spinboxes from main_window into a panel section.
 
@@ -152,6 +177,13 @@ class PropertiesPanel(QDockWidget):
         layout.addWidget(chk_show_membrane)
         layout.addWidget(layer_dropdown)
 
+        hint = QLabel("Run a segmentation model to create layers.")
+        hint.setStyleSheet(
+            f"color: {COLORS['text_disabled']}; font-size: 11px; font-style: italic;"
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
         count = self.main_layout.count()
         stretch_item = self.main_layout.takeAt(count - 1)
         self.main_layout.addWidget(self._overlay_group)
@@ -172,6 +204,7 @@ class PropertiesPanel(QDockWidget):
         self.input_desc.setPlainText(meta.get("description", ""))
         self.input_comment.setPlainText(meta.get("comment", ""))
 
+        self._empty_lbl.setVisible(False)
         self.container.setEnabled(True)
         self._current_tile = tile
 
@@ -182,8 +215,9 @@ class PropertiesPanel(QDockWidget):
         self.input_microns.clear()
         self.input_desc.clear()
         self.input_comment.clear()
+        self._empty_lbl.setVisible(True)
         self.container.setEnabled(False)
-        
+
     def _save_metadata(self):
         """Auto-save changes to the currently bound Tile entity."""
         if self._current_tile is None:

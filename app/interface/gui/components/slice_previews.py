@@ -15,7 +15,7 @@ Design decisions
 - Count badge in header turns blue when items exist — a subtle affordance
   that the panel is populated and clickable.
 - self.layout kept as an attribute (not renamed) because main_window.py
-  appends the "Add Tile" button via self.slice_previews.layout.addWidget().
+  appends footer actions via self.slice_previews.add_footer_widget().
 """
 from __future__ import annotations
 
@@ -37,44 +37,40 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QCursor
-
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from app.application.pixel_mask_service import PixelMaskService
 from app.interface.gui.theme import PALETTE
+from app.interface.gui.design_system import COLORS, SPACE, FONT_FAMILY
+from app.interface.gui.widgets.section_header import SectionHeader
+from app.interface.gui.widgets.buttons import PrimaryButton
 
 logger = logging.getLogger(__name__)
 
-_FONT = "'Segoe UI', Tahoma, sans-serif"
-_ROW_H = 56  # px — content height of each list row
-
-
-# ── Icon-button stylesheet helpers ────────────────────────────────────────────
-# Buttons are always present in the layout (no reflow), but rendered
-# invisible via transparent colour.  enterEvent / leaveEvent swaps the sheet.
-
-def _btn_hidden() -> str:
-    return "QPushButton { background: transparent; color: transparent; border: none; }"
+_FONT = FONT_FAMILY
+_ROW_H = 44  # px — compact single-line row
 
 
 def _btn_edit_style() -> str:
-    p = PALETTE
+    p = COLORS
     return (
         f"QPushButton {{ background: transparent; color: {p['text_muted']};"
-        f" border: none; border-radius: 4px; font-size: 11pt; }}"
-        f"QPushButton:hover {{ background: {p['bg_hover']}; color: {p['text_primary']}; }}"
+        f" border: 1px solid transparent; border-radius: 4px;"
+        f" padding: 0; margin: 0; font-size: 11px; font-weight: 600; }}"
+        f"QPushButton:hover {{ background: {p['bg_hover']}; color: {p['text_primary']};"
+        f" border-color: {p['border_default']}; }}"
         f"QPushButton:pressed {{ background: {p['bg_control']}; }}"
     )
 
 
 def _btn_delete_style() -> str:
-    p = PALETTE
+    p = COLORS
     # Destructive action: neutral by default, red only on hover
     return (
-        f"QPushButton {{ background: transparent; color: {p['text_muted']};"
-        f" border: none; border-radius: 4px; font-size: 11pt; }}"
-        f"QPushButton:hover {{ background: {p['btn_danger_hover']}; color: white; }}"
-        f"QPushButton:pressed {{ background: {p['btn_danger_press']}; color: white; }}"
+        f"QPushButton {{ background: transparent; color: {p['accent_danger']};"
+        f" border: 1px solid transparent; border-radius: 4px;"
+        f" padding: 0; margin: 0; font-size: 11px; font-weight: 600; }}"
+        f"QPushButton:hover {{ background: {p['accent_danger']}; color: white; }}"
+        f"QPushButton:pressed {{ background: {p['accent_danger_press']}; color: white; }}"
     )
 
 
@@ -85,9 +81,9 @@ class _SliceRow(QWidget):
     One row in the slice sidebar list.
 
     Visual structure (left → right):
-      [10px] [swatch 10×10] [10px] [name 9pt bold / count 7.5pt muted] [✎ 26px] [2px] [✕ 26px] [8px]
+      [swatch] [slice name] [edit] [delete]
 
-    Action buttons (✎ ✕) are colour-hidden by default and revealed on hover.
+    Action buttons are always visible for discoverability.
     """
 
     def __init__(
@@ -100,29 +96,24 @@ class _SliceRow(QWidget):
     ):
         super().__init__()
         self.on_rename = on_rename
+        self._selected = False
 
         self.setFixedHeight(_ROW_H)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet("background: transparent;")
+        self._refresh_style()
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(10, 0, 8, 0)
-        root.setSpacing(0)
+        root.setContentsMargins(SPACE[2], 0, SPACE[2], 0)
+        root.setSpacing(SPACE[2])
 
         # ── Colour swatch ─────────────────────────────────────────────────────
         swatch = QLabel()
-        swatch.setFixedSize(10, 10)
+        swatch.setFixedSize(9, 9)
         swatch.setStyleSheet(
             f"background-color: {color_hex}; border-radius: 3px;"
             f" border: 1px solid rgba(255,255,255,0.15);"
         )
         root.addWidget(swatch, 0, Qt.AlignmentFlag.AlignVCenter)
-        root.addSpacing(10)
-
-        # ── Text block: name (primary) stacked above count (secondary) ────────
-        text_col = QVBoxLayout()
-        text_col.setContentsMargins(0, 0, 0, 0)
-        text_col.setSpacing(1)
 
         # Name — doubles as an inline editor when double-clicked or ✎ pressed.
         # WA_TransparentForMouseEvents lets mouse events fall through to the
@@ -135,73 +126,57 @@ class _SliceRow(QWidget):
         self.name_edit.setCursorPosition(0)
         self.name_edit.setStyleSheet(
             f'QLineEdit[readOnly="true"] {{'
-            f" background: transparent; color: {PALETTE['text_primary']};"
-            f" border: none; font-weight: 600; font-size: 9pt;"
-            f" font-family: {_FONT}; padding: 0; margin: 0; }}"
+            f" background: transparent; color: {COLORS['text_primary']};"
+            f" border: none; font-weight: 600; font-size: 12px;"
+            f" font-family: {_FONT}; padding: 0; margin: 0; min-height: 20px;"
+            f" max-height: 20px; }}"
             f' QLineEdit[readOnly="false"] {{'
-            f" background: {PALETTE['bg_surface']}; color: {PALETTE['text_primary']};"
-            f" border: 1px solid {PALETTE['border_focus']}; border-radius: 3px;"
-            f" padding: 1px 4px; font-size: 9pt; font-family: {_FONT}; }}"
+            f" background: {COLORS['bg_surface']}; color: {COLORS['text_primary']};"
+            f" border: 1px solid {COLORS['border_strong']}; border-radius: 3px;"
+            f" padding: 1px 4px; font-size: 12px; font-family: {_FONT}; }}"
         )
         self.name_edit.editingFinished.connect(self._finish_edit)
+        root.addWidget(self.name_edit, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-        # Secondary metadata — tile count
-        count_text = f"{tile_count} tile{'s' if tile_count != 1 else ''}"
-        self._count_lbl = QLabel(count_text)
-        self._count_lbl.setStyleSheet(
-            f"color: {PALETTE['text_disabled']}; font-size: 7.5pt;"
-            f" font-family: {_FONT}; background: transparent; padding: 0; margin: 0;"
-        )
-
-        text_col.addStretch()
-        text_col.addWidget(self.name_edit)
-        text_col.addWidget(self._count_lbl)
-        text_col.addStretch()
-        root.addLayout(text_col, stretch=1)
-        root.addSpacing(4)
-
-        # ── Action buttons (hover-revealed) ───────────────────────────────────
-        # ✎ U+270E (LOWER RIGHT PENCIL) — clean Unicode, no emoji variation
-        # ✕ U+2715 (MULTIPLICATION X)   — slightly heavier than ×, lighter than ✗
+        # ── Action buttons ───────────────────────────────────────────────────
         self._edit_btn = QPushButton("✎")
-        self._edit_btn.setFixedSize(26, 26)
+        self._edit_btn.setFixedSize(20, 20)
         self._edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._edit_btn.setToolTip("Rename slice  (double-click also works)")
         self._edit_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._edit_btn.setStyleSheet(_btn_hidden())
+        self._edit_btn.setFlat(True)
+        self._edit_btn.setStyleSheet(_btn_edit_style())
         self._edit_btn.clicked.connect(self._start_edit)
 
-        self._del_btn = QPushButton("✕")
-        self._del_btn.setFixedSize(26, 26)
+        self._del_btn = QPushButton("×")
+        self._del_btn.setFixedSize(20, 20)
         self._del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._del_btn.setToolTip("Delete slice")
         self._del_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._del_btn.setStyleSheet(_btn_hidden())
+        self._del_btn.setFlat(True)
+        self._del_btn.setStyleSheet(_btn_delete_style())
         self._del_btn.clicked.connect(on_delete)
 
         root.addWidget(self._edit_btn)
-        root.addSpacing(2)
         root.addWidget(self._del_btn)
 
-    # ── Hover-reveal ──────────────────────────────────────────────────────────
+    def set_selected(self, selected: bool) -> None:
+        self._selected = selected
+        self._refresh_style()
 
-    def enterEvent(self, event):
-        self._set_actions_visible(True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        # Qt fires leaveEvent on the parent when the cursor moves into a child
-        # widget. We check the cursor is actually outside the row's bounding
-        # rect before hiding — prevents the buttons from flickering as the
-        # mouse crosses from the row background onto a button.
-        cursor_local = self.mapFromGlobal(QCursor.pos())
-        if not self.rect().contains(cursor_local) and not self.name_edit.hasFocus():
-            self._set_actions_visible(False)
-        super().leaveEvent(event)
-
-    def _set_actions_visible(self, visible: bool) -> None:
-        self._edit_btn.setStyleSheet(_btn_edit_style() if visible else _btn_hidden())
-        self._del_btn.setStyleSheet(_btn_delete_style() if visible else _btn_hidden())
+    def _refresh_style(self) -> None:
+        if self._selected:
+            self.setStyleSheet(
+                f"background: rgba(34, 211, 238, 0.12);"
+                f" border: 1px solid {COLORS['brand']};"
+                f" border-radius: 5px;"
+            )
+        else:
+            self.setStyleSheet(
+                f"background: {COLORS['bg_elevated']};"
+                f" border: 1px solid {COLORS['border_default']};"
+                f" border-radius: 5px;"
+            )
 
     # ── Inline rename ─────────────────────────────────────────────────────────
 
@@ -227,7 +202,6 @@ class _SliceRow(QWidget):
         self.name_edit.setCursorPosition(0)
         self.name_edit.style().unpolish(self.name_edit)
         self.name_edit.style().polish(self.name_edit)
-        self._set_actions_visible(False)
         self.clearFocus()
 
 
@@ -236,11 +210,11 @@ class _SliceRow(QWidget):
 class _EmptyState(QWidget):
     """Placeholder displayed when the session has no slices."""
 
-    def __init__(self):
+    def __init__(self, mode: str, on_open_image=None):
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 18, 16, 18)
+        layout.setSpacing(10)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Simple geometric placeholder using box-drawing: lighter and more
@@ -251,7 +225,12 @@ class _EmptyState(QWidget):
             f"color: {PALETTE['text_disabled']}; font-size: 22pt; background: transparent;"
         )
 
-        msg = QLabel("No slices yet.\nDraw a rectangle on the canvas\nto add one.")
+        if mode == "no_image":
+            msg_text = "No image open.\nOpen an image to start."
+        else:
+            msg_text = "No slices yet.\nDraw a region or import a tile."
+
+        msg = QLabel(msg_text)
         msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
         msg.setWordWrap(True)
         msg.setStyleSheet(
@@ -261,6 +240,11 @@ class _EmptyState(QWidget):
 
         layout.addWidget(icon)
         layout.addWidget(msg)
+
+        if mode == "no_image" and on_open_image is not None:
+            btn = PrimaryButton("Open Image", size="sm")
+            btn.clicked.connect(on_open_image)
+            layout.addWidget(btn)
 
 
 # ── Main sidebar widget ───────────────────────────────────────────────────────
@@ -277,46 +261,29 @@ class SlicePreviews(QWidget):
       • .layout            — outer QVBoxLayout; main_window appends "Add Tile" here
     """
 
-    def __init__(self, main_window):
+    countChanged = pyqtSignal(int)
+
+    def __init__(self, main_window, show_header: bool = True):
         super().__init__()
         self.mw = main_window
         self._pms = PixelMaskService()
 
         # self.layout is intentionally an attribute, not just a local variable,
-        # because main_window.py does: self.slice_previews.layout.addWidget(btn)
+        # because older integrations may still append widgets to it.
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
         # ── Header ────────────────────────────────────────────────────────────
-        header = QWidget()
-        header.setFixedHeight(40)
-        header.setStyleSheet(
-            f"background: transparent; border-bottom: 1px solid {PALETTE['border']};"
-        )
-        header_row = QHBoxLayout(header)
-        header_row.setContentsMargins(14, 0, 10, 0)
-        header_row.setSpacing(8)
-
-        section_lbl = QLabel("SLICES")
-        section_lbl.setStyleSheet(
-            f"color: {PALETTE['text_muted']}; font-size: 8pt; font-weight: bold;"
-            f" letter-spacing: 1px; background: transparent;"
-            f" border-left: 2px solid {PALETTE['accent']}; padding-left: 6px;"
-            f" border-bottom: none;"  # override the parent widget's border-bottom
-        )
-        header_row.addWidget(section_lbl)
-        header_row.addStretch()
-
-        # Count badge — pill shape; colour changes when items exist
-        self._count_badge = QLabel("0")
-        self._count_badge.setFixedHeight(18)
-        self._count_badge.setMinimumWidth(20)
-        self._count_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._count_badge.setStyleSheet(self._badge_style(0))
-        header_row.addWidget(self._count_badge)
-
-        self.layout.addWidget(header)
+        # SectionHeader exposes set_badge(value, active) — used in update_previews()
+        if show_header:
+            self._section_header = SectionHeader("Slices", badge="0")
+            # Alias for backward-compat in case something references _count_badge directly
+            self._count_badge = self._section_header._badge
+            self.layout.addWidget(self._section_header)
+        else:
+            self._section_header = None
+            self._count_badge = None
 
         # ── List ──────────────────────────────────────────────────────────────
         self.list_widget = QListWidget()
@@ -324,25 +291,35 @@ class SlicePreviews(QWidget):
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         # 2 px gap between items — visible breathing without border lines
         self.list_widget.setSpacing(2)
+        self.list_widget.setContentsMargins(SPACE[3], SPACE[3], SPACE[3], SPACE[3])
+        self.list_widget.setStyleSheet(
+            f"QListWidget {{ background: transparent; border: none;"
+            f" padding: {SPACE[3]}px; }}"
+            f"QListWidget::item {{ background: transparent; border: none;"
+            f" padding: 0; margin: 0 0 {SPACE[2]}px 0; }}"
+            f"QListWidget::item:selected {{ background: transparent; border: none; }}"
+            f"QListWidget::item:hover {{ background: transparent; border: none; }}"
+        )
         self.list_widget.itemClicked.connect(self.on_item_clicked)
+        self.list_widget.itemSelectionChanged.connect(self._sync_row_selection)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._show_context_menu)
         self.layout.addWidget(self.list_widget, stretch=1)
 
-    # ── Badge helper ──────────────────────────────────────────────────────────
+        self._footer = QWidget()
+        self._footer.setObjectName("slice_footer")
+        self._footer_layout = QVBoxLayout(self._footer)
+        self._footer_layout.setContentsMargins(SPACE[3], SPACE[3], SPACE[3], SPACE[3])
+        self._footer_layout.setSpacing(SPACE[2])
+        self.layout.addWidget(self._footer)
 
-    @staticmethod
-    def _badge_style(count: int) -> str:
-        p = PALETTE
-        if count:
-            # Active: accent-tinted blue pill to signal the panel is populated
-            bg, fg = p["btn_primary"], "white"
-        else:
-            bg, fg = p["bg_control"], p["text_muted"]
-        return (
-            f"background: {bg}; color: {fg}; font-size: 7.5pt; font-weight: bold;"
-            f" font-family: {_FONT}; border-radius: 9px; padding: 0 5px;"
+        self._footer.setStyleSheet(
+            f"QWidget#slice_footer {{ background: {COLORS['bg_surface']};"
+            f" border-top: 1px solid {COLORS['border_default']}; }}"
         )
+
+    def add_footer_widget(self, widget: QWidget) -> None:
+        self._footer_layout.addWidget(widget)
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -350,18 +327,22 @@ class SlicePreviews(QWidget):
         self.list_widget.clear()
         s = self.mw.current_session
         count = len(s.tiles) if s else 0
+        self.countChanged.emit(count)
 
-        self._count_badge.setText(str(count))
-        self._count_badge.setStyleSheet(self._badge_style(count))
+        if self._section_header is not None:
+            self._section_header.set_badge(str(count), active=count > 0)
 
-        if not s or not s.tiles:
-            self._add_empty_state()
+        if not s:
+            self._add_empty_state("no_image")
+            return
+
+        if not s.tiles:
+            self._add_empty_state("no_slices")
             return
 
         for i, tile in enumerate(s.tiles):
             name = tile.metadata.get("name") or f"Slice {i + 1}"
             color_hex = tile.color
-            tile_count = len(tile.rects)
 
             def make_delete(idx=i):
                 return lambda: self._delete_slice(idx)
@@ -370,7 +351,7 @@ class SlicePreviews(QWidget):
                 return lambda new_name: self._rename_slice_inline(idx, new_name)
 
             row = _SliceRow(
-                name, tile_count, color_hex,
+                name, len(tile.rects), color_hex,
                 on_delete=make_delete(),
                 on_rename=make_rename(),
             )
@@ -386,14 +367,37 @@ class SlicePreviews(QWidget):
             self.list_widget.addItem(item)
             self.list_widget.setItemWidget(item, row)
 
+        self._sync_row_selection()
+
+    def select_slice(self, idx: int | None) -> None:
+        self.list_widget.blockSignals(True)
+        if idx is None or idx < 0 or idx >= self.list_widget.count():
+            self.list_widget.clearSelection()
+            self.list_widget.setCurrentRow(-1)
+        else:
+            self.list_widget.setCurrentRow(idx)
+        self.list_widget.blockSignals(False)
+        self._sync_row_selection()
+
     # ── Private ───────────────────────────────────────────────────────────────
 
-    def _add_empty_state(self):
+    def _add_empty_state(self, mode: str):
         item = QListWidgetItem()
         item.setFlags(Qt.ItemFlag.NoItemFlags)
-        item.setSizeHint(QSize(0, 100))
+        height = 170 if mode == "no_image" else 140
+        item.setSizeHint(QSize(0, height))
         self.list_widget.addItem(item)
-        self.list_widget.setItemWidget(item, _EmptyState())
+        self.list_widget.setItemWidget(
+            item,
+            _EmptyState(mode, on_open_image=self.mw.project_manager.add_image)
+        )
+
+    def _sync_row_selection(self) -> None:
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            row = self.list_widget.itemWidget(item)
+            if hasattr(row, "set_selected"):
+                row.set_selected(item.isSelected())
 
     # ── Slice actions ─────────────────────────────────────────────────────────
 

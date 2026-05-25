@@ -4,6 +4,13 @@ import warnings
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
+# Initialize GPU selector first to isolate compatible GPUs BEFORE importing torch
+try:
+    from app.infrastructure.config.gpu_selector import initialize_gpu_visibility
+    initialize_gpu_visibility()
+except Exception as e:
+    logging.warning("Failed to initialize GPU visibility: %s", e)
+
 # ── WINDOWS WORKAROUND (WinError 1114) ──
 # PyTorch must be imported BEFORE PyQt6. Both load C++ and OpenMP DLLs
 # that conflict. If PyQt6 loads first, torch fails to initialize c10.dll.

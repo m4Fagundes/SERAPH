@@ -1,11 +1,11 @@
 import sys
 import platform
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QToolBar, QDockWidget, QListWidget, QPushButton,
-                             QLabel, QFrame, QScrollArea, QSplitter, QStackedWidget,
+                             QDockWidget, QPushButton,
+                             QLabel, QStackedWidget,
                              QDoubleSpinBox, QDialog, QFormLayout, QDialogButtonBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-                             QMenu, QSizePolicy, QSpinBox)
+                             QMenu, QSpinBox)
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QIcon, QAction, QKeySequence, QShortcut, QColor, QFont
 
@@ -21,9 +21,10 @@ from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
 from app.infrastructure.ml_models.cellvit_adapter import CellViTAdapter
 from PyQt6.QtWidgets import QComboBox, QCheckBox
 from app.interface.gui.theme import (
-    PALETTE, btn_primary, btn_success, btn_add, btn_add_tile, label_section,
-    create_seraph_icon, logo_wordmark, breadcrumb_label, tool_pill, overflow_btn,
+    PALETTE,
+    create_seraph_icon, tool_pill,
 )
+from app.interface.gui.widgets import PrimaryButton, SecondaryButton, SuccessButton
 
 # Import the new PyQt Components (to be rewritten in subsequent steps)
 from .components import (
@@ -34,7 +35,10 @@ from .components import (
     ExportHandler,
     PropertiesPanel,
     LayerDropdown,
-    MacroPipelinePanel
+    MacroPipelinePanel,
+    ImageTabStrip,
+    CollapsibleSidebar,
+    ContextBar
 )
 
 class SlicerLabApp(QMainWindow):
@@ -111,61 +115,45 @@ class SlicerLabApp(QMainWindow):
         self._setup_ui()
 
     def _setup_ui(self):
-        # 1. Central Widget — QStackedWidget hosts two independent environments
-        self._central_stack = QStackedWidget()
-        self.canvas_renderer = CanvasRenderer(self)     # Index 0 — Macro (full image)
-        self.tile_renderer   = TileRenderer(self)       # Index 1 — Micro (isolated tile)
-        self._central_stack.addWidget(self.canvas_renderer)
-        self._central_stack.addWidget(self.tile_renderer)
-        self._central_stack.setCurrentIndex(0)
-        self.setCentralWidget(self._central_stack)
-
-        # 2. Top Toolbar
-        self.toolbar = QToolBar("Main Toolbar")
-        self.toolbar.setMovable(False)
-        self.toolbar.setFixedHeight(40)
-        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
-
-        # Initialize sub-modules
+        # Sub-modules must be initialized first — referenced throughout this method
         self.project_manager = ProjectManager(self)
         self.export_handler = ExportHandler(self)
         self.export_format = ".png"
 
-        # ── Logo + Wordmark ──────────────────────────────────────────────────
-        _logo_container = QWidget()
-        _logo_layout = QHBoxLayout(_logo_container)
-        _logo_layout.setContentsMargins(6, 0, 8, 0)
-        _logo_layout.setSpacing(7)
-        _logo_icon = QLabel()
-        _logo_icon.setPixmap(create_seraph_icon(18))
-        _logo_name = QLabel("SERAPH")
-        _logo_name.setStyleSheet(logo_wordmark())
-        _logo_layout.addWidget(_logo_icon)
-        _logo_layout.addWidget(_logo_name)
-        self.toolbar.addWidget(_logo_container)
+        # 1. Central Widget — tab bar (session switcher) + QStackedWidget (canvas/tile)
+        self._central_stack = QStackedWidget()
+        self.canvas_renderer = CanvasRenderer(self)
+        self.tile_renderer   = TileRenderer(self)
+        self._central_stack.addWidget(self.canvas_renderer)
+        self._central_stack.addWidget(self.tile_renderer)
+        self._central_stack.setCurrentIndex(0)
 
-        self.toolbar.addSeparator()
+        # Browser-style image tab strip.
+        self.image_tabs = ImageTabStrip(self)
+        self.image_tabs.currentChanged.connect(self._on_tab_changed)
+        self.image_tabs.tabClicked.connect(self._on_image_tab_clicked)
+        self.image_tabs.closeRequested.connect(self._on_tab_close_requested)
+        self.image_tabs.addRequested.connect(self.project_manager.add_image)
 
-        # ── Breadcrumb ───────────────────────────────────────────────────────
-        self.lbl_breadcrumb = QLabel("No project open")
-        self.lbl_breadcrumb.setStyleSheet(breadcrumb_label())
-        self.toolbar.addWidget(self.lbl_breadcrumb)
+        self.context_bar = ContextBar(self)
 
-        # ── Flexible spacer ──────────────────────────────────────────────────
-        _spacer = QWidget()
-        _spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.toolbar.addWidget(_spacer)
+        _central_container = QWidget()
+        _central_layout = QVBoxLayout(_central_container)
+        _central_layout.setContentsMargins(0, 0, 0, 0)
+        _central_layout.setSpacing(0)
+        _central_layout.addWidget(self.image_tabs)
+        _central_layout.addWidget(self.context_bar)
+        _central_layout.addWidget(self._central_stack)
+        self.setCentralWidget(_central_container)
 
-        # ── Tool Pill ────────────────────────────────────────────────────────
+        # 2. Compact editor-header controls — same row as image tabs.
         self.btn_tool_pill = QPushButton("Grid  ▾")
         self.btn_tool_pill.setToolTip("Active tool — click to switch  [G / B / S / E / A]")
         self.btn_tool_pill.setFixedHeight(28)
         self.btn_tool_pill.setStyleSheet(tool_pill())
         self.btn_tool_pill.clicked.connect(self._show_tool_menu)
-        self.toolbar.addWidget(self.btn_tool_pill)
+        self.image_tabs.add_trailing_widget(self.btn_tool_pill)
 
-        # ── Model Selector (tile mode only) ──────────────────────────────────
         self.combo_model = QComboBox()
         all_model_names = (
             self.segmentation_service.get_available_models()
@@ -176,23 +164,22 @@ class SlicerLabApp(QMainWindow):
         self.combo_model.setToolTip("Select inference model  [F5]")
         self.combo_model.currentTextChanged.connect(self._on_model_changed)
         self.combo_model.setVisible(False)
-        self.toolbar.addWidget(self.combo_model)
+        self.image_tabs.add_trailing_widget(self.combo_model)
 
-        # ── Run button (tile mode only) ──────────────────────────────────────
-        self.btn_run = QPushButton("▶  Run")
+        self.btn_run = SuccessButton("▶  Run")
         self.btn_run.setToolTip("Run batch segmentation on the entire tile  [F5]")
-        self.btn_run.setStyleSheet(btn_success())
         self.btn_run.clicked.connect(self._run_batch_segmentation)
         self.btn_run.setVisible(False)
-        self.toolbar.addWidget(self.btn_run)
+        self.image_tabs.add_trailing_widget(self.btn_run)
 
-        # ── Overflow menu button ─────────────────────────────────────────────
-        self.btn_overflow = QPushButton("⋯")
-        self.btn_overflow.setFixedHeight(28)
-        self.btn_overflow.setToolTip("Layers, grid settings, export and more")
-        self.btn_overflow.setStyleSheet(overflow_btn())
-        self.btn_overflow.clicked.connect(self._show_overflow_menu)
-        self.toolbar.addWidget(self.btn_overflow)
+        self.btn_header_export = SecondaryButton("Export", size="sm")
+        self.btn_header_export.setToolTip("Export slices or nuclei from the current context")
+        self.btn_header_export.clicked.connect(self._show_export_menu)
+        self.image_tabs.add_trailing_widget(self.btn_header_export)
+
+        # Kept as state text target for _update_breadcrumb(), but intentionally
+        # not rendered in the chrome. Open image tabs carry this context.
+        self.lbl_breadcrumb = QLabel("No project open")
 
         # ── Cellpose parameters — owned here, displayed in PropertiesPanel ──
         self.spin_diameter = QDoubleSpinBox()
@@ -244,57 +231,31 @@ class SlicerLabApp(QMainWindow):
         )
         self.lbl_execution_time.hide()
 
-        # 3. Left Dock (Sidebar)
-        self.sidebar_dock = QDockWidget("Project Workspace", self)
+        # 3. Left Dock (Sidebar) — Slices only; images live in the tab bar
+        self.sidebar_dock = QDockWidget("Slices", self)
         self.sidebar_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
         self.sidebar_dock.setMinimumWidth(220)
-        
-        # We use a Splitter here instead of a fixed layout so the two lists expand dynamically without gaps
-        self.sidebar_splitter = QSplitter(Qt.Orientation.Vertical)
-        
-        # --- Top Half: Project Files ---
-        project_widget = QWidget()
-        project_layout = QVBoxLayout(project_widget)
-        project_layout.setContentsMargins(15, 15, 15, 15)
-        project_layout.setSpacing(10)
-        
-        lbl_proj = QLabel("PROJECT IMAGES")
-        lbl_proj.setStyleSheet(label_section())
-        
-        self.file_list = QListWidget()
-        self.file_list.itemClicked.connect(self.project_manager.switch_image_tab)
-        
-        add_btn = QPushButton("＋ Add Image")
-        add_btn.setStyleSheet(btn_add())
-        add_btn.clicked.connect(self.project_manager.add_image)
+        _sidebar_titlebar = QWidget()
+        _sidebar_titlebar.setFixedHeight(0)
+        self.sidebar_dock.setTitleBarWidget(_sidebar_titlebar)
 
-        project_layout.addWidget(lbl_proj)
-        project_layout.addWidget(self.file_list)
-        project_layout.addWidget(add_btn)
+        self.slice_previews = SlicePreviews(self, show_header=False)
 
-        # --- Bottom Half: Slice Previews ---
-        self.slice_previews = SlicePreviews(self)
+        self.add_tile_btn = PrimaryButton("Import Tile...", size="md")
+        self.add_tile_btn.setToolTip("Import a tile descriptor (XML or GeoJSON) into the current image")
+        self.add_tile_btn.clicked.connect(self._add_tile)
+        self.slice_previews.add_footer_widget(self.add_tile_btn)
 
-        # "Add Tile" button sits inside the SlicePreviews widget layout
-        # so it's always visible regardless of splitter sizing
-        add_tile_btn = QPushButton("＋ Add Tile")
-        add_tile_btn.setToolTip("Import a tile descriptor (XML or GeoJSON) into the current session")
-        add_tile_btn.setStyleSheet(btn_add_tile())
-        add_tile_btn.clicked.connect(self._add_tile)
-        self.slice_previews.layout.addWidget(add_tile_btn)
-
-        self.sidebar_splitter.addWidget(project_widget)
-        self.sidebar_splitter.addWidget(self.slice_previews)
-
-        # Set default proportions (2 widgets)
-        self.sidebar_splitter.setSizes([200, 500])
-
-        self.sidebar_dock.setWidget(self.sidebar_splitter)
+        self.sidebar_shell = CollapsibleSidebar("Slices", self.slice_previews, self)
+        self.slice_previews.countChanged.connect(self._on_slice_count_changed)
+        self.sidebar_shell.collapsedChanged.connect(self._set_sidebar_collapsed)
+        self.sidebar_dock.setWidget(self.sidebar_shell)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.sidebar_dock)
         
         # 3.2 Left Dock Bottom (Macro Pipeline)
         self.macro_pipeline_dock = MacroPipelinePanel(self)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.macro_pipeline_dock)
+        self.macro_pipeline_dock.hide()
         
         # 3.5 Right Dock (Properties)
         self.properties_dock = PropertiesPanel("Tile Properties", self)
@@ -306,6 +267,19 @@ class SlicerLabApp(QMainWindow):
         self.properties_dock.setup_overlay_controls(
             self.chk_show_membrane, self.layer_dropdown
         )
+
+        # ── Context actions — shown according to overview/tile state ─────────
+        self.btn_ctx_grid = SecondaryButton("Grid", size="xs")
+        self.btn_ctx_grid.setToolTip("Grid settings for overview mode")
+        self.btn_ctx_grid.clicked.connect(self._show_grid_settings_dialog)
+        self.context_bar.add_action_widget(self.btn_ctx_grid)
+
+        self.btn_ctx_properties = SecondaryButton("Properties", size="xs")
+        self.btn_ctx_properties.setToolTip("Show or hide tile properties")
+        self.btn_ctx_properties.clicked.connect(
+            lambda: self.properties_dock.setVisible(not self.properties_dock.isVisible())
+        )
+        self.context_bar.add_action_widget(self.btn_ctx_properties)
         
         # 4. Status Bar
         self.statusBar().showMessage("Ready. Add an image to start.")
@@ -346,11 +320,115 @@ class SlicerLabApp(QMainWindow):
 
         # Initial state
         self._on_model_changed(self.combo_model.currentText())
+        self._refresh_sidebar_state()
+        self._update_context_bar()
 
         # Phase 1 — menu bar and keyboard shortcuts
         self._setup_menubar()
         self._setup_shortcuts()
         self.layer_dropdown.layerVisibilityChanged.connect(self._sb_refresh)
+
+    # ── Image tab bar handlers ───────────────────────────────────────────────────
+
+    def _on_tab_changed(self, index: int) -> None:
+        if 0 <= index < len(self.sessions):
+            self.project_manager._activate_session(self.sessions[index])
+
+    def _on_image_tab_clicked(self, index: int) -> None:
+        if 0 <= index < len(self.sessions):
+            if self.current_session is not self.sessions[index]:
+                self.project_manager._activate_session(self.sessions[index])
+            elif self._central_stack.currentIndex() == 1:
+                self.switch_to_canvas()
+
+    def _on_tab_close_requested(self, index: int) -> None:
+        if not (0 <= index < len(self.sessions)):
+            return
+        self.sessions.pop(index)
+        self.image_tabs.tab_bar.blockSignals(True)
+        self.image_tabs.remove_tab(index)
+        self.image_tabs.tab_bar.blockSignals(False)
+        if self.sessions:
+            new_idx = min(index, len(self.sessions) - 1)
+            self.image_tabs.set_current_index(new_idx)
+            self.project_manager._activate_session(self.sessions[new_idx])
+        else:
+            self.current_session = None
+            self.canvas_renderer.scene.clear()
+            self.slice_previews.update_previews()
+            self._update_breadcrumb()
+            self._update_context_bar()
+
+    # ── Sidebar shell ───────────────────────────────────────────────────────────
+
+    def _toggle_sidebar(self) -> None:
+        self.sidebar_shell.toggle_collapsed()
+
+    def _set_sidebar_collapsed(self, collapsed: bool) -> None:
+        if collapsed:
+            self.sidebar_dock.setMinimumWidth(44)
+            self.sidebar_dock.setMaximumWidth(44)
+        else:
+            self.sidebar_dock.setMaximumWidth(16777215)
+            self.sidebar_dock.setMinimumWidth(220)
+
+    def _on_slice_count_changed(self, count: int) -> None:
+        self.sidebar_shell.set_badge_count(count)
+        self._refresh_sidebar_state(count)
+
+    def _refresh_sidebar_state(self, slice_count: int | None = None) -> None:
+        s = self.current_session
+        if slice_count is None:
+            slice_count = len(s.tiles) if s else 0
+
+        has_image = s is not None
+        has_slices = has_image and slice_count > 0
+
+        self.add_tile_btn.setVisible(has_image)
+        self.macro_pipeline_dock.setVisible(has_slices)
+        self._update_context_bar()
+
+    def _update_context_bar(self) -> None:
+        s = self.current_session
+        if s is None:
+            self.context_bar.set_overview(None)
+            self._update_context_actions("empty")
+            return
+
+        if self._central_stack.currentIndex() != 1:
+            self.context_bar.set_overview(s, len(s.tiles))
+            self._update_context_actions("overview")
+            return
+
+        idx = getattr(self.tile_renderer, "slice_idx", None)
+        if idx is None or idx >= len(s.tiles):
+            self.context_bar.set_overview(s, len(s.tiles))
+            self._update_context_actions("overview")
+            return
+
+        tile = s.tiles[idx]
+        custom = tile.metadata.get("name", "")
+        slice_label = custom if custom else f"Slice {idx + 1}"
+        nuclei_count = sum(
+            len(layer.get("polygons", []))
+            for layer in tile.segmentation_layers
+            if layer.get("visible", True)
+        )
+        self.context_bar.set_slice(s, slice_label, nuclei_count)
+        self._update_context_actions("slice")
+
+    def _update_context_actions(self, mode: str) -> None:
+        if not hasattr(self, "btn_ctx_grid"):
+            return
+
+        s = self.current_session
+        has_slices = bool(s and s.tiles)
+        is_overview = mode == "overview"
+        is_slice = mode == "slice"
+
+        self.btn_ctx_grid.setVisible(is_overview and s is not None)
+        self.btn_ctx_properties.setVisible(is_slice)
+        self.btn_header_export.setVisible(has_slices)
 
     def _activate_tool(self, tool_name):
         self.active_tool = tool_name
@@ -442,7 +520,9 @@ class SlicerLabApp(QMainWindow):
         self.layer_dropdown.set_tile(s.tiles[idx])
         
         self._central_stack.setCurrentIndex(1)
+        self.slice_previews.select_slice(idx)
         self.update_tool_context(True)
+        self._update_context_bar()
         self._update_breadcrumb()
         self._sb_refresh()
 
@@ -469,7 +549,9 @@ class SlicerLabApp(QMainWindow):
         self.properties_dock.hide()
 
         self._central_stack.setCurrentIndex(0)
+        self.slice_previews.select_slice(None)
         self.update_tool_context(False)
+        self._update_context_bar()
         self._update_breadcrumb()
         self.canvas_renderer.redraw()
         self._sb_refresh()
@@ -565,12 +647,10 @@ class SlicerLabApp(QMainWindow):
 
         view_menu.addSeparator()
 
-        act_sidebar = QAction("Toggle Sidebar", self)
+        act_sidebar = QAction("Collapse/Expand Slices", self)
         act_sidebar.setShortcut(QKeySequence("Ctrl+B"))
-        act_sidebar.setStatusTip("Show or hide the project sidebar")
-        act_sidebar.triggered.connect(
-            lambda: self.sidebar_dock.setVisible(not self.sidebar_dock.isVisible())
-        )
+        act_sidebar.setStatusTip("Collapse or expand the slices sidebar")
+        act_sidebar.triggered.connect(self._toggle_sidebar)
         view_menu.addAction(act_sidebar)
 
         act_props = QAction("Toggle Properties", self)
@@ -758,8 +838,10 @@ class SlicerLabApp(QMainWindow):
                     if layer.get("visible", True)
                 )
                 self._sb_nuclei.setText(f"Nuclei: {count:,}")
+                self._update_context_bar()
                 return
         self._sb_nuclei.setText("Nuclei: —")
+        self._update_context_bar()
 
     def _zoom_in(self):
         r = self._active_renderer()
@@ -849,56 +931,24 @@ class SlicerLabApp(QMainWindow):
             QPoint(0, self.btn_tool_pill.height())
         ))
 
-    def _show_overflow_menu(self):
-        """Secondary actions: layers, grid settings, export."""
+    def _show_export_menu(self):
         menu = QMenu(self)
 
-        # ── Overlay ──────────────────────────────────────────────────────────
-        act_membrane = menu.addAction("Show Membrane Overlay")
-        act_membrane.setCheckable(True)
-        act_membrane.setChecked(self.chk_show_membrane.isChecked())
-        act_membrane.triggered.connect(self.chk_show_membrane.setChecked)
+        act_slices = menu.addAction("Export Slices...")
+        act_slices.setEnabled(bool(self.current_session and self.current_session.tiles))
+        act_slices.triggered.connect(self.export_handler.export_slices)
 
-        act_props = menu.addAction("Layers && Properties Panel")
-        act_props.triggered.connect(
-            lambda: self.properties_dock.setVisible(not self.properties_dock.isVisible())
-        )
+        act_nuclei = menu.addAction("Export Nuclei...")
+        act_nuclei.setEnabled(bool(self.current_session and self.current_session.tiles))
+        act_nuclei.triggered.connect(self.export_handler.export_nuclei)
 
-        # ── Grid settings ─────────────────────────────────────────────────────
-        menu.addSeparator()
-        act_grid = menu.addAction("Grid Settings...")
-        act_grid.triggered.connect(self._show_grid_settings_dialog)
+        act_h5 = menu.addAction("Export Nuclei (HDF5)...  Ctrl+E")
+        act_h5.setEnabled(bool(self.current_session and self.current_session.tiles))
+        act_h5.triggered.connect(self.export_handler.export_nuclei_h5)
 
-        # ── Export ───────────────────────────────────────────────────────────
-        menu.addSeparator()
-
-        fmt_menu = menu.addMenu("Export Format")
-        fmt_map = {"PNG": ".png", "JPEG": ".jpg", "TIFF": ".tiff", "BMP": ".bmp", "WebP": ".webp"}
-        for fmt_name, fmt_ext in fmt_map.items():
-            a = fmt_menu.addAction(fmt_name)
-            a.setCheckable(True)
-            a.setChecked(getattr(self, "export_format", ".png") == fmt_ext)
-            a.triggered.connect(lambda _c, ext=fmt_ext: setattr(self, "export_format", ext))
-
-        act_exp_slices = menu.addAction("Export Slices...")
-        act_exp_slices.triggered.connect(self.export_handler.export_slices)
-
-        act_exp_nuc = menu.addAction("Export Nuclei...")
-        act_exp_nuc.triggered.connect(self.export_handler.export_nuclei)
-
-        act_exp_h5 = menu.addAction("Export Nuclei (HDF5)...  Ctrl+E")
-        act_exp_h5.triggered.connect(self.export_handler.export_nuclei_h5)
-
-        # ── Help ─────────────────────────────────────────────────────────────
-        menu.addSeparator()
-        act_keys = menu.addAction("Keyboard Shortcuts  F1")
-        act_keys.triggered.connect(self._show_shortcuts_dialog)
-
-        hint = menu.sizeHint()
-        origin = self.btn_overflow.mapToGlobal(
-            QPoint(self.btn_overflow.width() - hint.width(), self.btn_overflow.height())
-        )
-        menu.exec(origin)
+        menu.exec(self.btn_header_export.mapToGlobal(
+            QPoint(0, self.btn_header_export.height())
+        ))
 
     def _show_grid_settings_dialog(self):
         dlg = QDialog(self)
@@ -974,7 +1024,7 @@ class SlicerLabApp(QMainWindow):
             ("Zoom In",            "="),
             ("Zoom Out",           "-"),
             ("Zoom to Fit",        "Ctrl+0"),
-            ("Toggle Sidebar",     "Ctrl+B"),
+            ("Collapse/Expand Slices", "Ctrl+B"),
             ("Toggle Properties",  "Ctrl+P"),
             ("Toggle Pipeline",    "Ctrl+M"),
             ("Back to Canvas",     "Escape"),

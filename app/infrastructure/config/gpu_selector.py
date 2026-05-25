@@ -97,12 +97,70 @@ def set_cuda_device(device_id: Optional[int]) -> None:
         logger.warning(f"Failed to set CUDA device: {e}")
 
 
+def initialize_gpu_visibility() -> None:
+    """
+    Runs a lightweight subprocess to find the best compatible GPU,
+    and sets CUDA_VISIBLE_DEVICES in the parent process BEFORE torch is imported.
+    This prevents incompatible GPUs (like RTX 5060) from corrupting the PyTorch/cuDNN context.
+    """
+    # If already inside a probe or visibility is already set, do nothing
+    if "SERAPH_GPU_PROBE" in os.environ or "CUDA_VISIBLE_DEVICES" in os.environ:
+        return
+
+    try:
+        import subprocess
+        import sys
+        
+        # Run a subprocess with SERAPH_GPU_PROBE set to 1 to find the best device
+        env = os.environ.copy()
+        env["SERAPH_GPU_PROBE"] = "1"
+        
+        # Run a python command to query the best device using this module
+        cmd = [
+            sys.executable, 
+            "-c", 
+            "from app.infrastructure.config.gpu_selector import get_best_cuda_device; print(get_best_cuda_device())"
+        ]
+        
+        logger.info("Detecting best compatible GPU in background subprocess...")
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            # Extract last line in case of PyTorch warnings
+            lines = [line.strip() for line in output.splitlines() if line.strip()]
+            if lines:
+                last_line = lines[-1]
+                if last_line != "None":
+                    best_device = int(last_line)
+                    os.environ["CUDA_VISIBLE_DEVICES"] = str(best_device)
+                    logger.info(f"Successfully isolated GPU {best_device} via CUDA_VISIBLE_DEVICES.")
+                    return
+        else:
+            logger.warning(f"Subprocess GPU detection returned code {result.returncode}. Stderr: {result.stderr}")
+    except Exception as e:
+        logger.warning(f"Failed to run GPU subprocess detection: {e}")
+
+
+# Run visibility initialization on import (this runs before any PyTorch imports can happen)
+try:
+    initialize_gpu_visibility()
+except Exception as e:
+    logger.warning(f"Failed to initialize GPU visibility on import: {e}")
+
+
 # Auto-select best GPU on import
 try:
-    best_device = get_best_cuda_device()
-    if best_device is not None:
-        set_cuda_device(best_device)
-        # Save so that hardware_detector knows which GPU to use
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(best_device)
+    if "SERAPH_GPU_PROBE" not in os.environ:
+        if "CUDA_VISIBLE_DEVICES" not in os.environ:
+            best_device = get_best_cuda_device()
+            if best_device is not None:
+                set_cuda_device(best_device)
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(best_device)
+        else:
+            # If visibility was already isolated, we just set default device to 0 (the only visible one)
+            set_cuda_device(0)
 except Exception as e:
     logger.warning(f"GPU auto-selection failed: {e}")
+
+

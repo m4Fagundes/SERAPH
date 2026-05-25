@@ -6,6 +6,9 @@ from .slice_export import ExportHandler
 from .properties_panel import PropertiesPanel
 from .layer_dropdown import LayerDropdown
 from .macro_pipeline_panel import MacroPipelinePanel
+from .image_tabs import ImageTabStrip
+from .collapsible_sidebar import CollapsibleSidebar
+from .context_bar import ContextBar
 
 __all__ = [
     "ProjectManager",
@@ -16,4 +19,7 @@ __all__ = [
     "PropertiesPanel",
     "LayerDropdown",
     "MacroPipelinePanel",
+    "ImageTabStrip",
+    "CollapsibleSidebar",
+    "ContextBar",
 ]
