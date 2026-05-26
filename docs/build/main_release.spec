@@ -19,12 +19,26 @@
 #
 import pathlib
 import platform
+import sys
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 # SPECPATH is set by PyInstaller to the directory of this spec file.
 # This spec lives in docs/build/, so we go up two levels to reach repo root.
 REPO_ROOT = str(pathlib.Path(SPECPATH).parent.parent)
 HOOKS_DIR = str(pathlib.Path(SPECPATH).parent.parent / 'hooks')
+LOCAL_REPO_PATHS = [
+    pathlib.Path(REPO_ROOT) / 'CellViT',
+    pathlib.Path(REPO_ROOT) / 'elf',
+    pathlib.Path(REPO_ROOT) / 'torch-em',
+    pathlib.Path(REPO_ROOT) / 'micro-sam',
+    pathlib.Path(REPO_ROOT) / 'patho-sam',
+]
+
+for _repo_path in LOCAL_REPO_PATHS:
+    if _repo_path.exists():
+        _repo_path_str = str(_repo_path)
+        if _repo_path_str not in sys.path:
+            sys.path.insert(0, _repo_path_str)
 
 # Detect platform
 IS_MAC = platform.system() == 'Darwin'
@@ -65,6 +79,10 @@ packages_to_collect = [
     'cv2',        # bundles opencv binary extensions
     'h5py',       # bundles HDF5 DLLs
     'einops',     # bundles einops for CellViT
+    'segment_anything',  # SAM backbone used by micro-sam / Patho-SAM
+    'micro_sam',
+    'patho_sam',
+    'elf',
 ]
 
 # Platform-specific native library packages
@@ -163,6 +181,27 @@ hiddenimports += [
     'cell_segmentation.utils.post_proc_stardist',
     'cell_segmentation.utils.tools',
     'cell_segmentation.utils.metrics',
+    # Patho-SAM / micro-sam modules imported lazily by PathoSAMAdapter
+    'segment_anything',
+    'segment_anything.predictor',
+    'segment_anything.utils.amg',
+    'segment_anything.utils.transforms',
+    'micro_sam',
+    'micro_sam.automatic_segmentation',
+    'micro_sam.instance_segmentation',
+    'micro_sam.inference',
+    'micro_sam.util',
+    'patho_sam',
+    'elf',
+    'elf.parallel',
+    'elf.parallel.filters',
+    'elf.wrapper.base',
+    'elf.wrapper.generic',
+    'torch_em.model',
+    'torch_em.model.unet',
+    'torch_em.model.unetr',
+    'torch_em.model.vit',
+    'torch_em.loss.dice',
     # macOS-specific (if on macOS)
     'objc' if IS_MAC else None,
 ]
@@ -191,7 +230,7 @@ _excludes = [e for e in _excludes if e is not None]
 
 a = Analysis(
     [str(pathlib.Path(REPO_ROOT) / 'main.py')],
-    pathex=[REPO_ROOT, str(pathlib.Path(REPO_ROOT) / 'CellViT')],
+    pathex=[REPO_ROOT] + [str(_repo_path) for _repo_path in LOCAL_REPO_PATHS if _repo_path.exists()],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

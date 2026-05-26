@@ -31,6 +31,13 @@ jobs:
         run: |
           git clone https://github.com/TIO-IKIM/CellViT CellViT
 
+      - name: Clone Patho-SAM runtime repositories
+        run: |
+          git clone https://github.com/computational-cell-analytics/patho-sam patho-sam
+          git clone https://github.com/computational-cell-analytics/micro-sam.git micro-sam
+          git clone https://github.com/constantinpape/torch-em.git torch-em
+          git clone https://github.com/constantinpape/elf.git elf
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:

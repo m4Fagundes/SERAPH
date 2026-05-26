@@ -23,6 +23,7 @@ pooch>=1.6.0
 imageio>=2.31.0
 tqdm>=4.64.0
 matplotlib>=3.7.0
+segment-anything>=1.0
 threadpoolctl>=3.0.0
 xxhash>=3.4.0
 zarr>=2.18.0,<4.0
