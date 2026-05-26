@@ -36,6 +36,7 @@ class BatchSegmentationService:
 
     def __init__(self, models: Optional[List[IBatchSegmentationModel]] = None):
         self._models: Dict[str, IBatchSegmentationModel] = {}
+        self._last_probability_map = None
         if models:
             for model in models:
                 self.register_model(model)
@@ -86,11 +87,13 @@ class BatchSegmentationService:
                 flow_threshold=flow_threshold,
                 cellprob_threshold=cellprob_threshold,
             )
+            self._last_probability_map = model.probability_map()
             return polygons
         except Exception as e:
             logger.exception(
                 "Error running batch segmentation for %s: %s", model_name, e
             )
+            self._last_probability_map = None
             return []
 
     def segment_tile(
@@ -156,3 +159,7 @@ class BatchSegmentationService:
 
         logger.warning("segment_tile: no objects detected.")
         return []
+
+    def probability_map(self):
+        """Return the probability map from the most recent segment() or segment_tile() call."""
+        return self._last_probability_map

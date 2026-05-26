@@ -159,6 +159,82 @@ class ExportHandler:
         except Exception as e:
             QMessageBox.critical(self.mw, "Export Error", str(e))
 
+    def export_probability_maps(self):
+        s = self.mw.current_session
+        if not s:
+            QMessageBox.warning(self.mw, "Export Probability Map", "No image loaded.")
+            return
+
+        if not s.tiles:
+            QMessageBox.warning(
+                self.mw,
+                "Export Probability Map",
+                "No slices available (please select slices first)."
+            )
+            return
+
+        available_layers = set()
+        for tile in s.tiles:
+            for layer in tile.segmentation_layers:
+                available_layers.add(layer.get("name", "Unknown"))
+
+        if not available_layers:
+            QMessageBox.warning(
+                self.mw,
+                "Export Probability Map",
+                "No segmentations found in any slice."
+            )
+            return
+
+        layer_list = ["All Segmentations"] + sorted(list(available_layers))
+        selected_layer, ok = QInputDialog.getItem(
+            self.mw,
+            "Select Segmentation Strategy",
+            "Choose which segmentation strategy to export:",
+            layer_list,
+            0,
+            False
+        )
+        if not ok or not selected_layer:
+            return
+
+        export_dir = QFileDialog.getExistingDirectory(self.mw, "Select Output Folder for Raw TIFF Probability Maps")
+        if not export_dir:
+            return
+
+        try:
+            tile_indices = None
+            if hasattr(self.mw, '_central_stack') and self.mw._central_stack.currentIndex() == 1:
+                idx = self.mw.tile_renderer.slice_idx
+                tile_indices = [idx] if idx is not None else None
+
+            total_exported = self.mw.export_service.export_probability_maps(
+                s,
+                export_dir,
+                selected_layer,
+                tile_indices=tile_indices,
+                progress_callback=lambda i, count: self.mw.statusBar().showMessage(
+                    f"Exporting probability maps: {i}/{count}"
+                )
+            )
+            if total_exported == 0:
+                QMessageBox.warning(
+                    self.mw,
+                    "Export Probability Map",
+                    "No raw probability maps were found for this selection. "
+                    "Run the segmentation again with Cellpose, CellViT, or PathoSAM before exporting."
+                )
+                self.mw.statusBar().showMessage("No raw probability maps found.")
+            else:
+                QMessageBox.information(
+                    self.mw,
+                    "Export Complete",
+                    f"Successfully exported {total_exported} raw TIFF probability map(s)."
+                )
+                self.mw.statusBar().showMessage("Raw probability map export complete.")
+        except Exception as e:
+            QMessageBox.critical(self.mw, "Export Error", str(e))
+
     def export_nuclei_h5(self):
         s = self.mw.current_session
         if not s:

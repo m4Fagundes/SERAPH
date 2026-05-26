@@ -84,8 +84,8 @@ class ContextBar(QWidget):
         p = COLORS
         return f"""
         QWidget#context_bar {{
-            min-height: 32px;
-            max-height: 32px;
+            min-height: 40px;
+            max-height: 40px;
             background: {p['bg_surface']};
             border-bottom: 1px solid {p['border_default']};
         }}

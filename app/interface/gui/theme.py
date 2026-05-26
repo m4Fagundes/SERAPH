@@ -87,6 +87,55 @@ def create_seraph_icon(size: int = 64) -> "QPixmap":
     return px
 
 
+def create_layout_sidebar_right_icon(size: int = 16, active: bool = False) -> "QPixmap":
+    """
+    Render VS Code's Codicon `layout-sidebar-right`.
+
+    Source shape: Microsoft VS Code Codicons, `layout-sidebar-right`.
+    The pixmap is generated at runtime so the icon can follow the current
+    dark-theme active/inactive colors without shipping extra assets.
+    """
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPixmap
+
+    px = QPixmap(size, size)
+    px.fill(Qt.GlobalColor.transparent)
+
+    color = QColor("#ffffff" if active else PALETTE["text_muted"])
+
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    p.scale(size / 16, size / 16)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(color)
+
+    # SVG path:
+    # M2 1L1 2V14L2 15H14L15 14V2L14 1H2ZM2 14V2H9V14H2Z
+    path = QPainterPath()
+    path.setFillRule(Qt.FillRule.OddEvenFill)
+    path.moveTo(2, 1)
+    path.lineTo(1, 2)
+    path.lineTo(1, 14)
+    path.lineTo(2, 15)
+    path.lineTo(14, 15)
+    path.lineTo(15, 14)
+    path.lineTo(15, 2)
+    path.lineTo(14, 1)
+    path.lineTo(2, 1)
+    path.closeSubpath()
+
+    path.moveTo(2, 14)
+    path.lineTo(2, 2)
+    path.lineTo(9, 2)
+    path.lineTo(9, 14)
+    path.lineTo(2, 14)
+    path.closeSubpath()
+
+    p.drawPath(path)
+    p.end()
+    return px
+
+
 # ── Global Stylesheet ─────────────────────────────────────────────────────────
 
 def global_stylesheet() -> str:
@@ -604,6 +653,25 @@ QPushButton#btn_destructive:hover {{
 QPushButton#btn_destructive:pressed {{
     background-color: {p['accent_danger_press']};
     color: white;
+}}
+
+/* ── Chrome panel toggles ─────────────────────────────────────────────────── */
+QPushButton#panel_toggle {{
+    background: transparent;
+    color: {p['text_muted']};
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0;
+}}
+QPushButton#panel_toggle:hover {{
+    background: {p['bg_hover']};
+    color: {p['text_primary']};
+    border-color: {p['border_default']};
+}}
+QPushButton#panel_toggle:checked {{
+    background: {p['bg_hover']};
+    color: {p['text_primary']};
+    border-color: {p['brand']};
 }}
 
 """

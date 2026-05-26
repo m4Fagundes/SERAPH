@@ -45,3 +45,11 @@ class IBatchSegmentationModel(ABC):
             coordinates relative to the provided image region.
         """
         pass
+
+    def probability_map(self):
+        """Return the H×W float32 probability map (values 0–1) from the last segment() call.
+
+        Returns None if this model does not expose raw confidence values.
+        Subclasses override this to expose model-internal probabilities.
+        """
+        return None

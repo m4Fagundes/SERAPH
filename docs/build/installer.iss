@@ -9,7 +9,7 @@
 [Setup]
 ; Program Identification
 AppName=Grid Image Analyzer
-AppVersion=1.2.4
+AppVersion=1.3.0
 AppPublisher=M4Fagundes
 AppPublisherURL=https://github.com/m4Fagundes/grid-image-analyzer
 AppSupportURL=https://github.com/m4Fagundes/grid-image-analyzer

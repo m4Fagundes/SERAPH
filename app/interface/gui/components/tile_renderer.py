@@ -512,32 +512,6 @@ class TileRenderer(QGraphicsView):
 
         model_name = self.main_window.combo_model.currentText()
 
-        # Check if clicked inside an existing segmentation to remove it (works for ML tools, but NOT for Manual Fine Tune)
-        if tool == "segment" and model_name != "Manual Fine Tune" and event.button() == Qt.MouseButton.LeftButton:
-            scene_pt = self.mapToScene(event.position().toPoint())
-            gx, gy = self._scene_to_global(math.floor(scene_pt.x()), math.floor(scene_pt.y()))
-            gx, gy = int(gx), int(gy)
-
-            tile = s.tiles[idx]
-            for layer in tile.segmentation_layers:
-                # Only allow removing polygons from VISIBLE layers.
-                # Hidden layers are untouchable — the user can't see them,
-                # so clicking "through" them must trigger a new segmentation.
-                if not layer.get("visible", True):
-                    continue
-                for pi, poly in enumerate(layer.get("polygons", [])):
-                    if is_point_in_polygon(gx, gy, poly):
-                        layer["polygons"].pop(pi)
-                        # Remove empty layers
-                        if not layer["polygons"]:
-                            tile.segmentation_layers.remove(layer)
-                        sb = getattr(self.main_window, "statusBar", lambda: None)()
-                        if sb:
-                            sb.showMessage("Segmentation removed.")
-                        self._refresh_membrane_controls()
-                        self.viewport().update()
-                        return
-
         # ── Manual Fine Tune tool ─────────────────────────────────────────────
         if tool == "segment" and model_name == "Manual Fine Tune":
             if event.button() == Qt.MouseButton.LeftButton:
@@ -567,54 +541,12 @@ class TileRenderer(QGraphicsView):
 
         # ── Segment tool (regular segmentation models) ───────────────────────
         if tool == "segment" and event.button() == Qt.MouseButton.LeftButton:
-            scene_pt = self.mapToScene(event.position().toPoint())
-            gx, gy = self._scene_to_global(math.floor(scene_pt.x()), math.floor(scene_pt.y()))
-            gx, gy = int(gx), int(gy)
-
-            tile = s.tiles[idx]
-            in_tile = any(r[0] <= gx < r[2] and r[1] <= gy < r[3] for r in tile.rects)
-            if not in_tile:
-                super().mousePressEvent(event)
-                return
-
-            model_name = self.main_window.combo_model.currentText()
-            if not model_name:
-                return
-
-            # Route to the correct service based on model type
-            batch_service = self.main_window.batch_segmentation_service
-            
-            if model_name == "Nuclick All":
-                self.run_nuclick_all(s, idx, self.main_window.segmentation_service)
-                return
-                
-            if batch_service.is_batch_model(model_name):
-                # Read parameters from main_window spinboxes
-                diameter = self.main_window.spin_diameter.value()
-                if diameter == 0.0:
-                    diameter = None
-                flow_threshold = self.main_window.spin_flow.value()
-                cellprob_threshold = self.main_window.spin_cellprob.value()
-                # Batch model: segment the entire tile at once
-                self.run_batch_segmentation(
-                    model_name, s, idx, batch_service,
-                    diameter=diameter,
-                    flow_threshold=flow_threshold,
-                    cellprob_threshold=cellprob_threshold,
-                )
-                return
-
-            sb = getattr(self.main_window, "statusBar", lambda: None)()
-            if sb:
-                sb.showMessage(f"Processing inference with {model_name}...")
-
-            seg_service = self.main_window.segmentation_service
-            worker = _SegWorker(seg_service, model_name, s, idx, gx, gy)
-            worker.signals.finished.connect(
-                lambda poly, _s=s, _idx=idx, _m=model_name: self._on_seg_done(poly, _s, _idx, _m)
-            )
-            worker.signals.error.connect(self._on_seg_error)
-            self._threadpool.start(worker)
+            press_pos = event.position().toPoint()
+            self._pending_segment_click = {
+                "pos": press_pos,
+                "scene": self.mapToScene(press_pos),
+            }
+            super().mousePressEvent(event)
             return
 
 
@@ -656,6 +588,15 @@ class TileRenderer(QGraphicsView):
         tool = self.main_window.active_tool
         model_name = self.main_window.combo_model.currentText()
 
+        pending = getattr(self, "_pending_segment_click", None)
+        if pending is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._pending_segment_click = None
+            moved = (event.position().toPoint() - pending["pos"]).manhattanLength()
+            super().mouseReleaseEvent(event)
+            if moved <= 4:
+                self._handle_segment_click(pending["scene"])
+            return
+
         if tool in ("brush_eraser", "brush_select") and getattr(self, "_is_brushing", False):
             self._is_brushing = False
             return
@@ -668,6 +609,71 @@ class TileRenderer(QGraphicsView):
 
         super().mouseReleaseEvent(event)
 
+    def _handle_segment_click(self, scene_pt) -> None:
+        s = self.main_window.current_session
+        idx = self._slice_idx
+        if not s or idx is None or self._processing:
+            return
+
+        model_name = self.main_window.combo_model.currentText()
+        if not model_name or model_name == "Manual Fine Tune":
+            return
+
+        gx, gy = self._scene_to_global(math.floor(scene_pt.x()), math.floor(scene_pt.y()))
+        gx, gy = int(gx), int(gy)
+
+        tile = s.tiles[idx]
+        in_tile = any(r[0] <= gx < r[2] and r[1] <= gy < r[3] for r in tile.rects)
+        if not in_tile:
+            return
+
+        for layer in tile.segmentation_layers:
+            # Only allow removing polygons from visible layers.
+            if not layer.get("visible", True):
+                continue
+            for pi, poly in enumerate(layer.get("polygons", [])):
+                if is_point_in_polygon(gx, gy, poly):
+                    layer["polygons"].pop(pi)
+                    if not layer["polygons"]:
+                        tile.segmentation_layers.remove(layer)
+                    sb = getattr(self.main_window, "statusBar", lambda: None)()
+                    if sb:
+                        sb.showMessage("Segmentation removed.")
+                    self._refresh_membrane_controls()
+                    self.viewport().update()
+                    return
+
+        batch_service = self.main_window.batch_segmentation_service
+
+        if model_name == "Nuclick All":
+            self.run_nuclick_all(s, idx, self.main_window.segmentation_service)
+            return
+
+        if batch_service.is_batch_model(model_name):
+            diameter = self.main_window.spin_diameter.value()
+            if diameter == 0.0:
+                diameter = None
+            flow_threshold = self.main_window.spin_flow.value()
+            cellprob_threshold = self.main_window.spin_cellprob.value()
+            self.run_batch_segmentation(
+                model_name, s, idx, batch_service,
+                diameter=diameter,
+                flow_threshold=flow_threshold,
+                cellprob_threshold=cellprob_threshold,
+            )
+            return
+
+        sb = getattr(self.main_window, "statusBar", lambda: None)()
+        if sb:
+            sb.showMessage(f"Processing inference with {model_name}...")
+
+        seg_service = self.main_window.segmentation_service
+        worker = _SegWorker(seg_service, model_name, s, idx, gx, gy)
+        worker.signals.finished.connect(
+            lambda poly, _s=s, _idx=idx, _m=model_name: self._on_seg_done(poly, _s, _idx, _m)
+        )
+        worker.signals.error.connect(self._on_seg_error)
+        self._threadpool.start(worker)
 
     def leaveEvent(self, event):
         self._last_mouse_scene_pt = None
@@ -855,20 +861,21 @@ class TileRenderer(QGraphicsView):
             cellprob_threshold=cellprob_threshold,
         )
         worker.signals.finished.connect(
-            lambda polys, _s=session, _idx=slice_idx, _m=model_name, _t=start_time: self._on_batch_seg_done(
-                polys, _s, _idx, _m, _t
+            lambda polys, _s=session, _idx=slice_idx, _m=model_name, _t=start_time, _svc=service: self._on_batch_seg_done(
+                polys, _s, _idx, _m, _t, _svc
             )
         )
         worker.signals.error.connect(self._on_seg_error)
         self._threadpool.start(worker)
 
     def _on_batch_seg_done(
-        self, polygons: list, session, slice_idx: int, model_name: str = "Unknown", start_time: float = None
+        self, polygons: list, session, slice_idx: int, model_name: str = "Unknown",
+        start_time: float = None, batch_service=None
     ) -> None:
         """Callback when batch segmentation finishes successfully."""
         self._processing = False
         sb = getattr(self.main_window, "statusBar", lambda: None)()
-        
+
         time_msg = ""
         if start_time is not None:
             import time
@@ -886,7 +893,11 @@ class TileRenderer(QGraphicsView):
         if polygons:
             tile = session.tiles[slice_idx]
             # Always create a NEW layer for batch runs
-            tile.add_layer(model_name, model_name, polygons)
+            layer_idx = tile.add_layer(model_name, model_name, polygons)
+            if batch_service is not None:
+                prob = batch_service.probability_map()
+                if prob is not None:
+                    tile.segmentation_layers[layer_idx]["probability_map"] = prob
             if sb:
                 sb.showMessage(
                     f"Batch segmentation: {len(polygons)} nuclei detected{time_msg}."

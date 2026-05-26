@@ -136,6 +136,7 @@ class CellViTAdapter(IBatchSegmentationModel):
 
         # Resolve display name at init from checkpoint filename (no torch import needed)
         self._display_name = self._infer_display_name()
+        self._last_probability_map = None
 
     # ── IBatchSegmentationModel ──────────────────────────────────────────────
 
@@ -183,6 +184,7 @@ class CellViTAdapter(IBatchSegmentationModel):
         logger.info("CellViT: %d patches to process", len(patch_list))
 
         all_polygons: List[List[Tuple[int, int]]] = []
+        prob_canvas = np.full((H, W), -np.inf, dtype=np.float32)
 
         for batch_start in range(0, len(patch_list), self._batch_size):
             batch = patch_list[batch_start: batch_start + self._batch_size]
@@ -203,6 +205,20 @@ class CellViTAdapter(IBatchSegmentationModel):
                     continue
 
             for i, patch_info in enumerate(batch):
+                _rs = patch_info["row_start"]
+                _cs = patch_info["col_start"]
+                _ah = patch_info["actual_h"]
+                _aw = patch_info["actual_w"]
+                # Store the raw foreground evidence before softmax saturation.
+                # The probability softmax often collapses visually to 0/1 for CellViT,
+                # while the logit margin keeps continuous model confidence.
+                _logits = predictions["nuclei_binary_logits"][i].numpy()
+                _pprob = (_logits[1] - _logits[0]).astype(np.float32)
+                np.maximum(
+                    prob_canvas[_rs:_rs + _ah, _cs:_cs + _aw],
+                    _pprob[:_ah, :_aw],
+                    out=prob_canvas[_rs:_rs + _ah, _cs:_cs + _aw],
+                )
                 pred_map = self._assemble_pred_map(predictions, idx=i)
                 try:
                     _, inst_info = self._postprocessor.post_process_cell_segmentation(pred_map)
@@ -235,7 +251,39 @@ class CellViTAdapter(IBatchSegmentationModel):
                         all_polygons.append(polygon)
 
         logger.info("CellViT detected %d nuclei", len(all_polygons))
+        prob_canvas[~np.isfinite(prob_canvas)] = 0.0
+        self._last_probability_map = prob_canvas.astype(np.float32, copy=False)
+        self._log_probability_map_stats(self._last_probability_map)
         return all_polygons
+
+    def probability_map(self):
+        return self._last_probability_map
+
+    @staticmethod
+    def _log_probability_map_stats(prob_map: np.ndarray) -> None:
+        try:
+            finite = prob_map[np.isfinite(prob_map)]
+            if finite.size == 0:
+                logger.info("CellViT probability map captured: empty/non-finite")
+                return
+            q = np.quantile(finite, [0.01, 0.05, 0.5, 0.95, 0.99])
+            near_binary = float(np.mean((finite <= 1e-6) | (finite >= 1.0 - 1e-6)))
+            logger.info(
+                "CellViT probability map captured: shape=%s dtype=%s min=%.6f p01=%.6f "
+                "p05=%.6f p50=%.6f p95=%.6f p99=%.6f max=%.6f near_binary=%.2f%%",
+                prob_map.shape,
+                prob_map.dtype,
+                float(finite.min()),
+                float(q[0]),
+                float(q[1]),
+                float(q[2]),
+                float(q[3]),
+                float(q[4]),
+                float(finite.max()),
+                near_binary * 100.0,
+            )
+        except Exception as exc:
+            logger.warning("Could not summarize CellViT probability map: %s", exc)
 
     # ── Patch tiling ─────────────────────────────────────────────────────────
 
@@ -314,10 +362,12 @@ class CellViTAdapter(IBatchSegmentationModel):
 
     def _forward(self, batch: "torch.Tensor") -> dict:
         """
-        Run one forward pass and return softmaxed predictions on CPU.
+        Run one forward pass and return predictions on CPU.
 
         Softmax is applied here to match the official CellViT inference pipeline
         (cell_detection.py), which applies it before calling calculate_instance_map.
+        The raw binary logits are kept separately for exporting a non-saturated
+        CellViT confidence map.
         """
         import torch
         import torch.nn.functional as F
@@ -331,7 +381,9 @@ class CellViTAdapter(IBatchSegmentationModel):
             else:
                 preds = self._model(batch)
 
-        preds["nuclei_binary_map"] = F.softmax(preds["nuclei_binary_map"].float(), dim=1)
+        raw_binary_logits = preds["nuclei_binary_map"].float()
+        preds["nuclei_binary_logits"] = raw_binary_logits
+        preds["nuclei_binary_map"] = F.softmax(raw_binary_logits, dim=1)
         preds["nuclei_type_map"] = F.softmax(preds["nuclei_type_map"].float(), dim=1)
 
         return {

@@ -223,6 +223,124 @@ class ExportService:
                 
         return count
 
+    def export_probability_maps(
+        self,
+        session,
+        output_dir,
+        selected_layer="All Segmentations",
+        tile_indices=None,
+        progress_callback=None,
+    ):
+        """
+        Export raw probability maps captured during segmentation as float32 TIFFs.
+
+        This intentionally does not fall back to polygon-derived binary masks:
+        if a layer does not carry a raw ``probability_map`` value, it is skipped.
+        """
+        if not session or not output_dir:
+            return 0
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        if tile_indices is None:
+            tile_indices = range(len(session.tiles))
+
+        tile_indices = list(tile_indices)
+        total = len(tile_indices)
+        count = 0
+        base = os.path.splitext(session.name)[0]
+        safe_layer = self._safe_filename(selected_layer)
+
+        for progress_idx, tile_idx in enumerate(tile_indices, start=1):
+            if tile_idx is None or tile_idx < 0 or tile_idx >= len(session.tiles):
+                continue
+
+            tile = session.tiles[tile_idx]
+            bx1, by1, bx2, by2 = tile.bounding_box
+            width, height = bx2 - bx1, by2 - by1
+            if width <= 0 or height <= 0:
+                continue
+
+            real_prob = self._collect_real_probability_map(tile, selected_layer)
+            logger.info(
+                "export_probability_maps tile %d: real_prob=%s stats=%s",
+                tile_idx,
+                None if real_prob is None else real_prob.shape,
+                None if real_prob is None else self._probability_map_stats(real_prob),
+            )
+
+            if real_prob is not None:
+                filename = f"{base}_slice{tile_idx + 1}_{safe_layer}_raw_probability_map.tiff"
+                full_path = os.path.join(output_dir, filename)
+                try:
+                    Image.fromarray(real_prob, mode="F").save(
+                        full_path, format="TIFF", compression="raw"
+                    )
+                    count += 1
+                except Exception as exc:
+                    logger.error("Error saving probability map '%s': %s", full_path, exc)
+
+            if progress_callback:
+                progress_callback(progress_idx, total)
+
+        return count
+
+    @staticmethod
+    def _collect_layer_polygons(tile, selected_layer):
+        polygons = []
+        for layer in tile.segmentation_layers:
+            if selected_layer != "All Segmentations" and layer.get("name") != selected_layer:
+                continue
+            for polygon in layer.get("polygons", []):
+                if polygon and len(polygon) >= 3:
+                    polygons.append(polygon)
+        return polygons
+
+    @staticmethod
+    def _collect_real_probability_map(tile, selected_layer):
+        """Return a float32 H×W array merged from any layers that carry a real probability map.
+
+        When multiple layers qualify (All Segmentations mode), their maps are combined
+        via pixel-wise maximum so the result reflects the highest confidence from any model.
+        Returns None if no layer has a real probability map.
+        """
+        import numpy as np
+        canvas = None
+        for layer in tile.segmentation_layers:
+            if selected_layer != "All Segmentations" and layer.get("name") != selected_layer:
+                continue
+            pm = layer.get("probability_map")
+            if pm is None:
+                continue
+            arr = np.asarray(pm, dtype=np.float32)
+            if canvas is None:
+                canvas = arr.copy()
+            elif arr.shape == canvas.shape:
+                np.maximum(canvas, arr, out=canvas)
+        return canvas
+
+    @staticmethod
+    def _probability_map_stats(prob_map):
+        import numpy as np
+
+        arr = np.asarray(prob_map, dtype=np.float32)
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            return "empty/non-finite"
+        q = np.quantile(finite, [0.01, 0.5, 0.99])
+        near_binary = float(np.mean((finite <= 1e-6) | (finite >= 1.0 - 1e-6))) * 100.0
+        return (
+            f"min={float(finite.min()):.6f}, p01={float(q[0]):.6f}, "
+            f"p50={float(q[1]):.6f}, p99={float(q[2]):.6f}, "
+            f"max={float(finite.max()):.6f}, near_binary={near_binary:.2f}%"
+        )
+
+    @staticmethod
+    def _safe_filename(value):
+        value = str(value or "unknown")
+        safe = "".join(c for c in value if c.isalnum() or c in " _-()").strip()
+        return safe.replace(" ", "_") or "unknown"
+
     def export_nuclei_to_h5(self, session, output_filepath, selected_layer="All Segmentations", patient_label=0, progress_callback=None):
         """
         Exports all nuclei to HDF5.

@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QDoubleSpinBox, QDialog, QFormLayout, QDialogButtonBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
                              QMenu, QSpinBox)
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, QSize
 from PyQt6.QtGui import QIcon, QAction, QKeySequence, QShortcut, QColor, QFont
 
 from app.domain.history import UndoManager
@@ -19,10 +19,13 @@ from app.application.manual_adjustment_service import ManualAdjustmentService
 from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
 from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
 from app.infrastructure.ml_models.cellvit_adapter import CellViTAdapter
+from app.infrastructure.ml_models.patho_sam_adapter import PathoSAMAdapter
 from PyQt6.QtWidgets import QComboBox, QCheckBox
 from app.interface.gui.theme import (
     PALETTE,
-    create_seraph_icon, tool_pill,
+    create_layout_sidebar_right_icon,
+    create_seraph_icon,
+    tool_pill,
 )
 from app.interface.gui.widgets import PrimaryButton, SecondaryButton, SuccessButton
 
@@ -106,6 +109,13 @@ class SlicerLabApp(QMainWindow):
         except Exception as e:
             _cr_logger.error("Failed to load CellViT adapter: %s", e)
 
+        try:
+            patho_sam_adapter = PathoSAMAdapter()
+            batch_models.append(patho_sam_adapter)
+            _cr_logger.info("PathoSAMAdapter registered: %s", patho_sam_adapter.name)
+        except Exception as e:
+            _cr_logger.error("Failed to load PathoSAM adapter: %s", e)
+
         self.batch_segmentation_service = BatchSegmentationService(
             models=batch_models
         )
@@ -152,7 +162,7 @@ class SlicerLabApp(QMainWindow):
         self.btn_tool_pill.setFixedHeight(28)
         self.btn_tool_pill.setStyleSheet(tool_pill())
         self.btn_tool_pill.clicked.connect(self._show_tool_menu)
-        self.image_tabs.add_trailing_widget(self.btn_tool_pill)
+        self.context_bar.add_action_widget(self.btn_tool_pill)
 
         self.combo_model = QComboBox()
         all_model_names = (
@@ -164,18 +174,13 @@ class SlicerLabApp(QMainWindow):
         self.combo_model.setToolTip("Select inference model  [F5]")
         self.combo_model.currentTextChanged.connect(self._on_model_changed)
         self.combo_model.setVisible(False)
-        self.image_tabs.add_trailing_widget(self.combo_model)
+        self.context_bar.add_action_widget(self.combo_model)
 
-        self.btn_run = SuccessButton("▶  Run")
-        self.btn_run.setToolTip("Run batch segmentation on the entire tile  [F5]")
+        self.btn_run = SuccessButton("▶  Run Slice", size="sm")
+        self.btn_run.setToolTip("Run full-slice segmentation with the selected model  [F5]")
         self.btn_run.clicked.connect(self._run_batch_segmentation)
         self.btn_run.setVisible(False)
-        self.image_tabs.add_trailing_widget(self.btn_run)
-
-        self.btn_header_export = SecondaryButton("Export", size="sm")
-        self.btn_header_export.setToolTip("Export slices or nuclei from the current context")
-        self.btn_header_export.clicked.connect(self._show_export_menu)
-        self.image_tabs.add_trailing_widget(self.btn_header_export)
+        self.context_bar.add_action_widget(self.btn_run)
 
         # Kept as state text target for _update_breadcrumb(), but intentionally
         # not rendered in the chrome. Open image tabs carry this context.
@@ -267,19 +272,35 @@ class SlicerLabApp(QMainWindow):
         self.properties_dock.setup_overlay_controls(
             self.chk_show_membrane, self.layer_dropdown
         )
+        self.properties_dock.visibilityChanged.connect(self._sync_panel_toggles)
+
+        self.btn_toggle_properties = QPushButton()
+        self.btn_toggle_properties.setObjectName("panel_toggle")
+        self.btn_toggle_properties.setCheckable(True)
+        self.btn_toggle_properties.setFixedSize(28, 28)
+        self.btn_toggle_properties.setIconSize(QSize(16, 16))
+        self.btn_toggle_properties.setIcon(QIcon(create_layout_sidebar_right_icon(16, False)))
+        self.btn_toggle_properties.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_properties.setToolTip("Toggle tile properties panel")
+        self.btn_toggle_properties.clicked.connect(
+            lambda checked: self.properties_dock.setVisible(checked)
+        )
+
+        self._menu_panel_controls = QWidget()
+        self._menu_panel_controls.setObjectName("menu_panel_controls")
+        self._menu_panel_controls.setStyleSheet(
+            "QWidget#menu_panel_controls { background: transparent; border: none; }"
+        )
+        _panel_controls_layout = QHBoxLayout(self._menu_panel_controls)
+        _panel_controls_layout.setContentsMargins(0, 0, 8, 0)
+        _panel_controls_layout.setSpacing(4)
+        _panel_controls_layout.addWidget(self.btn_toggle_properties)
 
         # ── Context actions — shown according to overview/tile state ─────────
         self.btn_ctx_grid = SecondaryButton("Grid", size="xs")
         self.btn_ctx_grid.setToolTip("Grid settings for overview mode")
         self.btn_ctx_grid.clicked.connect(self._show_grid_settings_dialog)
         self.context_bar.add_action_widget(self.btn_ctx_grid)
-
-        self.btn_ctx_properties = SecondaryButton("Properties", size="xs")
-        self.btn_ctx_properties.setToolTip("Show or hide tile properties")
-        self.btn_ctx_properties.clicked.connect(
-            lambda: self.properties_dock.setVisible(not self.properties_dock.isVisible())
-        )
-        self.context_bar.add_action_widget(self.btn_ctx_properties)
         
         # 4. Status Bar
         self.statusBar().showMessage("Ready. Add an image to start.")
@@ -325,6 +346,7 @@ class SlicerLabApp(QMainWindow):
 
         # Phase 1 — menu bar and keyboard shortcuts
         self._setup_menubar()
+        self.menuBar().setCornerWidget(self._menu_panel_controls, Qt.Corner.TopRightCorner)
         self._setup_shortcuts()
         self.layer_dropdown.layerVisibilityChanged.connect(self._sb_refresh)
 
@@ -426,9 +448,19 @@ class SlicerLabApp(QMainWindow):
         is_overview = mode == "overview"
         is_slice = mode == "slice"
 
+        self.btn_tool_pill.setVisible(s is not None)
         self.btn_ctx_grid.setVisible(is_overview and s is not None)
-        self.btn_ctx_properties.setVisible(is_slice)
-        self.btn_header_export.setVisible(has_slices)
+        self.btn_toggle_properties.setVisible(is_slice)
+        self._sync_panel_toggles()
+
+    def _sync_panel_toggles(self) -> None:
+        if not hasattr(self, "btn_toggle_properties"):
+            return
+        self.btn_toggle_properties.blockSignals(True)
+        is_open = self.properties_dock.isVisible()
+        self.btn_toggle_properties.setChecked(is_open)
+        self.btn_toggle_properties.setIcon(QIcon(create_layout_sidebar_right_icon(16, is_open)))
+        self.btn_toggle_properties.blockSignals(False)
 
     def _activate_tool(self, tool_name):
         self.active_tool = tool_name
@@ -599,6 +631,31 @@ class SlicerLabApp(QMainWindow):
 
         file_menu.addSeparator()
 
+        export_menu = file_menu.addMenu("Export")
+
+        act_export_slices = QAction("Export Slices...", self)
+        act_export_slices.setStatusTip("Export slices from the current image")
+        act_export_slices.triggered.connect(self.export_handler.export_slices)
+        export_menu.addAction(act_export_slices)
+
+        act_export_nuclei = QAction("Export Nuclei...", self)
+        act_export_nuclei.setStatusTip("Export nuclei from the current image or tile")
+        act_export_nuclei.triggered.connect(self.export_handler.export_nuclei)
+        export_menu.addAction(act_export_nuclei)
+
+        act_export_probability_map = QAction("Export Probability Map...", self)
+        act_export_probability_map.setStatusTip("Export TIFF probability maps from existing segmentation layers")
+        act_export_probability_map.triggered.connect(self.export_handler.export_probability_maps)
+        export_menu.addAction(act_export_probability_map)
+
+        act_export_h5_file = QAction("Export Nuclei (HDF5)...", self)
+        act_export_h5_file.setShortcut(QKeySequence("Ctrl+E"))
+        act_export_h5_file.setStatusTip("Export all segmented nuclei to an HDF5 ML dataset")
+        act_export_h5_file.triggered.connect(self.export_handler.export_nuclei_h5)
+        export_menu.addAction(act_export_h5_file)
+
+        file_menu.addSeparator()
+
         act_exit = QAction("Exit", self)
         act_exit.setStatusTip("Exit SERAPH")
         act_exit.triggered.connect(self.close)
@@ -713,12 +770,6 @@ class SlicerLabApp(QMainWindow):
         act_run_seg.setStatusTip("Run batch segmentation on the current tile")
         act_run_seg.triggered.connect(self._run_batch_segmentation)
         tools_menu.addAction(act_run_seg)
-
-        act_export_h5 = QAction("Export to HDF5...", self)
-        act_export_h5.setShortcut(QKeySequence("Ctrl+E"))
-        act_export_h5.setStatusTip("Export all segmented nuclei to an HDF5 ML dataset")
-        act_export_h5.triggered.connect(self.export_handler.export_nuclei_h5)
-        tools_menu.addAction(act_export_h5)
 
         # ── Help ──────────────────────────────────────────────────────────
         help_menu = mb.addMenu("&Help")
@@ -929,25 +980,6 @@ class SlicerLabApp(QMainWindow):
 
         menu.exec(self.btn_tool_pill.mapToGlobal(
             QPoint(0, self.btn_tool_pill.height())
-        ))
-
-    def _show_export_menu(self):
-        menu = QMenu(self)
-
-        act_slices = menu.addAction("Export Slices...")
-        act_slices.setEnabled(bool(self.current_session and self.current_session.tiles))
-        act_slices.triggered.connect(self.export_handler.export_slices)
-
-        act_nuclei = menu.addAction("Export Nuclei...")
-        act_nuclei.setEnabled(bool(self.current_session and self.current_session.tiles))
-        act_nuclei.triggered.connect(self.export_handler.export_nuclei)
-
-        act_h5 = menu.addAction("Export Nuclei (HDF5)...  Ctrl+E")
-        act_h5.setEnabled(bool(self.current_session and self.current_session.tiles))
-        act_h5.triggered.connect(self.export_handler.export_nuclei_h5)
-
-        menu.exec(self.btn_header_export.mapToGlobal(
-            QPoint(0, self.btn_header_export.height())
         ))
 
     def _show_grid_settings_dialog(self):

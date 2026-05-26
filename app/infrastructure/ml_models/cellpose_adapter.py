@@ -112,6 +112,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         self._flow_threshold = flow_threshold
         self._cellprob_threshold = cellprob_threshold
         self._min_size = min_size
+        self._last_probability_map = None
 
         # Performance settings
         self._batch_size = self._config.cellpose.batch_size
@@ -390,6 +391,18 @@ class CellposeAdapter(IBatchSegmentationModel):
             batch_size=internal_batch,
         )
 
+        try:
+            import numpy as _np
+            cprob = _np.asarray(flows[2], dtype=_np.float32)
+            self._last_probability_map = cprob if cprob.ndim == 2 else None
+            logger.info(
+                "Cellpose probability map captured: shape=%s dtype=%s",
+                cprob.shape, cprob.dtype,
+            )
+        except Exception as _e:
+            logger.warning("Could not capture Cellpose probability map: %s", _e)
+            self._last_probability_map = None
+
         logger.info("Cellpose detected %d objects.", masks.max() if masks.size else 0)
 
         # 4. Convert label masks → contour polygons
@@ -397,6 +410,9 @@ class CellposeAdapter(IBatchSegmentationModel):
 
         logger.info("Extracted %d polygons from masks.", len(polygons))
         return polygons
+
+    def probability_map(self):
+        return self._last_probability_map
 
     # ── Private Methods ─────────────────────────────────────────────────────
 

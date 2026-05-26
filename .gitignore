@@ -28,3 +28,8 @@ skills/
 AGENTS.md
 CLAUDE.md
 ruvector.db
+
+# Local cloned libraries
+elf/
+micro-sam/
+torch-em/

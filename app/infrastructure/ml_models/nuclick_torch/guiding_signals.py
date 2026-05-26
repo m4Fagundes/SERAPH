@@ -137,10 +137,17 @@ def get_patches_and_signals(img, clickMap, boundingBoxes, cx, cy, m, n):
         xEnd = boundingBox[2]
         yEnd = boundingBox[3]
 
-        patchs[i] = img[0, :, yStart:yEnd + 1, xStart:xEnd + 1]
+        patch = img[0, :, yStart:yEnd + 1, xStart:xEnd + 1]
+        if patch.shape != (3, bb, bb):
+            padded = np.zeros((3, bb, bb), dtype=np.uint8)
+            padded[:, :patch.shape[1], :patch.shape[2]] = patch
+            patch = padded
+        patchs[i] = patch
 
         # O(patch_size) optimization: avoid O(m*n) array allocations
-        local_clicks = clickMap[0, 0, yStart:yEnd + 1, xStart:xEnd + 1].copy()
+        local_clicks_raw = clickMap[0, 0, yStart:yEnd + 1, xStart:xEnd + 1].copy()
+        local_clicks = np.zeros((bb, bb), dtype=np.uint8)
+        local_clicks[:local_clicks_raw.shape[0], :local_clicks_raw.shape[1]] = local_clicks_raw
         
         nuc = np.zeros((bb, bb), dtype=np.uint8)
         

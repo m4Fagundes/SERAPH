@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 # ── Model registry ────────────────────────────────────────────────────────────
 
 _KNOWN_MODELS = [
-    ("Cellpose (cpsam)", "#FF00FF"),
-    ("NuClick (PyTorch)", "#00E5FF"),
-    ("CellViT-SAM",       "#00E5FF"),
+    ("Cellpose (cpsam)",   "#FF00FF"),
+    ("NuClick (PyTorch)",  "#00E5FF"),
+    ("CellViT-SAM",        "#00E5FF"),
+    ("PathoSAM (ViT-B)",   "#50C878"),
 ]
 
 def _layer_name(model_name: str) -> str:
@@ -85,7 +86,10 @@ class MacroPipelineWorker(QThread):
                     )
 
                     if polys:
-                        self.session.tiles[i].add_layer("Macro Cellpose", self.cellpose_model, polys, "#FF00FF")
+                        layer_idx = self.session.tiles[i].add_layer("Macro Cellpose", self.cellpose_model, polys, "#FF00FF")
+                        prob = self.batch_service.probability_map()
+                        if prob is not None:
+                            self.session.tiles[i].segmentation_layers[layer_idx]["probability_map"] = prob
 
                     self.current_slice_idx = i + 1
 
@@ -178,9 +182,12 @@ class SingleModelWorker(QThread):
                 )
 
                 if polys:
-                    self.session.tiles[i].add_layer(
+                    layer_idx = self.session.tiles[i].add_layer(
                         self.layer_name, self.model_name, polys, self.layer_color
                     )
+                    prob = self.batch_service.probability_map()
+                    if prob is not None:
+                        self.session.tiles[i].segmentation_layers[layer_idx]["probability_map"] = prob
 
             elapsed = time.monotonic() - start_time
             self.finished.emit(elapsed)
@@ -275,9 +282,10 @@ class MacroPipelinePanel(QDockWidget):
     """
 
     _MODEL_DESCRIPTIONS = {
-        "Cellpose (cpsam)": "cpsam · CUDA",
+        "Cellpose (cpsam)":  "cpsam · CUDA",
         "NuClick (PyTorch)": "PyTorch",
         "CellViT-SAM":       "ViT-SAM",
+        "PathoSAM (ViT-B)":  "SAM · histopathology",
     }
 
     def __init__(self, parent=None):

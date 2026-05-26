@@ -265,6 +265,7 @@ class NuClickAdapter(ISegmentationModel):
         logger.info(f"Running NuClick batch segmentation for {len(clicks)} points")
 
         pad = self.PAD
+        orig_width, orig_height = image.size
         padded_image = ImageOps.expand(image, border=pad, fill=0)
         padded_width, padded_height = padded_image.size
 
@@ -277,6 +278,9 @@ class NuClickAdapter(ISegmentationModel):
         clickMap = np.zeros((padded_height, padded_width), dtype=np.uint8)
 
         for (click_x, click_y) in clicks:
+            # Clamp to valid image coords so the padded patch never overruns the border.
+            click_x = max(0, min(click_x, orig_width - 1))
+            click_y = max(0, min(click_y, orig_height - 1))
             new_click_x = click_x + pad
             new_click_y = click_y + pad
             cx.append(new_click_x)
