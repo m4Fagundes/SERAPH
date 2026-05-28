@@ -254,6 +254,41 @@ class ExportHandler:
             QMessageBox.warning(self.mw, "Export HDF5", "No segmentations found in any slice.")
             return
 
+        # ── Microns-per-pixel gate ─────────────────────────────────────────
+        # pixel_size_um is stored in the H5 file and drives the area filter
+        # inside NucleiExtractionService. Export is blocked until a valid
+        # positive value is confirmed.
+        def _parse_mpp(raw) -> float:
+            try:
+                v = float(raw)
+                if v > 0:
+                    return v
+            except (TypeError, ValueError):
+                pass
+            return 0.0
+
+        current_mpp = _parse_mpp(getattr(s, "microns_per_pixel", "") or "")
+        if current_mpp <= 0:
+            mpp_text, ok = QInputDialog.getText(
+                self.mw,
+                "Physical Resolution Required",
+                "Microns per pixel (µm/px) is required for HDF5 export.\n"
+                "It sets the physical scale stored in pixel_size_um and\n"
+                "enables the nucleus area filter (min 5 µm²).\n\n"
+                "Enter the pixel size in microns (e.g. 0.2420):",
+            )
+            if not ok or not mpp_text.strip():
+                return
+            current_mpp = _parse_mpp(mpp_text.strip())
+            if current_mpp <= 0:
+                QMessageBox.critical(
+                    self.mw, "Invalid Resolution",
+                    f'"{mpp_text.strip()}" is not a valid positive number.\nExport cancelled.'
+                )
+                return
+            s.microns_per_pixel = str(current_mpp)
+        # ──────────────────────────────────────────────────────────────────
+
         layer_list = ["All Segmentations"] + sorted(list(available_layers))
         selected_layer, ok = QInputDialog.getItem(
             self.mw, "Select Layer",

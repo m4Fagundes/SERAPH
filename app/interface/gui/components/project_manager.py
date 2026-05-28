@@ -32,7 +32,10 @@ class ProjectManager:
         self._clear_tabs()
         self.mw.current_session = None
         self.mw.canvas_renderer.scene.clear()
+        self.mw.canvas_renderer.on_session_closed()
         self.mw.slice_previews.update_previews()
+        if hasattr(self.mw, '_show_welcome_page'):
+            self.mw._show_welcome_page()
         if hasattr(self.mw, '_update_breadcrumb'):
             self.mw._update_breadcrumb()
         if hasattr(self.mw, '_update_context_bar'):
@@ -55,6 +58,8 @@ class ProjectManager:
                 self.mw.image_tabs.tab_bar.blockSignals(False)
                 if self.mw.sessions:
                     self._activate_session(self.mw.sessions[0])
+                elif hasattr(self.mw, '_show_welcome_page'):
+                    self.mw._show_welcome_page()
                 self._current_project_path = f
                 self.mw.setWindowTitle(f"SERAPH — {os.path.basename(f)}")
             except Exception as e:

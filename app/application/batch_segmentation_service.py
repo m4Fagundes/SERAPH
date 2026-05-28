@@ -54,6 +54,10 @@ class BatchSegmentationService:
         """Check if a model name belongs to a registered batch model."""
         return model_name in self._models
 
+    def get_model(self, model_name: str):
+        """Return the adapter instance for model_name, or None if not registered."""
+        return self._models.get(model_name)
+
     def segment(
         self,
         model_name: str,

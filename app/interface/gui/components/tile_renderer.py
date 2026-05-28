@@ -650,6 +650,18 @@ class TileRenderer(QGraphicsView):
             return
 
         if batch_service.is_batch_model(model_name):
+            # Guard: models that require reference points (e.g. DINOSim) must have
+            # them set before a click-to-segment can proceed.
+            adapter = batch_service.get_model(model_name)
+            if adapter is not None and hasattr(adapter, "has_reference") and not adapter.has_reference:
+                sb = getattr(self.main_window, "statusBar", lambda: None)()
+                if sb:
+                    sb.showMessage(
+                        f"{model_name} requires reference points. "
+                        "Use the Segmentation panel → Pick Points first.", 4000
+                    )
+                return
+
             diameter = self.main_window.spin_diameter.value()
             if diameter == 0.0:
                 diameter = None

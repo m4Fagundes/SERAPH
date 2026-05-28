@@ -370,13 +370,26 @@ class ExportService:
         slide_id_str  = base_name
         patient_lbl_str = 'HR' if patient_label == 1 else 'LR'
 
-        # Count total nuclei without pixel extraction (cheap)
+        # Count total nuclei without pixel extraction (cheap).
+        # Apply the image-edge filter here so the pre-allocated HDF5 dataset
+        # size is accurate: nuclei cut by the image border are excluded.
+        _img_w = session.real_width
+        _img_h = session.real_height
         N = 0
         for tile in session.tiles:
             for layer in tile.segmentation_layers:
                 if selected_layer != "All Segmentations" and layer.get("name") != selected_layer:
                     continue
-                N += sum(1 for p in layer.get("polygons", []) if p and len(p) >= 3)
+                for p in layer.get("polygons", []):
+                    if not p or len(p) < 3:
+                        continue
+                    px_min = min(v[0] for v in p)
+                    py_min = min(v[1] for v in p)
+                    px_max = max(v[0] for v in p)
+                    py_max = max(v[1] for v in p)
+                    if px_min <= 0 or py_min <= 0 or px_max >= _img_w - 1 or py_max >= _img_h - 1:
+                        continue
+                    N += 1
 
         if N == 0:
             return 0
@@ -420,11 +433,11 @@ class ExportService:
         # ── FAST PATH ────────────────────────────────────────────────────────
         if fast_path:
             patient_ids  = np.full((N,), patient_id, dtype=np.int32)
-            roi_ids      = np.zeros((N,), dtype=np.int32)  # unique ID per slide/ROI
+            roi_ids      = np.zeros((N,), dtype=np.int32)
             roi_dim      = np.zeros((N, 4), dtype=np.float64)
             pat_lbl_arr  = np.array([patient_lbl_str] * N, dtype=object)
             slide_id_arr = np.array([slide_id_str]    * N, dtype=object)
-            roi_lbl_arr  = np.empty(N, dtype=object)
+            roi_lbl_arr  = np.array([""] * N, dtype=object)
 
             idx = 0
             for tile_idx in range(len(session.tiles)):
@@ -440,6 +453,17 @@ class ExportService:
                     idx += 1
                     if progress_callback:
                         progress_callback(idx, N)
+
+            # Trim to actual count — quality filters may reject nuclei that the
+            # polygon pre-count included, leaving trailing zeros/empties otherwise.
+            images       = images[:idx]
+            masks        = masks[:idx]
+            patient_ids  = patient_ids[:idx]
+            pat_lbl_arr  = pat_lbl_arr[:idx]
+            slide_id_arr = slide_id_arr[:idx]
+            roi_ids      = roi_ids[:idx]
+            roi_lbl_arr  = roi_lbl_arr[:idx]
+            roi_dim      = roi_dim[:idx]
 
             with h5py.File(output_filepath, 'w') as f:
                 f.create_dataset('images',         data=images,
@@ -462,18 +486,21 @@ class ExportService:
             buf_mask = np.zeros((CANVAS, CANVAS),    dtype=np.uint8)
 
             with h5py.File(output_filepath, 'w') as f:
+                # maxshape=(None,...) allows resize after the loop to trim trailing rows.
                 ds_img  = f.create_dataset('images',  shape=(N, CANVAS, CANVAS, 3), dtype=np.uint8,
                                            chunks=(1, CANVAS, CANVAS, 3),
+                                           maxshape=(None, CANVAS, CANVAS, 3),
                                            compression='gzip', compression_opts=4)
                 ds_msk  = f.create_dataset('masks',   shape=(N, CANVAS, CANVAS),    dtype=np.uint8,
                                            chunks=(1, CANVAS, CANVAS),
+                                           maxshape=(None, CANVAS, CANVAS),
                                            compression='gzip', compression_opts=4)
-                ds_pid  = f.create_dataset('patient_ids',    shape=(N,), dtype=np.int32)
-                ds_plbl = f.create_dataset('patient_labels', shape=(N,), dtype=str_dt)
-                ds_sid  = f.create_dataset('slide_ids',      shape=(N,), dtype=str_dt)
-                ds_rid  = f.create_dataset('roi_ids',        shape=(N,), dtype=np.int32)
-                ds_rlbl = f.create_dataset('roi_labels',     shape=(N,), dtype=str_dt)
-                ds_rdim = f.create_dataset('roi_dimension',  shape=(N, 4), dtype=np.float64)
+                ds_pid  = f.create_dataset('patient_ids',    shape=(N,), dtype=np.int32,  maxshape=(None,))
+                ds_plbl = f.create_dataset('patient_labels', shape=(N,), dtype=str_dt,    maxshape=(None,))
+                ds_sid  = f.create_dataset('slide_ids',      shape=(N,), dtype=str_dt,    maxshape=(None,))
+                ds_rid  = f.create_dataset('roi_ids',        shape=(N,), dtype=np.int32,  maxshape=(None,))
+                ds_rlbl = f.create_dataset('roi_labels',     shape=(N,), dtype=str_dt,    maxshape=(None,))
+                ds_rdim = f.create_dataset('roi_dimension',  shape=(N, 4), dtype=np.float64, maxshape=(None, 4))
                 f.create_dataset('pixel_size_um', data=np.array([mpp], dtype=np.float64))
 
                 idx = 0
@@ -490,11 +517,17 @@ class ExportService:
                         ds_pid[idx]  = patient_id
                         ds_plbl[idx] = patient_lbl_str
                         ds_sid[idx]  = slide_id_str
-                        ds_rid[idx]  = meta["tile_intersection"]    # unique per slide/ROI
+                        ds_rid[idx]  = meta["tile_intersection"]
                         ds_rlbl[idx] = meta.get("roi_name", "")
 
                         idx += 1
                         if progress_callback:
                             progress_callback(idx, N)
 
-        return N
+                # Trim datasets to exact count if quality filters rejected any nuclei.
+                if idx < N:
+                    for ds in (ds_img, ds_msk, ds_pid, ds_plbl, ds_sid, ds_rid, ds_rlbl):
+                        ds.resize((idx,) + ds.shape[1:])
+                    ds_rdim.resize((idx, 4))
+
+        return idx

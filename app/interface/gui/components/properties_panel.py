@@ -58,9 +58,6 @@ class PropertiesPanel(QDockWidget):
         self.input_name = QLineEdit()
         self.input_name.setPlaceholderText("Enter tile name...")
 
-        self.input_microns = QLineEdit()
-        self.input_microns.setPlaceholderText("e.g. 0.25")
-
         self.input_desc = QTextEdit()
         self.input_desc.setMaximumHeight(80)
         self.input_desc.setPlaceholderText("Detailed description of this slice...")
@@ -70,7 +67,6 @@ class PropertiesPanel(QDockWidget):
         self.input_comment.setPlaceholderText("Any additional comments...")
 
         self.form_layout.addRow("Name:", self.input_name)
-        self.form_layout.addRow("µm/px (WSI):", self.input_microns)
         self.form_layout.addRow("Description:", self.input_desc)
         self.form_layout.addRow("Comment:", self.input_comment)
 
@@ -119,7 +115,6 @@ class PropertiesPanel(QDockWidget):
 
         # Connect signals for auto-save
         self.input_name.textChanged.connect(self._save_metadata)
-        self.input_microns.textChanged.connect(self._save_metadata)
         self.input_desc.textChanged.connect(self._save_metadata)
         self.input_comment.textChanged.connect(self._save_metadata)
 
@@ -133,7 +128,7 @@ class PropertiesPanel(QDockWidget):
         """Inject the Cellpose parameter spinboxes from main_window into a panel section.
 
         Called once after PropertiesPanel is created. The spinboxes are owned by
-        main_window so their values are accessible from _run_batch_segmentation().
+        main_window so their values are accessible from batch segmentation flows.
         """
         self._cellpose_group = QGroupBox("SEGMENTATION PARAMETERS")
 
@@ -196,11 +191,6 @@ class PropertiesPanel(QDockWidget):
         meta = tile.metadata
         self.input_name.setText(meta.get("name", ""))
 
-        # Resolution is WSI-level — read from session, fallback to tile for old projects
-        session = getattr(self._main_window, "current_session", None)
-        mpp = session.microns_per_pixel if session else meta.get("microns_per_pixel", "")
-        self.input_microns.setText(mpp)
-
         self.input_desc.setPlainText(meta.get("description", ""))
         self.input_comment.setPlainText(meta.get("comment", ""))
 
@@ -212,7 +202,6 @@ class PropertiesPanel(QDockWidget):
         """Clear fields and disable panel when no tile is selected."""
         self._current_tile = None
         self.input_name.clear()
-        self.input_microns.clear()
         self.input_desc.clear()
         self.input_comment.clear()
         self._empty_lbl.setVisible(True)
@@ -227,11 +216,3 @@ class PropertiesPanel(QDockWidget):
         m["name"] = self.input_name.text()
         m["description"] = self.input_desc.toPlainText()
         m["comment"] = self.input_comment.toPlainText()
-
-        # Resolution is WSI-level — propagate to all tiles via session
-        mpp_value = self.input_microns.text()
-        session = getattr(self._main_window, "current_session", None)
-        if session is not None:
-            session.set_microns_per_pixel(mpp_value)
-        else:
-            m["microns_per_pixel"] = mpp_value

@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QStackedWidget,
                              QDoubleSpinBox, QDialog, QFormLayout, QDialogButtonBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-                             QMenu, QSpinBox)
+                             QInputDialog, QMenu, QSpinBox)
 from PyQt6.QtCore import Qt, QPoint, QSize
 from PyQt6.QtGui import QIcon, QAction, QKeySequence, QShortcut, QColor, QFont
 
@@ -20,6 +20,7 @@ from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
 from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
 from app.infrastructure.ml_models.cellvit_adapter import CellViTAdapter
 from app.infrastructure.ml_models.patho_sam_adapter import PathoSAMAdapter
+from app.infrastructure.ml_models.dinosim_adapter import DINOSimAdapter
 from PyQt6.QtWidgets import QComboBox, QCheckBox
 from app.interface.gui.theme import (
     PALETTE,
@@ -41,10 +42,15 @@ from .components import (
     MacroPipelinePanel,
     ImageTabStrip,
     CollapsibleSidebar,
-    ContextBar
+    ContextBar,
+    WelcomePage,
 )
 
 class SlicerLabApp(QMainWindow):
+    PAGE_WELCOME = 0
+    PAGE_CANVAS = 1
+    PAGE_TILE = 2
+
     def __init__(self):
         super().__init__()
         self.is_mac = platform.system() == "Darwin"
@@ -116,6 +122,13 @@ class SlicerLabApp(QMainWindow):
         except Exception as e:
             _cr_logger.error("Failed to load PathoSAM adapter: %s", e)
 
+        try:
+            dinosim_adapter = DINOSimAdapter(model_size="small")
+            batch_models.append(dinosim_adapter)
+            _cr_logger.info("DINOSimAdapter registered: %s", dinosim_adapter.name)
+        except Exception as e:
+            _cr_logger.error("Failed to load DINOSim adapter: %s", e)
+
         self.batch_segmentation_service = BatchSegmentationService(
             models=batch_models
         )
@@ -130,13 +143,15 @@ class SlicerLabApp(QMainWindow):
         self.export_handler = ExportHandler(self)
         self.export_format = ".png"
 
-        # 1. Central Widget — tab bar (session switcher) + QStackedWidget (canvas/tile)
+        # 1. Central Widget — tab bar (session switcher) + QStackedWidget
         self._central_stack = QStackedWidget()
+        self.welcome_page = WelcomePage(self)
         self.canvas_renderer = CanvasRenderer(self)
         self.tile_renderer   = TileRenderer(self)
+        self._central_stack.addWidget(self.welcome_page)
         self._central_stack.addWidget(self.canvas_renderer)
         self._central_stack.addWidget(self.tile_renderer)
-        self._central_stack.setCurrentIndex(0)
+        self._central_stack.setCurrentIndex(self.PAGE_WELCOME)
 
         # Browser-style image tab strip.
         self.image_tabs = ImageTabStrip(self)
@@ -146,6 +161,9 @@ class SlicerLabApp(QMainWindow):
         self.image_tabs.addRequested.connect(self.project_manager.add_image)
 
         self.context_bar = ContextBar(self)
+        self.context_bar.mpp_edit_requested.connect(self._on_mpp_edit_requested)
+        self.welcome_page.btn_open_project.clicked.connect(self.project_manager.open_project)
+        self.welcome_page.btn_open_image.clicked.connect(self.project_manager.add_image)
 
         _central_container = QWidget()
         _central_layout = QVBoxLayout(_central_container)
@@ -165,22 +183,16 @@ class SlicerLabApp(QMainWindow):
         self.context_bar.add_action_widget(self.btn_tool_pill)
 
         self.combo_model = QComboBox()
-        all_model_names = (
-            self.segmentation_service.get_available_models()
-            + self.batch_segmentation_service.get_available_models()
-        )
-        all_model_names = list(all_model_names) + ["Manual Fine Tune", "Nuclick All"]
-        self.combo_model.addItems(all_model_names)
-        self.combo_model.setToolTip("Select inference model  [F5]")
+        interactive_model_names = list(self.segmentation_service.get_available_models())
+        if "NuClick (PyTorch)" not in interactive_model_names:
+            interactive_model_names.insert(0, "NuClick (PyTorch)")
+        self.combo_model.addItems(interactive_model_names + ["Manual Fine Tune"])
+        self.combo_model.setToolTip("Choose the click/manual segmentation mode for the active slice")
+        self.combo_model.setFixedHeight(28)
+        self.combo_model.setMinimumWidth(150)
         self.combo_model.currentTextChanged.connect(self._on_model_changed)
         self.combo_model.setVisible(False)
         self.context_bar.add_action_widget(self.combo_model)
-
-        self.btn_run = SuccessButton("▶  Run Slice", size="sm")
-        self.btn_run.setToolTip("Run full-slice segmentation with the selected model  [F5]")
-        self.btn_run.clicked.connect(self._run_batch_segmentation)
-        self.btn_run.setVisible(False)
-        self.context_bar.add_action_widget(self.btn_run)
 
         # Kept as state text target for _update_breadcrumb(), but intentionally
         # not rendered in the chrome. Open image tabs carry this context.
@@ -245,6 +257,7 @@ class SlicerLabApp(QMainWindow):
         self.sidebar_dock.setTitleBarWidget(_sidebar_titlebar)
 
         self.slice_previews = SlicePreviews(self, show_header=False)
+        self.slice_previews.batchSelectionChanged.connect(self._on_batch_selection_changed)
 
         self.add_tile_btn = PrimaryButton("Import Tile...", size="md")
         self.add_tile_btn.setToolTip("Import a tile descriptor (XML or GeoJSON) into the current image")
@@ -342,7 +355,7 @@ class SlicerLabApp(QMainWindow):
         # Initial state
         self._on_model_changed(self.combo_model.currentText())
         self._refresh_sidebar_state()
-        self._update_context_bar()
+        self._show_welcome_page()
 
         # Phase 1 — menu bar and keyboard shortcuts
         self._setup_menubar()
@@ -360,7 +373,7 @@ class SlicerLabApp(QMainWindow):
         if 0 <= index < len(self.sessions):
             if self.current_session is not self.sessions[index]:
                 self.project_manager._activate_session(self.sessions[index])
-            elif self._central_stack.currentIndex() == 1:
+            elif self._central_stack.currentIndex() == self.PAGE_TILE:
                 self.switch_to_canvas()
 
     def _on_tab_close_requested(self, index: int) -> None:
@@ -377,7 +390,9 @@ class SlicerLabApp(QMainWindow):
         else:
             self.current_session = None
             self.canvas_renderer.scene.clear()
+            self.canvas_renderer.on_session_closed()
             self.slice_previews.update_previews()
+            self._show_welcome_page()
             self._update_breadcrumb()
             self._update_context_bar()
 
@@ -417,7 +432,7 @@ class SlicerLabApp(QMainWindow):
             self._update_context_actions("empty")
             return
 
-        if self._central_stack.currentIndex() != 1:
+        if self._central_stack.currentIndex() != self.PAGE_TILE:
             self.context_bar.set_overview(s, len(s.tiles))
             self._update_context_actions("overview")
             return
@@ -469,13 +484,7 @@ class SlicerLabApp(QMainWindow):
         self._sb_refresh()
 
     def _on_model_changed(self, model_name: str) -> None:
-        is_batch = self.batch_segmentation_service.is_batch_model(model_name)
-        if model_name == "Nuclick All":
-            is_batch = True
-
-        is_isolated = self._central_stack.currentIndex() == 1
-        self.btn_run.setVisible(is_isolated and is_batch)
-        show_params = is_batch and model_name != "Nuclick All"
+        show_params = False
         if hasattr(self, "properties_dock"):
             self.properties_dock.show_cellpose_params(show_params)
 
@@ -523,13 +532,18 @@ class SlicerLabApp(QMainWindow):
             self._activate_tool("grid")
 
         self.combo_model.setVisible(is_isolated)
-        is_batch = (
-            self.batch_segmentation_service.is_batch_model(self.combo_model.currentText())
-            or self.combo_model.currentText() == "Nuclick All"
-        )
-        self.btn_run.setVisible(is_isolated and is_batch)
         self._update_tool_pill()
         self._update_breadcrumb()
+
+    def _on_batch_selection_changed(self, _count: int) -> None:
+        panel = getattr(self, "macro_pipeline_dock", None)
+        if panel is not None and hasattr(panel, "refresh_selection_state"):
+            panel.refresh_selection_state()
+
+    def _run_selected_slices(self) -> None:
+        panel = getattr(self, "macro_pipeline_dock", None)
+        if panel is not None and hasattr(panel, "_on_run_clicked"):
+            panel._on_run_clicked()
 
     def _add_tile(self):
         """Slot for the 'Add Tile' button — delegates to project_manager."""
@@ -542,6 +556,9 @@ class SlicerLabApp(QMainWindow):
         s = self.current_session
         if not s or idx >= len(s.tiles):
             return
+        self.sidebar_dock.show()
+        self.image_tabs.show()
+        self.context_bar.show()
         self.tile_renderer.load_tile(s, idx)
         
         # Show and populate properties pane
@@ -551,7 +568,7 @@ class SlicerLabApp(QMainWindow):
         # Update layer dropdown
         self.layer_dropdown.set_tile(s.tiles[idx])
         
-        self._central_stack.setCurrentIndex(1)
+        self._central_stack.setCurrentIndex(self.PAGE_TILE)
         self.slice_previews.select_slice(idx)
         self.update_tool_context(True)
         self._update_context_bar()
@@ -575,17 +592,34 @@ class SlicerLabApp(QMainWindow):
         s = self.current_session
         if s:
             s.evict_all_tile_caches()
+        else:
+            self._show_welcome_page()
+            return
 
         # Hide properties pane
         self.properties_dock.clear()
         self.properties_dock.hide()
 
-        self._central_stack.setCurrentIndex(0)
+        self._central_stack.setCurrentIndex(self.PAGE_CANVAS)
+        self.sidebar_dock.show()
+        self.image_tabs.show()
+        self.context_bar.show()
         self.slice_previews.select_slice(None)
         self.update_tool_context(False)
         self._update_context_bar()
         self._update_breadcrumb()
         self.canvas_renderer.redraw()
+        self._sb_refresh()
+
+    def _show_welcome_page(self) -> None:
+        self._central_stack.setCurrentIndex(self.PAGE_WELCOME)
+        self.sidebar_dock.hide()
+        self.image_tabs.hide()
+        self.context_bar.hide()
+        self.context_bar.set_overview(None)
+        self.add_tile_btn.setVisible(False)
+        self.macro_pipeline_dock.hide()
+        self.properties_dock.hide()
         self._sb_refresh()
 
     # ── Phase 1: Menu Bar ────────────────────────────────────────────────────
@@ -765,10 +799,10 @@ class SlicerLabApp(QMainWindow):
 
         tools_menu.addSeparator()
 
-        act_run_seg = QAction("Run Segmentation", self)
+        act_run_seg = QAction("Run Selected Slices", self)
         act_run_seg.setShortcut(QKeySequence("F5"))
-        act_run_seg.setStatusTip("Run batch segmentation on the current tile")
-        act_run_seg.triggered.connect(self._run_batch_segmentation)
+        act_run_seg.setStatusTip("Run the selected batch model on checked slices")
+        act_run_seg.triggered.connect(self._run_selected_slices)
         tools_menu.addAction(act_run_seg)
 
         # ── Help ──────────────────────────────────────────────────────────
@@ -834,7 +868,7 @@ class SlicerLabApp(QMainWindow):
         session = self.undo_manager.undo()
         if session:
             self.slice_previews.update_previews()
-            if self._central_stack.currentIndex() == 1:
+            if self._central_stack.currentIndex() == self.PAGE_TILE:
                 self.tile_renderer.viewport().update()
             else:
                 self.canvas_renderer.redraw()
@@ -846,7 +880,7 @@ class SlicerLabApp(QMainWindow):
         session = self.undo_manager.redo()
         if session:
             self.slice_previews.update_previews()
-            if self._central_stack.currentIndex() == 1:
+            if self._central_stack.currentIndex() == self.PAGE_TILE:
                 self.tile_renderer.viewport().update()
             else:
                 self.canvas_renderer.redraw()
@@ -858,7 +892,7 @@ class SlicerLabApp(QMainWindow):
         s = self.current_session
         if not s:
             return
-        if self._central_stack.currentIndex() == 1:
+        if self._central_stack.currentIndex() == self.PAGE_TILE:
             idx = self.tile_renderer.slice_idx
             if idx is not None and idx < len(s.tiles):
                 self.undo_manager.push(s, "clear")
@@ -869,7 +903,7 @@ class SlicerLabApp(QMainWindow):
             self.statusBar().showMessage("Enter a tile to clear its polygons")
 
     def _active_renderer(self):
-        return self.canvas_renderer if self._central_stack.currentIndex() == 0 else self.tile_renderer
+        return self.tile_renderer if self._central_stack.currentIndex() == self.PAGE_TILE else self.canvas_renderer
 
     def _sb_refresh(self) -> None:
         """Refresh permanent status bar indicators from current app state."""
@@ -879,7 +913,7 @@ class SlicerLabApp(QMainWindow):
         tool = getattr(self, "active_tool", None)
         self._sb_tool.setText(f"Tool: {tool}" if tool else "Tool: —")
 
-        if self._central_stack.currentIndex() == 1 and self.current_session:
+        if self._central_stack.currentIndex() == self.PAGE_TILE and self.current_session:
             idx = getattr(self.tile_renderer, "slice_idx", None)
             if idx is not None and idx < len(self.current_session.tiles):
                 tile = self.current_session.tiles[idx]
@@ -926,7 +960,7 @@ class SlicerLabApp(QMainWindow):
         self._sb_refresh()
 
     def _back_to_canvas(self):
-        if self._central_stack.currentIndex() == 1:
+        if self._central_stack.currentIndex() == self.PAGE_TILE:
             self.switch_to_canvas()
 
     # ── Topbar: tool pill, breadcrumb, overflow ──────────────────────────────
@@ -947,7 +981,7 @@ class SlicerLabApp(QMainWindow):
         if not s:
             self.lbl_breadcrumb.setText("No project open")
             return
-        if self._central_stack.currentIndex() == 1:
+        if self._central_stack.currentIndex() == self.PAGE_TILE:
             idx = getattr(self.tile_renderer, "slice_idx", None)
             if idx is not None and s and idx < len(s.tiles):
                 custom = s.tiles[idx].metadata.get("name", "")
@@ -958,10 +992,45 @@ class SlicerLabApp(QMainWindow):
         else:
             self.lbl_breadcrumb.setText(s.name)
 
+    def _on_mpp_edit_requested(self) -> None:
+        """Handle click on the µm/px badge in the context bar."""
+        s = self.current_session
+        if not s:
+            return
+
+        current = getattr(s, "microns_per_pixel", "") or ""
+        text, ok = QInputDialog.getText(
+            self,
+            "Physical Resolution",
+            "Enter the pixel size in microns (µm/px).\n\n"
+            "This is a property of the whole slide image — it is\n"
+            "stored in the HDF5 file (pixel_size_um) and enables\n"
+            "the nucleus area quality filter (min 5 µm²).\n\n"
+            "Example: 0.2420 for a 40× Aperio scanner.",
+            text=current,
+        )
+        if not ok or not text.strip():
+            return
+
+        try:
+            v = float(text.strip())
+            if v <= 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            QMessageBox.warning(
+                self, "Invalid Value",
+                f'"{text.strip()}" is not a valid positive number.'
+            )
+            return
+
+        s.set_microns_per_pixel(str(v))
+        self.context_bar.refresh_mpp(s)
+        self.statusBar().showMessage(f"Resolution set: {v:g} µm/px", 3000)
+
     def _show_tool_menu(self):
         """Drop-down showing only the tools valid in the current mode."""
         menu = QMenu(self)
-        is_isolated = self._central_stack.currentIndex() == 1
+        is_isolated = self._central_stack.currentIndex() == self.PAGE_TILE
 
         if not is_isolated:
             tools = [("Grid  [G]", "grid"), ("Brush  [B]", "brush")]
@@ -1050,7 +1119,7 @@ class SlicerLabApp(QMainWindow):
             ("Segment Nucleus",    "S"),
             ("Eraser Brush",       "E"),
             ("Selection Brush",    "A"),
-            ("Run Segmentation",   "F5"),
+            ("Run Selected Slices","F5"),
             ("Export HDF5",        "Ctrl+E"),
             ("── View", ""),
             ("Zoom In",            "="),

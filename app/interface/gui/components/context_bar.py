@@ -6,8 +6,8 @@ inside the active image: overview or a selected slice.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from app.interface.gui.design_system import COLORS, SPACE
 
@@ -15,32 +15,43 @@ from app.interface.gui.design_system import COLORS, SPACE
 class ContextBar(QWidget):
     """Compact hierarchy bar below image tabs."""
 
+    # Emitted when the user clicks the µm/px badge to edit the resolution.
+    mpp_edit_requested = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("context_bar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        self.mode_label = QLabel("Overview", self)
+        self.mode_label = QLabel("", self)
         self.mode_label.setObjectName("context_mode")
-
-        self.image_label = QLabel("No image open", self)
-        self.image_label.setObjectName("context_image")
-        self.image_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.mode_label.hide()
 
         self.meta_label = QLabel("", self)
         self.meta_label.setObjectName("context_meta")
+        self.meta_label.hide()
+
+        # WSI-level scale badge. It lives next to the image name because the
+        # resolution belongs to the whole slide image, not to an individual slice.
+        self._mpp_btn = QPushButton("", self)
+        self._mpp_btn.setObjectName("context_mpp_btn")
+        self._mpp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mpp_btn.setFlat(True)
+        self._mpp_btn.setFixedHeight(28)
+        self._mpp_btn.clicked.connect(self.mpp_edit_requested)
+        self._mpp_btn.setVisible(False)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(SPACE[3], 0, SPACE[3], 0)
         layout.setSpacing(SPACE[2])
         layout.addWidget(self.mode_label)
-        layout.addWidget(self._separator())
-        layout.addWidget(self.image_label, stretch=1)
         layout.addWidget(self.meta_label)
+        layout.addStretch(1)
 
         self._actions_layout = QHBoxLayout()
         self._actions_layout.setContentsMargins(0, 0, 0, 0)
         self._actions_layout.setSpacing(SPACE[2])
+        self._actions_layout.addWidget(self._mpp_btn, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(self._actions_layout)
 
         self.setStyleSheet(self._style())
@@ -48,37 +59,81 @@ class ContextBar(QWidget):
     def add_action_widget(self, widget: QWidget) -> None:
         self._actions_layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
 
-    def set_overview(self, session, slice_count: int = 0) -> None:
+    def refresh_mpp(self, session) -> None:
+        """Update the µm/px badge text and colour from the session value."""
         if session is None:
-            self.mode_label.setText("Overview")
-            self.image_label.setText("No image open")
-            self.image_label.setToolTip("")
-            self.meta_label.setText("")
+            self._mpp_btn.setVisible(False)
             return
 
-        self.mode_label.setText("Overview")
-        self.image_label.setText(session.name)
-        self.image_label.setToolTip(session.path)
-        self.meta_label.setText(
-            f"{slice_count} slice{'s' if slice_count != 1 else ''}"
-        )
+        mpp_raw = getattr(session, "microns_per_pixel", "") or ""
+        try:
+            v = float(mpp_raw)
+            if v <= 0:
+                raise ValueError
+            self._mpp_btn.setText(f"WSI: {v:g} µm/px")
+            self._mpp_btn.setStyleSheet(self._mpp_style_set())
+        except (ValueError, TypeError):
+            self._mpp_btn.setText("Set WSI scale")
+            self._mpp_btn.setStyleSheet(self._mpp_style_unset())
+
+        self._mpp_btn.setVisible(True)
+
+    def set_overview(self, session, slice_count: int = 0) -> None:
+        if session is None:
+            self.mode_label.setText("")
+            self.mode_label.hide()
+            self.meta_label.setText("")
+            self.meta_label.hide()
+            self.refresh_mpp(None)
+            return
+
+        self.mode_label.setText("")
+        self.mode_label.hide()
+        self.meta_label.setText("")
+        self.meta_label.hide()
+        self.refresh_mpp(session)
 
     def set_slice(self, session, slice_label: str, nuclei_count: int | None = None) -> None:
-        self.mode_label.setText(slice_label)
-        if session is None:
-            self.image_label.setText("No image open")
-            self.image_label.setToolTip("")
-        else:
-            self.image_label.setText(session.name)
-            self.image_label.setToolTip(session.path)
-        self.meta_label.setText(
-            f"{nuclei_count:,} nuclei" if nuclei_count is not None else "Tile view"
-        )
+        self.mode_label.setText("")
+        self.mode_label.hide()
+        self.meta_label.setText("")
+        self.meta_label.hide()
+        self.refresh_mpp(None)
 
-    def _separator(self) -> QLabel:
-        sep = QLabel("/", self)
-        sep.setObjectName("context_separator")
-        return sep
+    def _mpp_style_set(self) -> str:
+        p = COLORS
+        return f"""
+        QPushButton#context_mpp_btn {{
+            color: {p['text_secondary']};
+            font-size: 11px;
+            background: {p['bg_control']};
+            border: 1px solid {p['border_default']};
+            border-radius: 4px;
+            padding: 0px 10px;
+        }}
+        QPushButton#context_mpp_btn:hover {{
+            color: {p['text_primary']};
+            background: {p['bg_hover']};
+            border-color: {p['border_strong']};
+        }}
+        """
+
+    def _mpp_style_unset(self) -> str:
+        return """
+        QPushButton#context_mpp_btn {
+            color: #e8a844;
+            font-size: 11px;
+            background: rgba(245,159,0,0.10);
+            border: 1px solid rgba(245,159,0,0.55);
+            border-radius: 4px;
+            padding: 0px 10px;
+        }
+        QPushButton#context_mpp_btn:hover {
+            color: #f0c070;
+            background: rgba(232,168,68,0.10);
+            border-color: #f0c070;
+        }
+        """
 
     def _style(self) -> str:
         p = COLORS
@@ -95,11 +150,12 @@ class ContextBar(QWidget):
             font-weight: 600;
             background: transparent;
         }}
-        QLabel#context_image,
-        QLabel#context_meta,
-        QLabel#context_separator {{
-            color: {p['text_muted']};
+        QLabel#context_meta {{
+            color: {p['text_secondary']};
             font-size: 11px;
-            background: transparent;
+            background: {p['bg_control']};
+            border: 1px solid {p['border_default']};
+            border-radius: 4px;
+            padding: 3px 8px;
         }}
         """

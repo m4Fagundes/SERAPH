@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -42,7 +43,7 @@ from app.application.pixel_mask_service import PixelMaskService
 from app.interface.gui.theme import PALETTE
 from app.interface.gui.design_system import COLORS, SPACE, FONT_FAMILY
 from app.interface.gui.widgets.section_header import SectionHeader
-from app.interface.gui.widgets.buttons import PrimaryButton
+from app.interface.gui.widgets.buttons import PrimaryButton, SecondaryButton
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,8 @@ class _SliceRow(QWidget):
         name: str,
         tile_count: int,
         color_hex: str,
+        checked: bool,
+        on_checked,
         on_delete,
         on_rename,
     ):
@@ -105,6 +108,14 @@ class _SliceRow(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(SPACE[2], 0, SPACE[2], 0)
         root.setSpacing(SPACE[2])
+
+        self.check = QCheckBox()
+        self.check.setChecked(checked)
+        self.check.setToolTip("Include this slice in batch segmentation")
+        self.check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.check.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.check.toggled.connect(on_checked)
+        root.addWidget(self.check, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ── Colour swatch ─────────────────────────────────────────────────────
         swatch = QLabel()
@@ -262,11 +273,13 @@ class SlicePreviews(QWidget):
     """
 
     countChanged = pyqtSignal(int)
+    batchSelectionChanged = pyqtSignal(int)
 
     def __init__(self, main_window, show_header: bool = True):
         super().__init__()
         self.mw = main_window
         self._pms = PixelMaskService()
+        self._checked_slice_indices: set[int] = set()
 
         # self.layout is intentionally an attribute, not just a local variable,
         # because older integrations may still append widgets to it.
@@ -284,6 +297,34 @@ class SlicePreviews(QWidget):
         else:
             self._section_header = None
             self._count_badge = None
+
+        self._selection_bar = QWidget()
+        self._selection_bar.setObjectName("slice_batch_selection")
+        selection_layout = QHBoxLayout(self._selection_bar)
+        selection_layout.setContentsMargins(SPACE[3], SPACE[2], SPACE[3], SPACE[2])
+        selection_layout.setSpacing(SPACE[2])
+
+        self._select_all = QCheckBox("Select all")
+        self._select_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._select_all.toggled.connect(self._on_select_all_toggled)
+        selection_layout.addWidget(self._select_all)
+
+        self._selected_count = QLabel("0 selected")
+        self._selected_count.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
+        )
+        selection_layout.addWidget(self._selected_count, stretch=1)
+
+        self._clear_selection_btn = SecondaryButton("Clear", size="xs")
+        self._clear_selection_btn.setToolTip("Clear batch selection")
+        self._clear_selection_btn.clicked.connect(self.clear_batch_selection)
+        selection_layout.addWidget(self._clear_selection_btn)
+
+        self._selection_bar.setStyleSheet(
+            f"QWidget#slice_batch_selection {{ background: {COLORS['bg_surface']};"
+            f" border-bottom: 1px solid {COLORS['border_default']}; }}"
+        )
+        self.layout.addWidget(self._selection_bar)
 
         # ── List ──────────────────────────────────────────────────────────────
         self.list_widget = QListWidget()
@@ -327,16 +368,22 @@ class SlicePreviews(QWidget):
         self.list_widget.clear()
         s = self.mw.current_session
         count = len(s.tiles) if s else 0
+        self._checked_slice_indices = {
+            idx for idx in self._checked_slice_indices
+            if s is not None and 0 <= idx < count
+        }
         self.countChanged.emit(count)
 
         if self._section_header is not None:
             self._section_header.set_badge(str(count), active=count > 0)
 
         if not s:
+            self._refresh_empty_ui()
             self._add_empty_state("no_image")
             return
 
         if not s.tiles:
+            self._refresh_empty_ui()
             self._add_empty_state("no_slices")
             return
 
@@ -350,8 +397,13 @@ class SlicePreviews(QWidget):
             def make_rename(idx=i):
                 return lambda new_name: self._rename_slice_inline(idx, new_name)
 
+            def make_checked(idx=i):
+                return lambda checked: self._set_slice_checked(idx, checked)
+
             row = _SliceRow(
                 name, len(tile.rects), color_hex,
+                checked=i in self._checked_slice_indices,
+                on_checked=make_checked(),
                 on_delete=make_delete(),
                 on_rename=make_rename(),
             )
@@ -368,6 +420,7 @@ class SlicePreviews(QWidget):
             self.list_widget.setItemWidget(item, row)
 
         self._sync_row_selection()
+        self._refresh_batch_selection_ui()
 
     def select_slice(self, idx: int | None) -> None:
         self.list_widget.blockSignals(True)
@@ -378,6 +431,24 @@ class SlicePreviews(QWidget):
             self.list_widget.setCurrentRow(idx)
         self.list_widget.blockSignals(False)
         self._sync_row_selection()
+
+    def selected_batch_indices(self) -> list[int]:
+        s = self.mw.current_session
+        count = len(s.tiles) if s else 0
+        return sorted(idx for idx in self._checked_slice_indices if 0 <= idx < count)
+
+    def clear_batch_selection(self) -> None:
+        if not self._checked_slice_indices:
+            return
+        self._checked_slice_indices.clear()
+        self.update_previews()
+
+    def select_all_batch(self) -> None:
+        s = self.mw.current_session
+        if not s:
+            return
+        self._checked_slice_indices = set(range(len(s.tiles)))
+        self.update_previews()
 
     # ── Private ───────────────────────────────────────────────────────────────
 
@@ -398,6 +469,47 @@ class SlicePreviews(QWidget):
             row = self.list_widget.itemWidget(item)
             if hasattr(row, "set_selected"):
                 row.set_selected(item.isSelected())
+
+    def _set_slice_checked(self, idx: int, checked: bool) -> None:
+        if checked:
+            self._checked_slice_indices.add(idx)
+        else:
+            self._checked_slice_indices.discard(idx)
+        self._refresh_batch_selection_ui()
+
+    def _on_select_all_toggled(self, checked: bool) -> None:
+        s = self.mw.current_session
+        if not s:
+            return
+        if checked:
+            self._checked_slice_indices = set(range(len(s.tiles)))
+        else:
+            self._checked_slice_indices.clear()
+        self.update_previews()
+
+    def _refresh_batch_selection_ui(self) -> None:
+        s = self.mw.current_session
+        count = len(s.tiles) if s else 0
+        selected = len(self.selected_batch_indices())
+        self._selection_bar.setVisible(count > 0)
+        self._selected_count.setText(f"{selected} selected")
+        self._clear_selection_btn.setEnabled(selected > 0)
+
+        self._select_all.blockSignals(True)
+        self._select_all.setChecked(count > 0 and selected == count)
+        self._select_all.blockSignals(False)
+
+        self.batchSelectionChanged.emit(selected)
+        panel = getattr(self.mw, "macro_pipeline_dock", None)
+        if panel is not None and hasattr(panel, "refresh_selection_state"):
+            panel.refresh_selection_state()
+
+    def _refresh_empty_ui(self) -> None:
+        self._selection_bar.hide()
+        self.batchSelectionChanged.emit(0)
+        panel = getattr(self.mw, "macro_pipeline_dock", None)
+        if panel is not None and hasattr(panel, "refresh_selection_state"):
+            panel.refresh_selection_state()
 
     # ── Slice actions ─────────────────────────────────────────────────────────
 
@@ -423,6 +535,11 @@ class SlicePreviews(QWidget):
             s.tiles[idx].clear_cache()
 
         s.tiles.pop(idx)
+        self._checked_slice_indices = {
+            old_idx if old_idx < idx else old_idx - 1
+            for old_idx in self._checked_slice_indices
+            if old_idx != idx
+        }
         self.update_previews()
         self.mw.canvas_renderer.redraw()
 
@@ -472,8 +589,6 @@ class SlicePreviews(QWidget):
         form = QFormLayout(dialog)
 
         name_input    = QLineEdit(meta.get("name", ""))
-        microns_input = QLineEdit(s.microns_per_pixel)
-
         desc_input = QTextEdit()
         desc_input.setPlainText(meta.get("description", ""))
         desc_input.setMaximumHeight(80)
@@ -483,7 +598,6 @@ class SlicePreviews(QWidget):
         comment_input.setMaximumHeight(80)
 
         form.addRow("Name:", name_input)
-        form.addRow("µm/px (WSI):", microns_input)
         form.addRow("Description:", desc_input)
         form.addRow("Comment:", comment_input)
 
@@ -498,5 +612,4 @@ class SlicePreviews(QWidget):
             meta["name"]        = name_input.text().strip()
             meta["description"] = desc_input.toPlainText().strip()
             meta["comment"]     = comment_input.toPlainText().strip()
-            s.set_microns_per_pixel(microns_input.text().strip())
             self.update_previews()

@@ -131,6 +131,19 @@ class CanvasRenderer(QGraphicsView):
         # ensures pixel-perfect alignment with the image bitmap below.
         self._pixel_overlay_items: list = []
 
+    def on_session_closed(self):
+        """Call immediately after scene.clear() when a session is closed.
+
+        scene.clear() destroys all C++ QGraphicsItem objects, so we must NOT
+        call item.scene() or any Qt method on stale wrappers afterwards.
+        Simply drop the Python references so _do_redraw starts clean.
+        """
+        self.tile_items.clear()
+        self._pixel_overlay_items.clear()
+        # Reset zoom tracking so the eviction loop won't iterate stale items
+        # on the first redraw of the new session.
+        self._last_tile_zoom = None
+
     @property
     def isolated_slice_idx(self):
         return self._isolated_slice_idx
@@ -316,12 +329,15 @@ class CanvasRenderer(QGraphicsView):
         # must be removed IMMEDIATELY from the QGraphicsScene.
         # Without this, they accumulate as ghost layers causing the kaleidoscope effect.
         last_tile_zoom = getattr(self, "_last_tile_zoom", tile_zoom)
-        if last_tile_zoom != tile_zoom:
+        if last_tile_zoom is not None and last_tile_zoom != tile_zoom:
             to_remove = [k for k in self.tile_items if k[2] != tile_zoom]
             for k in to_remove:
                 item = self.tile_items.pop(k)
-                if item != "fetching" and item.scene() == self.scene:
-                    self.scene.removeItem(item)
+                try:
+                    if item != "fetching" and item.scene() == self.scene:
+                        self.scene.removeItem(item)
+                except RuntimeError:
+                    pass  # C++ object already deleted (e.g. after scene.clear())
         self._last_tile_zoom = tile_zoom
         
         # Instantiate Base Layer Thumbnail for black-flash protection
@@ -510,7 +526,13 @@ class CanvasRenderer(QGraphicsView):
         if hasattr(self.main_window, 'chk_show_membrane'):
             show_membrane = self.main_window.chk_show_membrane.isChecked()
 
-        if show_membrane:
+        # LOD threshold: a typical nucleus is ~40 full-res px wide.
+        # At viewport_zoom 0.15 that is 6 screen pixels — sub-perceptual.
+        # Skip the polygon loop entirely at lower zoom levels; tile outlines
+        # drawn below still give full spatial context at no meaningful cost.
+        _NUCLEUS_LOD_ZOOM = 0.15
+
+        if show_membrane and self.viewport_zoom >= _NUCLEUS_LOD_ZOOM:
             _pen_cache: dict = {}
             _brush_cache: dict = {}
             pen_width = max(2.0 / self.viewport_zoom, 1.0)

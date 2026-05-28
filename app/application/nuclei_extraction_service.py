@@ -111,6 +111,9 @@ class NucleiExtractionService:
             )
             min_area_px2 = 0.0  # skip area filter when calibration is missing
 
+        img_w = session.real_width
+        img_h = session.real_height
+
         # Find overlapping nuclei from per-tile segmentation layers
         nucleus_id = 0
         for layer in tile.segmentation_layers:
@@ -164,6 +167,16 @@ class NucleiExtractionService:
                         crop_y1 <= by1 + _BORDER_MARGIN_PX or
                         crop_x2 >= bx2 - _BORDER_MARGIN_PX or
                         crop_y2 >= by2 - _BORDER_MARGIN_PX):
+                    filtered_border += 1
+                    nucleus_id += 1
+                    continue
+
+                # ── Image-edge filter ────────────────────────────────────────
+                # Strictly discard any nucleus whose bounding box reaches the
+                # physical image border — even one border pixel means the cell
+                # is cut and is scientifically worthless.
+                if (crop_x1 <= 0 or crop_y1 <= 0 or
+                        crop_x2 >= img_w - 1 or crop_y2 >= img_h - 1):
                     filtered_border += 1
                     nucleus_id += 1
                     continue
