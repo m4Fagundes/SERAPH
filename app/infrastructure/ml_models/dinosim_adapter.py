@@ -45,7 +45,7 @@ def _add_dinosim_to_path() -> bool:
     if not _DINOSIM_SRC.exists():
         logger.error(
             "napari-dinoSim source not found at '%s'. "
-            "Clone: git clone https://github.com/AAitorG/napari-DINOSim",
+            "Clone: git clone https://github.com/AAitorG/napari-dinoSim",
             _DINOSIM_SRC,
         )
         return False
