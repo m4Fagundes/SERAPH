@@ -1,0 +1,101 @@
+<svg width="1200" height="620" viewBox="0 0 1200 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">SERAPH segmentation workflow</title>
+  <desc id="desc">Dark themed SERAPH interface mockup showing slice selection, segmentation models, GPU routing, and segmentation dashboard.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#10151f"/>
+    </linearGradient>
+    <linearGradient id="tissue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c76cb6"/>
+      <stop offset="0.45" stop-color="#f0a0c7"/>
+      <stop offset="1" stop-color="#7a4fb1"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="620" fill="url(#bg)"/>
+
+  <rect x="48" y="42" width="1104" height="536" rx="18" fill="#171d28" stroke="#293343" filter="url(#shadow)"/>
+  <rect x="48" y="42" width="1104" height="54" rx="18" fill="#111827"/>
+  <text x="84" y="76" fill="#e5edf8" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">SERAPH</text>
+  <text x="190" y="76" fill="#a9b4c4" font-family="Segoe UI, Arial, sans-serif" font-size="13">File</text>
+  <text x="235" y="76" fill="#a9b4c4" font-family="Segoe UI, Arial, sans-serif" font-size="13">Edit</text>
+  <text x="278" y="76" fill="#a9b4c4" font-family="Segoe UI, Arial, sans-serif" font-size="13">View</text>
+  <text x="328" y="76" fill="#a9b4c4" font-family="Segoe UI, Arial, sans-serif" font-size="13">Tools</text>
+
+  <rect x="80" y="126" width="260" height="410" rx="10" fill="#101722" stroke="#2b3647"/>
+  <text x="104" y="158" fill="#eaf2ff" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700">Slices</text>
+  <rect x="104" y="182" width="212" height="46" rx="8" fill="#10313a" stroke="#00d4ff"/>
+  <rect x="120" y="198" width="16" height="16" rx="4" fill="#1cb5ff"/>
+  <text x="146" y="211" fill="#f8fbff" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="600">INV_C1</text>
+  <text x="104" y="258" fill="#eaf2ff" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700">Segmentation</text>
+
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="104" y="282" width="212" height="48" rx="8" fill="#222a36" stroke="#7c3cff" stroke-width="2"/>
+    <text x="120" y="303" fill="#ffffff" font-size="13" font-weight="700">Cellpose (cpsam)</text>
+    <text x="120" y="320" fill="#9da9b8" font-size="11">cpsam - CUDA</text>
+
+    <rect x="104" y="342" width="212" height="48" rx="8" fill="#222a36" stroke="#303b4d"/>
+    <text x="120" y="363" fill="#ffffff" font-size="13" font-weight="700">NuClick</text>
+    <text x="120" y="380" fill="#9da9b8" font-size="11">batch refinement</text>
+
+    <rect x="104" y="402" width="212" height="48" rx="8" fill="#222a36" stroke="#303b4d"/>
+    <text x="120" y="423" fill="#ffffff" font-size="13" font-weight="700">CellViT-SAM</text>
+    <text x="120" y="440" fill="#9da9b8" font-size="11">ViT-SAM</text>
+
+    <rect x="104" y="462" width="212" height="34" rx="7" fill="#2b3443"/>
+    <text x="120" y="484" fill="#f2f7ff" font-size="12">All visible GPUs</text>
+  </g>
+
+  <rect x="380" y="126" width="460" height="410" rx="10" fill="#080c12" stroke="#2b3647"/>
+  <rect x="430" y="170" width="360" height="300" rx="4" fill="url(#tissue)"/>
+  <g fill="#19cfc3" stroke="#ecffff" stroke-width="1.2" opacity="0.9">
+    <ellipse cx="475" cy="222" rx="23" ry="13" transform="rotate(-18 475 222)"/>
+    <ellipse cx="542" cy="205" rx="18" ry="12" transform="rotate(24 542 205)"/>
+    <ellipse cx="628" cy="242" rx="24" ry="14" transform="rotate(8 628 242)"/>
+    <ellipse cx="718" cy="210" rx="17" ry="24" transform="rotate(36 718 210)"/>
+    <ellipse cx="502" cy="304" rx="26" ry="15" transform="rotate(18 502 304)"/>
+    <ellipse cx="598" cy="334" rx="22" ry="13" transform="rotate(-28 598 334)"/>
+    <ellipse cx="704" cy="322" rx="19" ry="29" transform="rotate(-10 704 322)"/>
+    <ellipse cx="482" cy="403" rx="18" ry="12" transform="rotate(32 482 403)"/>
+    <ellipse cx="560" cy="422" rx="25" ry="15" transform="rotate(-12 560 422)"/>
+    <ellipse cx="672" cy="410" rx="21" ry="12" transform="rotate(18 672 410)"/>
+    <ellipse cx="748" cy="382" rx="19" ry="13" transform="rotate(-30 748 382)"/>
+    <circle cx="762" cy="455" r="12"/>
+    <circle cx="448" cy="454" r="11"/>
+  </g>
+  <rect x="430" y="170" width="360" height="300" rx="4" fill="none" stroke="#42e6ff" stroke-opacity="0.55"/>
+
+  <rect x="874" y="126" width="246" height="410" rx="10" fill="#101722" stroke="#2b3647"/>
+  <text x="898" y="158" fill="#eaf2ff" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700">Segmentation Dashboard</text>
+
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="898" y="184" width="198" height="64" rx="8" fill="#202734" stroke="#344156"/>
+    <rect x="914" y="206" width="10" height="10" rx="3" fill="#22d3ee"/>
+    <text x="934" y="209" fill="#ffffff" font-size="13" font-weight="700">Macro Cellpose</text>
+    <text x="934" y="228" fill="#9da9b8" font-size="11">model: Cellpose</text>
+    <text x="1032" y="209" fill="#eaf2ff" font-size="12" text-anchor="end">231 cells</text>
+    <text x="1078" y="228" fill="#9da9b8" font-size="11" text-anchor="end">GPU 0 - 7.2 GB</text>
+
+    <rect x="898" y="264" width="198" height="64" rx="8" fill="#202734" stroke="#344156"/>
+    <rect x="914" y="286" width="10" height="10" rx="3" fill="#3dd6b3"/>
+    <text x="934" y="289" fill="#ffffff" font-size="13" font-weight="700">Macro NuClick</text>
+    <text x="934" y="308" fill="#9da9b8" font-size="11">model: NuClick</text>
+    <text x="1032" y="289" fill="#eaf2ff" font-size="12" text-anchor="end">229 cells</text>
+    <text x="1078" y="308" fill="#9da9b8" font-size="11" text-anchor="end">GPU 1 - 5.9 GB</text>
+
+    <rect x="898" y="344" width="198" height="64" rx="8" fill="#202734" stroke="#344156"/>
+    <rect x="914" y="366" width="10" height="10" rx="3" fill="#60a5fa"/>
+    <text x="934" y="369" fill="#ffffff" font-size="13" font-weight="700">CellViT-SAM</text>
+    <text x="934" y="388" fill="#9da9b8" font-size="11">model: CellViT</text>
+    <text x="1032" y="369" fill="#eaf2ff" font-size="12" text-anchor="end">247 cells</text>
+    <text x="1078" y="388" fill="#9da9b8" font-size="11" text-anchor="end">GPU 0 - 6.1 GB</text>
+  </g>
+
+  <text x="600" y="575" fill="#8ea0b6" font-family="Segoe UI, Arial, sans-serif" font-size="14" text-anchor="middle">
+    Multi-model nuclear segmentation, multi-GPU tile scheduling, probability-map export, and layer-aware analysis
+  </text>
+</svg>

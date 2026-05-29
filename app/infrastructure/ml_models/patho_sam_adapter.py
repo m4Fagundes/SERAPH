@@ -145,23 +145,49 @@ class PathoSAMAdapter(IBatchSegmentationModel):
             from micro_sam.automatic_segmentation import automatic_instance_segmentation
 
             batch_size = self._batch_size or self._auto_batch_size()
-            logger.info("PathoSAM.segment: using batch_size=%d", batch_size)
+            batch_sizes = [batch_size]
+            if batch_size != 1:
+                batch_sizes.append(1)
 
-            with self._inference_context():
-                result = automatic_instance_segmentation(
-                    predictor=self._predictor,
-                    segmenter=self._segmenter,
-                    input_path=img_np,
-                    output_path=None,
-                    embedding_path=None,
-                    ndim=2,
-                    tile_shape=self._tile_shape,
-                    halo=self._halo,
-                    verbose=False,
-                    output_mode="instance_segmentation",
-                    return_embeddings=False,
-                    batch_size=batch_size,
+            result = None
+            last_exc = None
+            for attempt, current_batch_size in enumerate(batch_sizes, start=1):
+                self._clear_cuda_cache()
+                logger.info(
+                    "PathoSAM.segment: using batch_size=%d%s",
+                    current_batch_size,
+                    " (OOM retry)" if attempt > 1 else "",
                 )
+                try:
+                    with self._inference_context():
+                        result = automatic_instance_segmentation(
+                            predictor=self._predictor,
+                            segmenter=self._segmenter,
+                            input_path=img_np,
+                            output_path=None,
+                            embedding_path=None,
+                            ndim=2,
+                            tile_shape=self._tile_shape,
+                            halo=self._halo,
+                            verbose=False,
+                            output_mode="instance_segmentation",
+                            return_embeddings=False,
+                            batch_size=current_batch_size,
+                        )
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    if not self._is_cuda_oom(exc) or current_batch_size == 1:
+                        raise
+                    logger.warning(
+                        "PathoSAM CUDA OOM with batch_size=%d. Clearing CUDA cache and retrying with batch_size=1.",
+                        current_batch_size,
+                    )
+                    self.cleanup_after_segment()
+                    self._clear_cuda_cache()
+
+            if result is None:
+                raise RuntimeError("PathoSAM inference returned no result") from last_exc
 
             # micro_sam versions differ: some return (masks, embeddings), others just masks
             label_map = result[0] if isinstance(result, tuple) else result
@@ -170,6 +196,8 @@ class PathoSAMAdapter(IBatchSegmentationModel):
         except Exception as exc:
             logger.error("PathoSAM inference failed: %s", exc, exc_info=True)
             self._last_probability_map = None
+            self.cleanup_after_segment()
+            self._clear_cuda_cache()
             return []
 
         polygons = self._label_map_to_polygons(label_map)
@@ -192,6 +220,8 @@ class PathoSAMAdapter(IBatchSegmentationModel):
                 self._predictor.reset_image()
         except Exception as exc:
             logger.debug("PathoSAM predictor image cleanup skipped: %s", exc)
+
+        self._clear_cuda_cache()
 
     def _capture_probability_map(self) -> None:
         """Capture micro_sam AIS foreground probabilities from the last run."""
@@ -379,10 +409,28 @@ class PathoSAMAdapter(IBatchSegmentationModel):
                     return 16
                 if free_gb > 14:
                     return 10
-                if free_gb > 8:
+                if free_gb > 12:
                     return 6
-                if free_gb > 5:
+                if free_gb > 9:
                     return 3
         except Exception:
             pass
         return 1
+
+    @staticmethod
+    def _is_cuda_oom(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return "cuda out of memory" in msg or "outofmemoryerror" in msg
+
+    @staticmethod
+    def _clear_cuda_cache() -> None:
+        try:
+            import gc
+            import torch
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass

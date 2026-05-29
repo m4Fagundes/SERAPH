@@ -218,10 +218,54 @@ class Tile:
             if not layer.get("visible", True):
                 continue
             color = safe_mask_color(layer.get("color"), 0)
+            bx1, by1, bx2, by2 = self.bounding_box
             for poly in layer.get("polygons", []):
-                if poly and len(poly) >= 3:
-                    result.append((poly, color))
+                if not poly or len(poly) < 3:
+                    continue
+                clipped = []
+                for x, y in poly:
+                    cx = max(bx1, min(bx2 - 1, int(x)))
+                    cy = max(by1, min(by2 - 1, int(y)))
+                    point = (cx, cy)
+                    if not clipped or clipped[-1] != point:
+                        clipped.append(point)
+                if len(set(clipped)) >= 3:
+                    result.append((clipped, color))
         return result
+
+    def remove_border_segmentations(self, margin_px: int = 0) -> int:
+        """Remove segmentation polygons that touch the tile bounding-box border."""
+        bx1, by1, bx2, by2 = self.bounding_box
+        removed = 0
+
+        def touches_border(poly) -> bool:
+            for x, y in poly:
+                x = int(x)
+                y = int(y)
+                if (
+                    x <= bx1 + margin_px
+                    or y <= by1 + margin_px
+                    or x >= bx2 - 1 - margin_px
+                    or y >= by2 - 1 - margin_px
+                ):
+                    return True
+            return False
+
+        kept_layers = []
+        for layer in self.segmentation_layers:
+            polygons = layer.get("polygons", [])
+            kept = []
+            for poly in polygons:
+                if touches_border(poly):
+                    removed += 1
+                else:
+                    kept.append(poly)
+            if kept:
+                layer["polygons"] = kept
+                kept_layers.append(layer)
+
+        self.segmentation_layers = kept_layers
+        return removed
 
     # ── Serialization ─────────────────────────────────────────────────────────
 

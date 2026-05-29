@@ -2,274 +2,275 @@
 tags:
   - IC
   - readme
-  - grid-image-analyzer
+  - seraph
+  - pathology
+  - nuclear-segmentation
 ---
 
 <p align="center">
   <img src="docs/images/banner.svg" alt="SERAPH banner" width="100%"/>
 </p>
 
-# SERAPH — Segmentation Engine for Research in Anatomical Pathology and Histology
+# SERAPH
 
+**Segmentation Engine for Research in Anatomical Pathology and Histology**
 
-**Image and Multimedia Data Science Laboratory (IMSCIENCE)**
+SERAPH is a PyQt6 desktop application for opening, slicing, segmenting, reviewing, and exporting nuclei from large microscopy and whole-slide images. It is built for pathology research workflows where multiple segmentation strategies need to be compared on the same regions of interest.
 
-A desktop application for segmenting and annotating cell nuclei in ultra-large microscopy images (WSI — Whole Slide Images). Built to handle images ranging from hundreds of megabytes to multiple gigabytes without loading them fully into RAM.
+<p align="center">
+  <img src="docs/images/segmentation-workflow.svg" alt="SERAPH segmentation workflow" width="100%"/>
+</p>
 
----
-
-## About
-
+**Image and Multimedia Data Science Laboratory (IMSCIENCE)**  
 Developed by **Matheus Fagundes** under the Scientific Initiation Program at IMSCIENCE.
 
-The tool bridges interactive annotation workflows with deep-learning segmentation models (Cellpose and NuClick), letting pathologists and researchers isolate regions of interest, run AI-driven nucleus segmentation, manually correct results, and export ML-ready datasets — all from a single dark-themed PyQt6 desktop interface.
+---
+
+## Highlights
+
+- Open large microscopy images and WSI files without loading the full image into RAM.
+- Select regions of interest with grid-based or freehand brush tools.
+- Run multiple nuclear segmentation methods on the same slice.
+- Compare results layer by layer with independent visibility and color controls.
+- Run Cellpose, CellViT, and NuClick across multiple GPUs when more than one CUDA device is visible.
+- Export nuclei, slices, metadata, HDF5 datasets, TIFF probability maps, and project files.
+- Track execution time, model name, and starting VRAM in the segmentation dashboard.
+- Remove border-touching nuclei across all layers for cleaner method comparisons.
+- Save and reopen portable `.lab` projects with segmentation layers preserved.
 
 ---
 
-## What You Can Do
+## Segmentation Models
 
-- **Open giant images instantly** — formats supported: `.ndpi`, `.svs`, `.mrxs`, `.tiff`, `.png`, `.jpeg`, `.webp`, `.bmp` and other WSI formats, with no upfront parsing delay
-- **Navigate large images fluidly** — multiscale rendering engine reads only the pixels needed for the current viewport
-- **Isolate regions of interest** — Grid Tool or freehand Brush Tool to carve out tiles from biological tissue sections
-- **Segment nuclei with AI** — click-based NuClick segmentation or whole-tile Cellpose batch segmentation (GPU auto-detected)
-- **Run automated pipelines** — Macro Pipeline runs Cellpose → NuClick in sequence across all slices with pause/resume/cancel
-- **Manually correct AI errors** — Eraser Brush, Selection Brush, and pixel-level editor to refine any polygon
-- **Organize segmentations into layers** — multiple named segmentation layers per tile, toggleable visibility, custom colors per layer
-- **Export results in multiple formats** — individual slice images, per-nucleus crops, full HDF5 ML datasets, CSV/JSON metadata, companion XML descriptors
-- **Import tile descriptors and GeoJSON** — restore previously exported tile layouts into new sessions
-- **Undo/Redo** — deep-copy snapshot stack, up to 50 steps
-
----
-
-## Architecture
-
-The codebase follows **Clean / Hexagonal Architecture** with four strict layers:
-
-```
-app/
-├── domain/           # Pure Python business logic (no UI, no I/O)
-│   ├── tile.py       # Tile entity — rects, polygon, exclusions, segmentation layers
-│   ├── session.py    # ImageSession — active workspace state
-│   ├── pyramid.py    # ImagePyramid — on-demand multiscale reader
-│   ├── history.py    # UndoManager — snapshot-based undo/redo
-│   ├── geometry.py   # Geometric operations
-│   └── selection.py  # BFS flood-fill for grid disconnection detection
-│
-├── application/      # Use-case services (orchestrate domain entities)
-│   ├── export_service.py               # All export flows
-│   ├── import_service.py               # XML / GeoJSON import
-│   ├── project_service.py              # .lab project load/save
-│   ├── interactive_segmentation_service.py  # NuClick click-based flow
-│   ├── batch_segmentation_service.py   # Cellpose whole-tile flow
-│   ├── manual_adjustment_service.py    # Brush/eraser fine-tuning
-│   └── nuclei_extraction_service.py    # Nucleus crop extraction
-│
-├── infrastructure/   # External libraries and I/O adapters
-│   ├── ml_models/
-│   │   ├── cellpose_adapter.py   # IBatchSegmentationModel → Cellpose
-│   │   ├── nuclick_adapter.py    # IInteractiveSegmentationModel → NuClick
-│   │   └── nuclick_torch/        # NuClick architecture (PyTorch)
-│   ├── config/
-│   │   ├── hardware_detector.py  # GPU/CPU auto-detection
-│   │   └── performance_config.py # Per-machine performance profiles
-│   ├── io.py           # pyvips / Pillow image save
-│   ├── tile_xml.py     # Tile descriptor XML read/write
-│   └── tile_geojson.py # GeoJSON read
-│
-└── interface/
-    └── gui/
-        ├── main_window.py        # SlicerLabApp (QMainWindow)
-        └── components/           # Mixin-based UI components
-            ├── canvas_renderer.py      # Macro view (full image pan/zoom)
-            ├── tile_renderer.py        # Micro view (isolated tile)
-            ├── slice_inspector.py      # Tile detail inspector
-            ├── slice_export.py         # Export dialog/handler
-            ├── macro_pipeline_panel.py # Automated pipeline panel
-            ├── project_manager.py      # Open/save project toolbar
-            ├── properties_panel.py     # Right-side properties sidebar
-            └── selection_tools.py      # Grid/Brush/Segment tool activation
-```
-
----
-
-## Core Features in Depth
-
-### Multiscale Rendering Engine
-
-Uses a **3-tier quality strategy** to minimize RAM and maximize rendering speed:
-
-| Zoom level | Strategy | Backend |
+| Model | Mode | Notes |
 |---|---|---|
-| < 50% | Lossy — reads a lower-resolution pyramid level | OpenSlide built-in level / pyvips shrink |
-| 50 – 94% | Lossless — crops from full-res, resizes via Lanczos | pyvips / Pillow |
-| ≥ 94% | Pixel-perfect — original data, no resampling | pyvips / Pillow |
+| Cellpose `cpsam` | Whole-tile batch | Main fast baseline. Supports GPU selection and multi-GPU tile scheduling. |
+| NuClick | Click-based and pipeline refinement | Can refine Cellpose detections using one centroid per nucleus. Supports GPU selection inside the macro pipeline. |
+| CellViT-SAM | Whole-tile batch | ViT/SAM-based nuclear segmentation. Supports GPU selection and multi-GPU tile scheduling. |
+| PathoSAM (ViT-B) | Whole-tile batch | Histopathology SAM via `micro_sam`; exports raw probability maps. Uses conservative OOM retry with `batch_size=1`. |
+| DINOSim | Similarity-guided segmentation | Few-shot/zero-shot similarity method using reference points or Cellpose-derived prompts. |
 
-Two backends are supported transparently:
+Current multi-GPU support:
 
-- **pyvips** — for standard formats (TIFF, PNG, JPEG, WebP, BMP). Lazy random-access — only requested pixels are decoded.
-- **OpenSlide** — for WSI formats (`.ndpi`, `.svs`, `.mrxs`, `.scn`, `.bif`, etc.). Uses the multi-resolution pyramid embedded in the file.
+| Model | Single GPU selection | Multi-GPU tile scheduling |
+|---|---:|---:|
+| Cellpose | Yes | Yes |
+| NuClick | Yes, in pipeline | Yes, in pipeline |
+| CellViT-SAM | Yes | Yes |
+| PathoSAM | Limited | Not in-process; needs per-GPU subprocess isolation |
+| DINOSim | Not yet exposed in UI | Not yet |
 
-Images open instantly regardless of file size.
+---
 
-### Grid Tool and BFS Disconnection
+## Recent Analysis Tools
 
-Rubber-band selection marks rectangular grid cells as one tile. When the user removes a middle cell from a large selection, the domain layer runs a **BFS flood-fill** over the 4-connected spatial neighborhood to detect whether the remaining cells form a single contiguous region or multiple disconnected islands. Disconnected groups are automatically split into separate tiles, each assigned a unique color.
+### Segmentation Dashboard
 
-### AI Segmentation Models
+Each segmentation layer records:
 
-**Interactive (click-based) — NuClick**
+- layer/model name;
+- number of detected nuclei;
+- execution time;
+- CUDA device used when available;
+- free VRAM at the start of the operation.
 
-- User clicks on the nucleus of interest inside an isolated tile
-- Screen coordinate is mapped to the absolute image pixel space (factoring zoom, camera offset, DPI)
-- NuClick model returns a binary mask → converted to a vector polygon via contour detection
-- Model weights downloaded on first use from HuggingFace (~100 MB)
+This makes it easier to compare methods and detect memory-related slowdowns.
 
-**Batch (whole-tile) — Cellpose**
+### Probability Map Export
 
-- Segments all nuclei in the entire tile in a single inference pass
-- Model: `cpsam` by default (supports `nuclei`, `cyto`, `cyto2`, and any Cellpose model type)
-- GPU auto-detected at startup (CUDA on Windows, MPS on Apple Silicon)
-- Parameters tunable from the toolbar: `diameter`, `flow_threshold`, `cellprob_threshold`
-- Results written to a named segmentation layer — original image is never modified
+Existing segmentation layers can export probability/confidence maps as **TIFF** to avoid lossy compression. This is useful for inspecting whether a model produced a real continuous confidence map or a binary/label-like output.
 
-**Automated Macro Pipeline**
+Supported in practice:
 
-- Runs Cellpose → NuClick in sequence across every tile in the session
-- Pause / Resume / Cancel controls
-- Progress bar with per-phase timing
+- Cellpose: captures Cellpose cell probability output.
+- PathoSAM: captures `micro_sam` foreground probability when available.
+- CellViT: exports the raw foreground logit margin, because softmax probabilities often saturate visually.
 
-### Segmentation Layers
+### Border Segmentation Cleanup
 
-Every inference run creates an independent **named layer** on the tile:
+The layer menu includes:
 
-- Multiple layers per tile (e.g., "Cellpose (cpsam)", "NuClick", "Manual")
-- Individual visibility toggle per layer
-- Per-layer color coding
-- Layer selector in the toolbar filters export/extraction scope
+```text
+Remove Border Segmentations
+```
 
-### Export System
+This removes polygons from all segmentation layers in the current slice when any polygon point touches the slice border. It is intended for fair comparison between methods by excluding partial nuclei cut by the ROI boundary.
 
-| Export type | Output |
-|---|---|
-| Save selected slices | One image per tile, polygon mask applied, tight crop |
-| Slice all (grid) | Full image split into grid tiles, no RAM peak |
-| Export nuclei (images) | One image per segmented nucleus, organized by slice folder |
-| Export nuclei to HDF5 | ML-ready `.h5` file: `images`, `masks`, `patient_ids`, `patient_labels`, `slide_ids`, `roi_ids`, `roi_dimension`, `pixel_size_um` |
-| Export metadata | `_metadata.csv` + `_metadata.json` with physical dimensions in µm |
-| XML tile descriptor | Companion `_tile.xml` written alongside each exported tile |
+---
 
-Supported output formats: `.png`, `.jpg`, `.tiff`, `.webp`, `.bmp`
+## Multi-GPU Workflow
 
-Non-transparent formats (JPEG, BMP) automatically composite the polygon mask onto a white background.
+SERAPH normally isolates the best compatible GPU at startup so incompatible CUDA devices do not break PyTorch. To expose all GPUs to the application, start it with `SERAPH_MULTI_GPU=1`.
+
+Recommended Git Bash command for RTX 50-series plus older CUDA GPUs:
+
+```bash
+cd "$HOME/OneDrive/Documentos/MyLife/Scientific Research/SERAPH" && unset CUDA_VISIBLE_DEVICES && export SERAPH_MULTI_GPU=1 && if [ ! -d venv-sm120 ]; then python -m venv venv-sm120; fi && source venv-sm120/Scripts/activate && python -m pip install --upgrade pip && pip install -r requirements-sm120.txt && python main.py
+```
+
+When this mode is active, the segmentation panel can show options like:
+
+```text
+Auto
+GPU 0 - NVIDIA GeForce RTX 5060
+GPU 1 - NVIDIA GeForce RTX 2060
+All visible GPUs
+```
+
+For multi-slice runs, SERAPH uses a dynamic work queue: whenever a GPU finishes a tile, it takes the next pending tile instead of waiting for a preassigned static batch.
 
 ---
 
 ## Installation
 
-### Requirements
+### Recommended Windows Setup for RTX 50-Series / `sm_120`
 
-- Python **3.11** (Windows) or **3.12** (macOS)
-- GPU optional — CUDA 12.4 on Windows, MPS auto-detected on Apple Silicon
-
-### Windows (CUDA)
-
-```powershell
-git clone https://github.com/m4Fagundes/grid-image-analyzer.git
-cd grid-image-analyzer
-
-python -m venv .venv
-.venv\Scripts\activate
-
-pip install -r requirements-windows.txt
-
-python main.py
-```
-
-### macOS (Apple Silicon / Intel)
+Use `requirements-sm120.txt`, which installs a PyTorch CUDA build with `sm_120` support:
 
 ```bash
-git clone https://github.com/m4Fagundes/grid-image-analyzer.git
-cd grid-image-analyzer
-
-# Install native C libraries (required for pyvips and OpenSlide)
-brew install libvips openslide
-
-python3 -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements-macos.txt
-
+cd "$HOME/OneDrive/Documentos/MyLife/Scientific Research/SERAPH"
+python -m venv venv-sm120
+source venv-sm120/Scripts/activate
+python -m pip install --upgrade pip
+pip install -r requirements-sm120.txt
 python main.py
 ```
 
-### GPU (Windows CUDA) vs CPU
+To use multiple GPUs, prefer the one-line command in the Multi-GPU Workflow section.
 
-`requirements-windows.txt` installs PyTorch with CUDA 12.4 by default. To run CPU-only:
+### Standard Windows Setup
 
 ```powershell
-pip install torch==2.6.0+cpu torchvision==0.21.0+cpu --index-url https://download.pytorch.org/whl/cpu --force-reinstall
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
+```
+
+### macOS
+
+```bash
+brew install libvips openslide
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements-macos.txt
+python main.py
 ```
 
 ---
 
-## Building Distributable Installers
+## Supported Image Inputs
 
-CI pipelines run automatically on tag pushes (`v*`). To build locally:
+SERAPH supports common microscopy and WSI formats through OpenSlide, Pillow, and optional pyvips:
 
-### Windows — Inno Setup installer
+- `.ndpi`
+- `.svs`
+- `.mrxs`
+- `.tiff` / `.tif`
+- `.png`
+- `.jpeg` / `.jpg`
+- `.webp`
+- `.bmp`
 
-```powershell
-# Install build deps (CPU torch for smaller artifact)
-pip install Pillow openpyxl PyQt6 "openslide-python>=1.4.0" "openslide-bin>=4.0.0" "cellpose>=4.0,<5.0" scikit-image opencv-python psutil scipy numpy h5py
-pip install torch==2.6.0+cpu torchvision==0.21.0+cpu --index-url https://download.pytorch.org/whl/cpu
-pip install pyinstaller
+Large WSI files are read through a multiscale pyramid so only the visible or selected region is decoded.
 
-# Cache Cellpose model weights (bundled into the installer)
-python -c "from cellpose import models; models.CellposeModel(model_type='nuclei', gpu=False); models.CellposeModel(model_type='cyto2', gpu=False)"
+---
 
-# Build
-python -m PyInstaller docs/build/main_release.spec --clean --noconfirm
+## Core Workflow
 
-# Package with Inno Setup
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" docs\build\installer.iss
-# Output: build_installer/GridAnalyzer_Setup.exe
+1. Open a microscopy or WSI image.
+2. Create one or more slices/ROIs with the grid or brush tool.
+3. Select one or more slices in the sidebar.
+4. Choose a segmentation method in the segmentation panel.
+5. Select the GPU mode when available.
+6. Run the model or Cellpose -> NuClick macro pipeline.
+7. Compare layers in the dashboard and layer menu.
+8. Optionally remove border-touching nuclei for cleaner method comparison.
+9. Export nuclei, probability maps, HDF5 datasets, or project files.
+
+---
+
+## Export Options
+
+| Export | Output |
+|---|---|
+| Slices | Cropped ROI images with masks applied |
+| Nuclei | Per-nucleus image crops grouped by slice/layer |
+| Nuclei HDF5 | ML-ready `.h5` dataset with images, masks, labels, and metadata |
+| Probability map | TIFF confidence/probability maps from segmentation layers |
+| Metadata | CSV/JSON descriptors with dimensions and labels |
+| Project | `.lab` JSON project file with slices, masks, layers, and metadata |
+
+---
+
+## Architecture
+
+SERAPH follows a clean layered structure:
+
+```text
+app/
+  domain/          Pure entities and geometry
+  application/     Use-case services
+  infrastructure/  Model adapters, config, I/O
+  interface/gui/   PyQt6 desktop interface
 ```
 
-### macOS — .app bundle and .dmg
+Key modules:
 
-```bash
-brew install libvips openslide create-dmg
-pip install -r requirements-macos.txt pyinstaller
+| Module | Responsibility |
+|---|---|
+| `app/domain/tile.py` | Slice geometry, masks, segmentation layers, serialization |
+| `app/application/batch_segmentation_service.py` | Whole-tile segmentation orchestration |
+| `app/application/interactive_segmentation_service.py` | Click/point-based segmentation orchestration |
+| `app/infrastructure/ml_models/` | Cellpose, NuClick, CellViT, PathoSAM, DINOSim adapters |
+| `app/interface/gui/components/macro_pipeline_panel.py` | Batch/macro segmentation UI and multi-GPU workers |
+| `app/interface/gui/components/layer_dropdown.py` | Layer visibility, deletion, border cleanup |
+| `app/interface/gui/components/properties_panel.py` | Segmentation dashboard and metadata |
 
-# Cache Cellpose model weights
-python -c "from cellpose import models; models.CellposeModel(model_type='nuclei', gpu=False); models.CellposeModel(model_type='cyto2', gpu=False)"
+---
 
-pyinstaller --clean --noconfirm docs/build/main_release.spec
+## Project Files
 
-create-dmg --volname "GridAnalyzer" "dist/GridAnalyzer.dmg" "dist/GridAnalyzer.app"
-# Output: dist/GridAnalyzer.app and dist/GridAnalyzer.dmg
-```
+`.lab` files are JSON projects containing:
+
+- source image references;
+- slice geometry and masks;
+- per-slice metadata;
+- segmentation layers;
+- model names;
+- execution timing;
+- VRAM metadata;
+- layer visibility/colors.
+
+Probability maps are intentionally not stored inside `.lab` project JSON because they can be large NumPy/TIFF-like arrays. Export them separately as TIFF when needed.
 
 ---
 
 ## Keyboard Shortcuts
 
-| Action | Windows / Linux | macOS |
-|---|---|---|
-| Pan (click + drag) | Left-click drag | Left-click drag |
-| Scroll vertically | Mouse Wheel | Mouse Wheel |
-| Scroll horizontally | Shift + Mouse Wheel | Shift + Mouse Wheel |
-| Zoom (cursor-centered) | Ctrl + Scroll | Cmd / Option + Scroll |
-| Undo | Ctrl+Z | Cmd+Z |
-| Redo | Ctrl+Y | Cmd+Y |
-| Clear all polygons | C | C |
-| Segment nucleus (NuClick) | Right-click | Ctrl+Click / Button-2 |
+| Action | Shortcut |
+|---|---|
+| Undo | `Ctrl+Z` |
+| Redo | `Ctrl+Y` |
+| Clear polygons | `C` |
+| Grid tool | `G` |
+| Brush tool | `B` |
+| Segment nucleus | `S` |
+| Eraser brush | `E` |
+| Selection brush | `A` |
+| Back to canvas | `Esc` |
+| Zoom | `Ctrl+Mouse Wheel` |
+| Horizontal scroll | `Shift+Mouse Wheel` |
 
 ---
 
-## Project File Format (`.lab`)
+## Notes and Limitations
 
-Sessions are persisted as JSON with relative paths, making projects portable across machines. Share a folder containing both the `.lab` file and the source image file, and the application will resolve all paths correctly regardless of the absolute mount point.
+- PathoSAM uses `micro_sam`, which accepts `"cuda"` but not indexed device strings like `"cuda:1"` in the current in-process adapter.
+- For PathoSAM multi-GPU execution, the safer future design is one subprocess per GPU with separate `CUDA_VISIBLE_DEVICES`.
+- CellViT-HIPT support is close to the existing `CellViT256` path, but requires compatible checkpoints.
+- CellViT-Virchow likely requires the newer CellViT++ inference stack and separate model weights.
+- If the app is already running, changing `SERAPH_MULTI_GPU` will not expose hidden GPUs; restart the process.
 
 ---
 
@@ -277,22 +278,19 @@ Sessions are persisted as JSON with relative paths, making projects portable acr
 
 | Package | Purpose |
 |---|---|
-| PyQt6 | Desktop GUI framework |
-| Pillow | Fallback image I/O and polygon masking |
-| pyvips / pyvips-binary | High-performance lazy image decoding (standard formats) |
-| openslide-python / openslide-bin | WSI format decoding (.ndpi, .svs, .mrxs, …) |
-| torch / torchvision | Deep learning backend for Cellpose and NuClick |
-| cellpose | Nucleus/cell instance segmentation |
-| scikit-image | Contour detection (mask → polygon) |
-| opencv-python | Image processing utilities |
-| numpy | Array operations |
-| scipy | Scientific computing (used by segmentation stack) |
-| h5py | HDF5 export for ML datasets |
-| psutil | Hardware memory detection |
-| openpyxl | Spreadsheet export |
+| PyQt6 | Desktop GUI |
+| Pillow | Image I/O fallback and masks |
+| openslide-python / openslide-bin | WSI reading |
+| pyvips | Optional high-performance image I/O |
+| torch / torchvision | Deep-learning backend |
+| cellpose | Cellpose `cpsam` segmentation |
+| scikit-image / scipy / numpy | Image processing and scientific computing |
+| opencv-python-headless | Contours and mask processing |
+| h5py | HDF5 export |
+| psutil | Hardware/memory detection |
 
 ---
 
 <p align="center">
-  <b>IMSCIENCE — Merging raw Data Science with complex Cell Microscopy.</b>
+  <b>IMSCIENCE - Merging raw Data Science with complex Cell Microscopy.</b>
 </p>

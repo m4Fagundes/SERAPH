@@ -190,6 +190,12 @@ class LayerDropdown(QToolButton):
         hide_all = self._menu.addAction("🚫  Hide All")
         hide_all.triggered.connect(lambda: self._set_all(False))
 
+        self._menu.addSeparator()
+
+        remove_border = self._menu.addAction("Remove Border Segmentations")
+        remove_border.setToolTip("Remove all polygons from all layers that touch the current slice border")
+        remove_border.triggered.connect(self._remove_border_segmentations)
+
     def _update_label(self):
         """Update button text to reflect current visibility state."""
         tile = self._current_tile
@@ -207,4 +213,34 @@ class LayerDropdown(QToolButton):
         for layer in self._current_tile.segmentation_layers:
             layer["visible"] = visible
         self._rebuild_menu()
+        self.layerVisibilityChanged.emit()
+
+    def _remove_border_segmentations(self):
+        """Remove polygons touching the active tile border across all layers."""
+        if not self._current_tile:
+            return
+
+        remove_fn = getattr(self._current_tile, "remove_border_segmentations", None)
+        if not callable(remove_fn):
+            return
+
+        removed = remove_fn(margin_px=0)
+        self._rebuild_menu()
+
+        panel = getattr(self._main_window, "properties_dock", None)
+        if panel is not None and hasattr(panel, "refresh_segmentation_summary"):
+            panel.refresh_segmentation_summary()
+
+        canvas = getattr(self._main_window, "canvas_renderer", None)
+        if canvas is not None and hasattr(canvas, "redraw"):
+            canvas.redraw()
+
+        tile_renderer = getattr(self._main_window, "tile_renderer", None)
+        if tile_renderer is not None and hasattr(tile_renderer, "viewport"):
+            tile_renderer.viewport().update()
+
+        status_bar = getattr(self._main_window, "statusBar", lambda: None)()
+        if status_bar:
+            status_bar.showMessage(f"Removed {removed} border segmentation{'s' if removed != 1 else ''}.")
+
         self.layerVisibilityChanged.emit()

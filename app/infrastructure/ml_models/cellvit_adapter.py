@@ -253,10 +253,13 @@ class CellViTAdapter(IBatchSegmentationModel):
                             continue
 
                         contour = info["contour"]  # (N, 2): col 0 = X, col 1 = Y
-                        polygon = [
-                            (int(x + col_start), int(y + row_start))
-                            for x, y in contour
-                        ]
+                        polygon = self._clip_contour_to_image(
+                            contour,
+                            col_start=col_start,
+                            row_start=row_start,
+                            width=W,
+                            height=H,
+                        )
                         if len(polygon) >= 3:
                             all_polygons.append(polygon)
             finally:
@@ -267,6 +270,34 @@ class CellViTAdapter(IBatchSegmentationModel):
         self._last_probability_map = prob_canvas.astype(np.float32, copy=False)
         self._log_probability_map_stats(self._last_probability_map)
         return all_polygons
+
+    @staticmethod
+    def _clip_contour_to_image(
+        contour: np.ndarray,
+        *,
+        col_start: int,
+        row_start: int,
+        width: int,
+        height: int,
+    ) -> List[Tuple[int, int]]:
+        """Translate a patch contour to image coordinates and clip it to bounds."""
+        polygon: List[Tuple[int, int]] = []
+        for x, y in contour:
+            gx = int(round(float(x) + col_start))
+            gy = int(round(float(y) + row_start))
+            gx = max(0, min(width - 1, gx))
+            gy = max(0, min(height - 1, gy))
+            point = (gx, gy)
+            if not polygon or polygon[-1] != point:
+                polygon.append(point)
+
+        if len(polygon) > 1 and polygon[0] == polygon[-1]:
+            polygon.pop()
+
+        # Clipping can collapse edge artifacts into a line or a point.
+        if len(set(polygon)) < 3:
+            return []
+        return polygon
 
     def probability_map(self):
         return self._last_probability_map
