@@ -1,18 +1,18 @@
 """
 SectionHeader — standardized section title widget for SERAPH panels.
 
-Renders: uppercase label with cyan left-border accent + optional badge pill.
+Renders: uppercase label with a subtle horizontal divider + optional badge pill.
 Fixed height 36px.
 """
 from __future__ import annotations
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel
+from PyQt6.QtWidgets import QWidget, QFrame, QHBoxLayout, QLabel
 from PyQt6.QtCore import Qt
 from app.interface.gui.design_system import COLORS, SPACE
 
 
 class SectionHeader(QWidget):
     """
-    Section header: uppercase, muted, accent left-border, optional count badge.
+    Section header: uppercase, muted, subtle horizontal divider, optional count badge.
     Fixed height 36px.
 
     Usage:
@@ -29,18 +29,27 @@ class SectionHeader(QWidget):
         )
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(SPACE[4], 0, SPACE[3], 0)
+        row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(SPACE[2])
 
         lbl = QLabel(title.upper())
         lbl.setStyleSheet(
             f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 600;"
             f" letter-spacing: 0.5px; background: transparent;"
-            f" border-left: 2px solid {COLORS['brand']};"
-            f" padding-left: 6px; border-bottom: none;"
+            f" border: none; padding-left: 0;"
         )
         row.addWidget(lbl)
-        row.addStretch()
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Plain)
+        line.setStyleSheet(
+            f"background: {COLORS['border_default']};"
+            f" color: {COLORS['border_default']};"
+            f" border: none;"
+        )
+        line.setFixedHeight(1)
+        row.addWidget(line, stretch=1)
 
         if badge:
             self._badge = QLabel(badge)

@@ -1,8 +1,9 @@
 """
 GPUSelector — Automatically selects the PyTorch-compatible GPU.
 
-Problem: RTX 5060 is not yet supported in PyTorch.
-Solution: If multiple GPUs are present, use the first compatible one.
+Problem: Some PyTorch builds do not support every installed GPU architecture.
+Solution: If multiple GPUs are present, use the first GPU supported by the
+installed PyTorch wheel.
 """
 
 import logging
@@ -10,6 +11,37 @@ import os
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+MULTI_GPU_ENV = "SERAPH_MULTI_GPU"
+
+
+def multi_gpu_visibility_requested() -> bool:
+    """Return True when the app should keep all CUDA devices visible."""
+    value = os.environ.get(MULTI_GPU_ENV, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _supported_cuda_capabilities(torch_module) -> set[tuple[int, int]]:
+    """Return CUDA SM capabilities compiled into the installed PyTorch build."""
+    capabilities: set[tuple[int, int]] = set()
+    try:
+        for arch in torch_module.cuda.get_arch_list():
+            if not arch.startswith("sm_"):
+                continue
+            code = arch[3:]
+            if len(code) < 2 or not code.isdigit():
+                continue
+            major = int(code[:-1])
+            minor = int(code[-1])
+            capabilities.add((major, minor))
+    except Exception as exc:
+        logger.warning("Could not read PyTorch CUDA arch list: %s", exc)
+
+    if capabilities:
+        return capabilities
+
+    # Conservative fallback for older PyTorch builds that do not expose arch metadata.
+    return {(5, 0), (6, 0), (6, 1), (7, 0), (7, 5), (8, 0), (8, 6), (9, 0)}
 
 
 def get_best_cuda_device() -> Optional[int]:
@@ -34,9 +66,11 @@ def get_best_cuda_device() -> Optional[int]:
         logger.debug("CUDA not available")
         return None
     
-    # Compute capabilities supported by current PyTorch
-    # sm_50 (Maxwell), sm_60 (Pascal), sm_70 (Volta), sm_75 (Turing), sm_80 (Ampere), sm_86 (Ampere), sm_90 (Hopper)
-    supported_capabilities = {(5, 0), (6, 0), (6, 1), (7, 0), (7, 5), (8, 0), (8, 6), (9, 0)}
+    supported_capabilities = _supported_cuda_capabilities(torch)
+    logger.info(
+        "PyTorch CUDA arch support: %s",
+        ", ".join(f"sm_{major}{minor}" for major, minor in sorted(supported_capabilities)),
+    )
     
     num_devices = torch.cuda.device_count()
     compatible_devices = []
@@ -65,6 +99,39 @@ def get_best_cuda_device() -> Optional[int]:
     else:
         logger.warning("No compatible CUDA devices found - will use CPU")
         return None
+
+
+def list_compatible_cuda_devices() -> list[dict]:
+    """List currently visible CUDA devices supported by this PyTorch build."""
+    try:
+        import torch
+    except ImportError:
+        logger.warning("PyTorch not available - GPU listing disabled")
+        return []
+
+    if not torch.cuda.is_available():
+        return []
+
+    supported_capabilities = _supported_cuda_capabilities(torch)
+    devices = []
+    for device_id in range(torch.cuda.device_count()):
+        try:
+            name = torch.cuda.get_device_name(device_id)
+            capability = torch.cuda.get_device_capability(device_id)
+            if capability not in supported_capabilities:
+                continue
+            props = torch.cuda.get_device_properties(device_id)
+            devices.append(
+                {
+                    "id": device_id,
+                    "name": name,
+                    "capability": capability,
+                    "total_memory": getattr(props, "total_memory", 0),
+                }
+            )
+        except Exception as exc:
+            logger.warning("Failed to query CUDA device %d: %s", device_id, exc)
+    return devices
 
 
 def set_cuda_device(device_id: Optional[int]) -> None:
@@ -101,8 +168,16 @@ def initialize_gpu_visibility() -> None:
     """
     Runs a lightweight subprocess to find the best compatible GPU,
     and sets CUDA_VISIBLE_DEVICES in the parent process BEFORE torch is imported.
-    This prevents incompatible GPUs (like RTX 5060) from corrupting the PyTorch/cuDNN context.
+    This prevents GPUs unsupported by the installed PyTorch wheel from corrupting
+    the PyTorch/cuDNN context.
     """
+    if multi_gpu_visibility_requested():
+        logger.info(
+            "%s is enabled; keeping all compatible CUDA devices visible.",
+            MULTI_GPU_ENV,
+        )
+        return
+
     # If already inside a probe or visibility is already set, do nothing
     if "SERAPH_GPU_PROBE" in os.environ or "CUDA_VISIBLE_DEVICES" in os.environ:
         return
@@ -152,7 +227,11 @@ except Exception as e:
 # Auto-select best GPU on import
 try:
     if "SERAPH_GPU_PROBE" not in os.environ:
-        if "CUDA_VISIBLE_DEVICES" not in os.environ:
+        if multi_gpu_visibility_requested():
+            best_device = get_best_cuda_device()
+            if best_device is not None:
+                set_cuda_device(best_device)
+        elif "CUDA_VISIBLE_DEVICES" not in os.environ:
             best_device = get_best_cuda_device()
             if best_device is not None:
                 set_cuda_device(best_device)

@@ -21,7 +21,7 @@ from typing import Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Auto-select best compatible GPU on import (handles RTX 5060 not supported yet)
+# Auto-select best compatible GPU on import.
 try:
     from .gpu_selector import get_best_cuda_device, set_cuda_device
     _best_device = get_best_cuda_device()
@@ -199,8 +199,17 @@ class HardwareDetector:
                 
                 logger.info("CUDA available with %d GPU(s)", num_gpus)
                 
-                # Search for compatible GPU (even if not the first one)
-                supported_capabilities = {(5, 0), (6, 0), (6, 1), (7, 0), (7, 5), (8, 0), (8, 6), (9, 0)}
+                # Search for compatible GPU (even if not the first one).
+                # Read support from the installed PyTorch build so newer wheels
+                # such as cu128 correctly accept Blackwell / sm_120 GPUs.
+                try:
+                    from .gpu_selector import _supported_cuda_capabilities
+                    supported_capabilities = _supported_cuda_capabilities(torch)
+                except Exception:
+                    supported_capabilities = {
+                        (5, 0), (6, 0), (6, 1), (7, 0), (7, 5),
+                        (8, 0), (8, 6), (9, 0), (10, 0), (12, 0),
+                    }
                 compatible_gpus = []
                 
                 for device_id in range(num_gpus):

@@ -19,6 +19,7 @@ skills/
 .env
 .venv/
 venv/
+venv-sm120/
 .icloud/
 dist/
 /build/

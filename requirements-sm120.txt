@@ -1,0 +1,30 @@
+# Runtime dependencies — GPU build for NVIDIA Blackwell / sm_120 (CUDA 12.8)
+# Use this only on RTX 50-series / Blackwell GPUs.
+# Install with: pip install -r requirements-sm120.txt
+--extra-index-url https://download.pytorch.org/whl/cu128
+Pillow>=10.4.0
+openpyxl>=3.1.0
+PyQt6>=6.0.0
+openslide-python>=1.4.0
+openslide-bin>=4.0.0
+torch==2.10.0+cu128
+torchvision==0.25.0+cu128
+cellpose>=4.0,<5.0
+scikit-image>=0.21.0
+opencv-python-headless>=4.8.0
+psutil>=5.9.0
+scipy>=1.11.0
+numpy>=1.26.0
+h5py>=3.10.0
+# CellViT inference dependencies
+einops>=0.6.0
+numba>=0.57.0
+# Patho-SAM inference dependencies (micro-sam and torch-em cloned locally — not on PyPI)
+pooch>=1.6.0
+imageio>=2.31.0
+tqdm>=4.64.0
+matplotlib>=3.7.0
+segment-anything>=1.0
+threadpoolctl>=3.0.0
+xxhash>=3.4.0
+zarr>=2.18.0,<4.0

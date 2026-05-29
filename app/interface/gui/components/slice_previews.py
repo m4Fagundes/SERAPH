@@ -75,6 +75,35 @@ def _btn_delete_style() -> str:
     )
 
 
+def _slice_checkbox_style() -> str:
+    p = COLORS
+    return (
+        "QCheckBox {"
+        " background: transparent;"
+        " border: none;"
+        " padding: 0;"
+        " margin: 0;"
+        " spacing: 0;"
+        "}"
+        "QCheckBox::indicator {"
+        " width: 14px;"
+        " height: 14px;"
+        " background: transparent;"
+        f" border: 1px solid {p['border_default']};"
+        " border-radius: 4px;"
+        " margin: 0;"
+        "}"
+        "QCheckBox::indicator:hover {"
+        f" border-color: {p['border_strong']};"
+        f" background: {p['bg_hover']};"
+        "}"
+        "QCheckBox::indicator:checked {"
+        f" background: {p['brand']};"
+        f" border-color: {p['brand']};"
+        "}"
+    )
+
+
 # ── Row widget ────────────────────────────────────────────────────────────────
 
 class _SliceRow(QWidget):
@@ -82,7 +111,7 @@ class _SliceRow(QWidget):
     One row in the slice sidebar list.
 
     Visual structure (left → right):
-      [swatch] [slice name] [edit] [delete]
+      [checkbox] [slice name] [edit] [delete]
 
     Action buttons are always visible for discoverability.
     """
@@ -91,7 +120,6 @@ class _SliceRow(QWidget):
         self,
         name: str,
         tile_count: int,
-        color_hex: str,
         checked: bool,
         on_checked,
         on_delete,
@@ -114,17 +142,10 @@ class _SliceRow(QWidget):
         self.check.setToolTip("Include this slice in batch segmentation")
         self.check.setCursor(Qt.CursorShape.PointingHandCursor)
         self.check.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.check.setFixedSize(16, 16)
+        self.check.setStyleSheet(_slice_checkbox_style())
         self.check.toggled.connect(on_checked)
         root.addWidget(self.check, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        # ── Colour swatch ─────────────────────────────────────────────────────
-        swatch = QLabel()
-        swatch.setFixedSize(9, 9)
-        swatch.setStyleSheet(
-            f"background-color: {color_hex}; border-radius: 3px;"
-            f" border: 1px solid rgba(255,255,255,0.15);"
-        )
-        root.addWidget(swatch, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # Name — doubles as an inline editor when double-clicked or ✎ pressed.
         # WA_TransparentForMouseEvents lets mouse events fall through to the
@@ -352,6 +373,7 @@ class SlicePreviews(QWidget):
         self._footer_layout = QVBoxLayout(self._footer)
         self._footer_layout.setContentsMargins(SPACE[3], SPACE[3], SPACE[3], SPACE[3])
         self._footer_layout.setSpacing(SPACE[2])
+        self._footer.hide()
         self.layout.addWidget(self._footer)
 
         self._footer.setStyleSheet(
@@ -360,6 +382,7 @@ class SlicePreviews(QWidget):
         )
 
     def add_footer_widget(self, widget: QWidget) -> None:
+        self._footer.show()
         self._footer_layout.addWidget(widget)
 
     # ── Public ────────────────────────────────────────────────────────────────
@@ -387,10 +410,9 @@ class SlicePreviews(QWidget):
             self._add_empty_state("no_slices")
             return
 
+
         for i, tile in enumerate(s.tiles):
             name = tile.metadata.get("name") or f"Slice {i + 1}"
-            color_hex = tile.color
-
             def make_delete(idx=i):
                 return lambda: self._delete_slice(idx)
 
@@ -401,7 +423,7 @@ class SlicePreviews(QWidget):
                 return lambda checked: self._set_slice_checked(idx, checked)
 
             row = _SliceRow(
-                name, len(tile.rects), color_hex,
+                name, len(tile.rects),
                 checked=i in self._checked_slice_indices,
                 on_checked=make_checked(),
                 on_delete=make_delete(),

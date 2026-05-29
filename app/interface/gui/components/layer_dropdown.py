@@ -8,11 +8,12 @@ strategies (NuClick, Cellpose, Manual) to coexist without deletion.
 import logging
 from PyQt6.QtWidgets import (
     QToolButton, QMenu, QWidgetAction, QWidget,
-    QHBoxLayout, QCheckBox, QLabel
+    QHBoxLayout, QCheckBox, QLabel, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter
 from app.interface.gui.theme import PALETTE, btn_danger
+from app.domain.tile import safe_mask_color
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class LayerDropdown(QToolButton):
         f" padding: 4px 12px 4px 8px;"
         f" font-size: 8pt;"
         f" font-family: 'Segoe UI', Tahoma, sans-serif;"
-        f" min-width: 120px;"
+        f" min-width: 0px;"
         f" text-align: left;"
         f" }}"
         f" QToolButton:hover {{ border: 1px solid {PALETTE['border_focus']}; background-color: {PALETTE['bg_hover']}; }}"
@@ -68,6 +69,8 @@ class LayerDropdown(QToolButton):
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.setStyleSheet(self._BUTTON_STYLE)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self._menu = QMenu(self)
         self.setMenu(self._menu)
@@ -101,6 +104,9 @@ class LayerDropdown(QToolButton):
         if idx < len(self._current_tile.segmentation_layers):
             del self._current_tile.segmentation_layers[idx]
             self._rebuild_menu()
+            panel = getattr(self._main_window, "properties_dock", None)
+            if panel is not None and hasattr(panel, "refresh_segmentation_summary"):
+                panel.refresh_segmentation_summary()
             self.layerVisibilityChanged.emit()
 
     def _rebuild_menu(self):
@@ -127,7 +133,8 @@ class LayerDropdown(QToolButton):
             name = layer.get("name", f"Layer {i+1}")
             poly_count = len(layer.get("polygons", []))
             is_visible = layer.get("visible", True)
-            color_hex = layer.get("color", "#FFFF00")
+            color_hex = safe_mask_color(layer.get("color"), i)
+            layer["color"] = color_hex
 
             action = QWidgetAction(self._menu)
             row_widget = QWidget()

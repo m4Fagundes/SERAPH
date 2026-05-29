@@ -105,6 +105,7 @@ class CellViTAdapter(IBatchSegmentationModel):
         magnification: int = 40,
         gpu: Optional[bool] = None,
         batch_size: int = 1,
+        device_id: Optional[int] = None,
     ) -> None:
         """
         Args:
@@ -113,10 +114,12 @@ class CellViTAdapter(IBatchSegmentationModel):
             magnification: Tissue magnification (20 or 40). Affects postprocessing.
             gpu: True = force GPU, False = force CPU, None = auto-detect.
             batch_size: Patches per forward pass. Keep at 1 for 6 GB VRAM.
+            device_id: Optional CUDA device index to pin this adapter to.
         """
         self._explicit_model_path = Path(model_path) if model_path else None
         self._magnification = magnification
         self._batch_size = batch_size
+        self._device_id = device_id
         self._model = None
         self._run_conf = None
         self._model_arch = "unknown"
@@ -140,9 +143,13 @@ class CellViTAdapter(IBatchSegmentationModel):
 
     # ── IBatchSegmentationModel ──────────────────────────────────────────────
 
+    # Fixed registration key — must match the entry in macro_pipeline_panel._KNOWN_MODELS.
+    # The adapter's human-readable label (_display_name) is separate and used only for logs.
+    NAME = "CellViT-SAM"
+
     @property
     def name(self) -> str:
-        return self._display_name
+        return self.NAME
 
     def segment(
         self,
@@ -188,6 +195,8 @@ class CellViTAdapter(IBatchSegmentationModel):
 
         for batch_start in range(0, len(patch_list), self._batch_size):
             batch = patch_list[batch_start: batch_start + self._batch_size]
+            patches_tensor = None
+            predictions = None
 
             try:
                 patches_tensor = torch.stack(
@@ -204,51 +213,54 @@ class CellViTAdapter(IBatchSegmentationModel):
                     logger.error("CellViT forward pass failed: %s", exc)
                     continue
 
-            for i, patch_info in enumerate(batch):
-                _rs = patch_info["row_start"]
-                _cs = patch_info["col_start"]
-                _ah = patch_info["actual_h"]
-                _aw = patch_info["actual_w"]
-                # Store the raw foreground evidence before softmax saturation.
-                # The probability softmax often collapses visually to 0/1 for CellViT,
-                # while the logit margin keeps continuous model confidence.
-                _logits = predictions["nuclei_binary_logits"][i].numpy()
-                _pprob = (_logits[1] - _logits[0]).astype(np.float32)
-                np.maximum(
-                    prob_canvas[_rs:_rs + _ah, _cs:_cs + _aw],
-                    _pprob[:_ah, :_aw],
-                    out=prob_canvas[_rs:_rs + _ah, _cs:_cs + _aw],
-                )
-                pred_map = self._assemble_pred_map(predictions, idx=i)
-                try:
-                    _, inst_info = self._postprocessor.post_process_cell_segmentation(pred_map)
-                except Exception as exc:
-                    logger.warning("CellViT postprocessing failed for patch: %s", exc)
-                    continue
-
-                row_start = patch_info["row_start"]
-                col_start = patch_info["col_start"]
-                actual_h = patch_info["actual_h"]
-                actual_w = patch_info["actual_w"]
-
-                for inst_id, info in inst_info.items():
-                    cx, cy = float(info["centroid"][0]), float(info["centroid"][1])
-
-                    # Skip detections in the zero-padded margin (beyond actual crop)
-                    if cx >= actual_w or cy >= actual_h:
+            try:
+                for i, patch_info in enumerate(batch):
+                    _rs = patch_info["row_start"]
+                    _cs = patch_info["col_start"]
+                    _ah = patch_info["actual_h"]
+                    _aw = patch_info["actual_w"]
+                    # Store the raw foreground evidence before softmax saturation.
+                    # The probability softmax often collapses visually to 0/1 for CellViT,
+                    # while the logit margin keeps continuous model confidence.
+                    _logits = predictions["nuclei_binary_logits"][i].numpy()
+                    _pprob = (_logits[1] - _logits[0]).astype(np.float32)
+                    np.maximum(
+                        prob_canvas[_rs:_rs + _ah, _cs:_cs + _aw],
+                        _pprob[:_ah, :_aw],
+                        out=prob_canvas[_rs:_rs + _ah, _cs:_cs + _aw],
+                    )
+                    pred_map = self._assemble_pred_map(predictions, idx=i)
+                    try:
+                        _, inst_info = self._postprocessor.post_process_cell_segmentation(pred_map)
+                    except Exception as exc:
+                        logger.warning("CellViT postprocessing failed for patch: %s", exc)
                         continue
 
-                    # Only keep cells whose centroid falls in this patch's ownership zone
-                    if not self._owns_cell(cx, cy, patch_info):
-                        continue
+                    row_start = patch_info["row_start"]
+                    col_start = patch_info["col_start"]
+                    actual_h = patch_info["actual_h"]
+                    actual_w = patch_info["actual_w"]
 
-                    contour = info["contour"]  # (N, 2): col 0 = X, col 1 = Y
-                    polygon = [
-                        (int(x + col_start), int(y + row_start))
-                        for x, y in contour
-                    ]
-                    if len(polygon) >= 3:
-                        all_polygons.append(polygon)
+                    for inst_id, info in inst_info.items():
+                        cx, cy = float(info["centroid"][0]), float(info["centroid"][1])
+
+                        # Skip detections in the zero-padded margin (beyond actual crop)
+                        if cx >= actual_w or cy >= actual_h:
+                            continue
+
+                        # Only keep cells whose centroid falls in this patch's ownership zone
+                        if not self._owns_cell(cx, cy, patch_info):
+                            continue
+
+                        contour = info["contour"]  # (N, 2): col 0 = X, col 1 = Y
+                        polygon = [
+                            (int(x + col_start), int(y + row_start))
+                            for x, y in contour
+                        ]
+                        if len(polygon) >= 3:
+                            all_polygons.append(polygon)
+            finally:
+                del patches_tensor, predictions
 
         logger.info("CellViT detected %d nuclei", len(all_polygons))
         prob_canvas[~np.isfinite(prob_canvas)] = 0.0
@@ -258,6 +270,40 @@ class CellViTAdapter(IBatchSegmentationModel):
 
     def probability_map(self):
         return self._last_probability_map
+
+    def cleanup_after_segment(self) -> None:
+        """Release transient CUDA cache after CellViT inference."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    def release_gpu_memory(self) -> bool:
+        """Unload CellViT weights from CUDA when another model is about to run."""
+        if self._model is None or self._device is None:
+            return False
+        if getattr(self._device, "type", None) != "cuda":
+            return False
+
+        logger.info("CellViT: releasing GPU model weights")
+        self._model = None
+        self._device = None
+        self._load_attempted = False
+        self._mixed_precision = False
+        self._last_probability_map = None
+
+        try:
+            import gc
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass
+        return True
 
     @staticmethod
     def _log_probability_map_stats(prob_map: np.ndarray) -> None:
@@ -599,7 +645,9 @@ class CellViTAdapter(IBatchSegmentationModel):
         try:
             from app.infrastructure.config.gpu_selector import get_best_cuda_device
             if self._use_gpu and torch.cuda.is_available():
-                idx = get_best_cuda_device()
+                idx = self._device_id
+                if idx is None:
+                    idx = get_best_cuda_device()
                 if idx is not None:
                     logger.info("CellViT using CUDA device %d", idx)
                     return torch.device(f"cuda:{idx}")

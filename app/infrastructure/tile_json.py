@@ -66,6 +66,8 @@ def read_json_features(path: str) -> List[dict]:
         if desc:
             descriptors.append(desc)
 
+    _label_unlabeled_regions_inside_roi(descriptors)
+
     if not descriptors:
         raise ValueError("No valid features found in JSON.")
 
@@ -76,6 +78,89 @@ def read_json_features(path: str) -> List[dict]:
         path,
     )
     return descriptors
+
+
+def _label_unlabeled_regions_inside_roi(descriptors: List[dict]) -> None:
+    """Name unlabeled regions enclosed by JSON ROI container annotations.
+
+    A JSON annotation named "ROI" acts as a spatial container. Any unlabeled
+    annotation whose centroid falls inside that ROI receives the contextual
+    INV_C label for the ROI index.
+    """
+    roi_polygons = []
+    for desc in descriptors:
+        sl = desc.get("slice", {})
+        name = sl.get("name", "").strip()
+        polygon = sl.get("polygon")
+        if name.lower() == "roi" and polygon:
+            roi_polygons.append(polygon)
+
+    if not roi_polygons:
+        return
+
+    roi_polygons.sort(key=lambda polygon: _polygon_centroid(polygon))
+    renamed = 0
+
+    for desc in descriptors:
+        sl = desc.get("slice", {})
+        name = sl.get("name", "").strip()
+        polygon = sl.get("polygon")
+        if name and name.lower() != "unknown":
+            continue
+        if not polygon:
+            continue
+
+        cx, cy = _polygon_centroid(polygon)
+        for roi_idx, roi_polygon in enumerate(roi_polygons, 1):
+            if _is_point_in_polygon(cx, cy, roi_polygon):
+                label = f"INV_C{roi_idx}"
+                sl["name"] = label
+                feat_id = _description_feature_id(sl.get("description", ""))
+                sl["description"] = f"JSON annotation '{label}'{feat_id}"
+                renamed += 1
+                break
+
+    if renamed:
+        logger.info(
+            "JSON ROI context labels applied: %d unlabeled feature(s) renamed across %d ROI container(s).",
+            renamed,
+            len(roi_polygons),
+        )
+
+
+def _description_feature_id(description: str) -> str:
+    start = description.rfind(" (")
+    if start < 0 or not description.endswith(")"):
+        return ""
+    return description[start:]
+
+
+def _polygon_centroid(polygon: List[Tuple[float, float]]) -> Tuple[float, float]:
+    if not polygon:
+        return (0.0, 0.0)
+    x_sum = sum(pt[0] for pt in polygon)
+    y_sum = sum(pt[1] for pt in polygon)
+    return (x_sum / len(polygon), y_sum / len(polygon))
+
+
+def _is_point_in_polygon(x: float, y: float, polygon: List[Tuple[float, float]]) -> bool:
+    if not polygon or len(polygon) < 3:
+        return False
+
+    inside = False
+    p1x, p1y = polygon[0]
+    for i in range(len(polygon) + 1):
+        p2x, p2y = polygon[i % len(polygon)]
+        if y > min(p1y, p2y):
+            if y <= max(p1y, p2y):
+                if x <= max(p1x, p2x):
+                    if p1y != p2y:
+                        x_intersection = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                    if p1x == p2x or x <= x_intersection:
+                        inside = not inside
+        p1x, p1y = p2x, p2y
+
+    return inside
 
 
 def _build_descriptor_from_points(points: list, meta: dict) -> dict | None:

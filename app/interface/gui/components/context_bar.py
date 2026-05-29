@@ -141,7 +141,7 @@ class ContextBar(QWidget):
         QWidget#context_bar {{
             min-height: 40px;
             max-height: 40px;
-            background: {p['bg_surface']};
+            background: {p['bg_base']};
             border-bottom: 1px solid {p['border_default']};
         }}
         QLabel#context_mode {{

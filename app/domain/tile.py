@@ -1,19 +1,59 @@
 from typing import List, Tuple, Optional, Dict, Set
+import colorsys
 from PIL import Image
 
-# ── Predefined layer colors (cycle through these for new layers) ──────────
+# ── Segmentation mask colours ───────────────────────────────────────────────
+# Keep these intentionally cool: cyan, teal, green and blue. Avoid red, pink,
+# purple, orange and warm yellow because they blend into common H&E tissue tones.
 LAYER_COLORS = [
-    "#00E5FF",  # Vivid Cyan      — contrasts eosin pink
-    "#AAFF00",  # Chartreuse      — contrasts hematoxylin purple
-    "#FF8C00",  # Orange          — visible against both stains
-    "#00E676",  # Spring Green    — contrasts pink tissue
-    "#FFD600",  # Vivid Yellow    — maximum contrast on dark nuclei
-    "#1DE9B6",  # Aquamarine      — distinct from pink/purple
-    "#76FF03",  # Lime            — pops against hematoxylin
-    "#FF6D00",  # Deep Orange     — bold, distinct from tissue
-    "#00BCD4",  # Teal            — calm, readable on pink bg
-    "#FFEA00",  # Electric Yellow — extreme contrast fallback
+    "#00E5FF",  # Vivid cyan
+    "#20E3B2",  # Teal mint
+    "#00E676",  # Spring green
+    "#339AF0",  # Clear blue
+    "#1DE9B6",  # Aquamarine
+    "#4DABF7",  # Sky blue
+    "#12D8C8",  # Blue teal
+    "#69DB7C",  # Fresh green
 ]
+
+_DEFAULT_MASK_COLOR = LAYER_COLORS[0]
+
+
+def _hex_to_rgb(color: str) -> tuple[int, int, int] | None:
+    if not isinstance(color, str):
+        return None
+    text = color.strip()
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) != 6:
+        return None
+    try:
+        return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+
+
+def is_safe_mask_color(color: str) -> bool:
+    """Return True when a colour is safely separated from H&E warm/purple tones."""
+    rgb = _hex_to_rgb(color)
+    if rgb is None:
+        return False
+    r, g, b = (v / 255 for v in rgb)
+    hue, saturation, value = colorsys.rgb_to_hsv(r, g, b)
+    hue_deg = hue * 360
+
+    if saturation < 0.35 or value < 0.35:
+        return False
+
+    # Safe zone: green/cyan/blue. Reject red, orange, yellow, pink and purple.
+    return 80 <= hue_deg <= 250
+
+
+def safe_mask_color(color: Optional[str], fallback_index: int = 0) -> str:
+    """Return a safe segmentation mask colour, replacing warm/purple colours."""
+    if color and is_safe_mask_color(color):
+        return color
+    return LAYER_COLORS[fallback_index % len(LAYER_COLORS)]
 
 
 class Tile:
@@ -43,7 +83,7 @@ class Tile:
         #     "model": "cellpose_cpsam",         # Model identifier
         #     "polygons": [[(x,y), ...], ...],    # List of polygon contours
         #     "visible": True,                    # Toggle visibility
-        #     "color": "#FF00FF",                 # Layer color
+        #     "color": "#00E5FF",                 # Cool, high-contrast layer color
         #   }, ...
         # ]
         self.segmentation_layers: List[Dict] = []
@@ -154,13 +194,20 @@ class Tile:
         if color is None:
             idx = len(self.segmentation_layers)
             color = LAYER_COLORS[idx % len(LAYER_COLORS)]
+        else:
+            color = safe_mask_color(color, len(self.segmentation_layers))
 
         self.segmentation_layers.append({
             "name": name,
             "model": model,
+            "model_name": model,
             "polygons": polygons,
             "visible": True,
             "color": color,
+            "execution_time_s": None,
+            "vram_free_gb_start": None,
+            "vram_device_name": None,
+            "vram_device_id": None,
         })
         return len(self.segmentation_layers) - 1
 
@@ -170,7 +217,7 @@ class Tile:
         for layer in self.segmentation_layers:
             if not layer.get("visible", True):
                 continue
-            color = layer.get("color", "#FFFF00")
+            color = safe_mask_color(layer.get("color"), 0)
             for poly in layer.get("polygons", []):
                 if poly and len(poly) >= 3:
                     result.append((poly, color))
@@ -191,14 +238,21 @@ class Tile:
                 {
                     "name": layer.get("name", "Unknown"),
                     "model": layer.get("model", "Unknown"),
+                    "model_name": layer.get("model_name", layer.get("model", "Unknown")),
                     "polygons": [
                         [list(pt) for pt in poly]
                         for poly in layer.get("polygons", [])
                     ],
                     "visible": layer.get("visible", True),
-                    "color": layer.get("color", "#FFFF00"),
+                    "color": safe_mask_color(layer.get("color"), i),
+                    "execution_time_s": layer.get("execution_time_s"),
+                    "vram_free_gb_start": layer.get("vram_free_gb_start"),
+                    "vram_device_name": layer.get("vram_device_name"),
+                    "vram_device_id": layer.get("vram_device_id"),
+                    "pipeline_run_id": layer.get("pipeline_run_id"),
+                    "source_layer_name": layer.get("source_layer_name"),
                 }
-                for layer in self.segmentation_layers
+                for i, layer in enumerate(self.segmentation_layers)
             ],
         }
 
@@ -226,12 +280,19 @@ class Tile:
             tile.segmentation_layers.append({
                 "name": layer_data.get("name", "Unknown"),
                 "model": layer_data.get("model", "Unknown"),
+                "model_name": layer_data.get("model_name", layer_data.get("model", "Unknown")),
                 "polygons": [
                     [tuple(pt) for pt in poly]
                     for poly in layer_data.get("polygons", [])
                 ],
                 "visible": layer_data.get("visible", True),
-                "color": layer_data.get("color", "#FFFF00"),
+                "color": safe_mask_color(layer_data.get("color"), len(tile.segmentation_layers)),
+                "execution_time_s": layer_data.get("execution_time_s"),
+                "vram_free_gb_start": layer_data.get("vram_free_gb_start"),
+                "vram_device_name": layer_data.get("vram_device_name"),
+                "vram_device_id": layer_data.get("vram_device_id"),
+                "pipeline_run_id": layer_data.get("pipeline_run_id"),
+                "source_layer_name": layer_data.get("source_layer_name"),
             })
 
         # ── Backward compat: old per-polygon "segmentations" → layers ────────
@@ -250,9 +311,14 @@ class Tile:
                 tile.segmentation_layers.append({
                     "name": model,
                     "model": model,
+                    "model_name": model,
                     "polygons": polys,
                     "visible": True,
                     "color": color,
+                    "execution_time_s": None,
+                    "vram_free_gb_start": None,
+                    "vram_device_name": None,
+                    "vram_device_id": None,
                 })
         
         return tile

@@ -1,16 +1,19 @@
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
+from queue import Empty, Queue
+from threading import Lock
 from typing import List, Optional, Tuple
 from PyQt6.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QProgressBar, QCheckBox, QDialog,
-    QDialogButtonBox, QScrollArea, QSizePolicy,
+    QLabel, QProgressBar, QDialog,
+    QDialogButtonBox, QScrollArea, QSizePolicy, QComboBox,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QPen, QBrush, QColor, QCursor
 
 from app.domain.geometry import get_polygon_centroid
-from app.interface.gui.theme import PALETTE, label_timer
+from app.domain.tile import LAYER_COLORS
 from app.interface.gui.design_system import COLORS, SPACE, SIZE, RADIUS
 from app.interface.gui.widgets.buttons import ActionButton, SecondaryButton
 
@@ -19,11 +22,11 @@ logger = logging.getLogger(__name__)
 # ── Model registry ────────────────────────────────────────────────────────────
 
 _KNOWN_MODELS = [
-    ("Cellpose (cpsam)",   "#FF00FF"),
-    ("NuClick (PyTorch)",  "#00E5FF"),
-    ("CellViT-SAM",        "#00E5FF"),
-    ("PathoSAM (ViT-B)",   "#50C878"),
-    ("DINOSim (small)",    "#FFD700"),
+    ("Cellpose (cpsam)",   LAYER_COLORS[0]),
+    ("NucleAI",            LAYER_COLORS[1]),
+    ("CellViT-SAM",        LAYER_COLORS[3]),
+    ("PathoSAM (ViT-B)",   LAYER_COLORS[2]),
+    ("DINOSim (small)",    LAYER_COLORS[1]),
 ]
 
 def _layer_name(model_name: str) -> str:
@@ -206,7 +209,8 @@ class MacroPipelineWorker(QThread):
 
     def __init__(self, session, batch_service, interactive_service,
                  cellpose_model, nuclick_model, cellpose_params, run_nuclick=True,
-                 slice_indices: Optional[list[int]] = None):
+                 slice_indices: Optional[list[int]] = None,
+                 gpu_ids: Optional[list[int]] = None):
         super().__init__()
         self.session = session
         self.batch_service = batch_service
@@ -216,6 +220,8 @@ class MacroPipelineWorker(QThread):
         self.cellpose_params = cellpose_params
         self.run_nuclick = run_nuclick
         self.slice_indices = list(slice_indices) if slice_indices is not None else list(range(len(session.tiles)))
+        self.gpu_ids = list(gpu_ids) if gpu_ids else []
+        self.pipeline_run_id = f"macro-{time.monotonic_ns()}"
 
         self.is_paused = False
         self.is_cancelled = False
@@ -242,27 +248,10 @@ class MacroPipelineWorker(QThread):
             # PHASE 1: Cellpose
             if self.current_phase == 1:
                 start_time = time.monotonic()
-                for pos in range(self.current_slice_pos, total_slices):
-                    while self.is_paused and not self.is_cancelled:
-                        time.sleep(0.1)
-                    if self.is_cancelled:
-                        return
-
-                    i = self.slice_indices[pos]
-                    self.progress.emit(pos + 1, total_slices, f"Cellpose: Slice {i+1} ({pos+1}/{total_slices})…")
-
-                    polys = self.batch_service.segment_tile(
-                        self.cellpose_model, self.session, i,
-                        **self.cellpose_params
-                    )
-
-                    if polys:
-                        layer_idx = self.session.tiles[i].add_layer("Macro Cellpose", self.cellpose_model, polys, "#FF00FF")
-                        prob = self.batch_service.probability_map()
-                        if prob is not None:
-                            self.session.tiles[i].segmentation_layers[layer_idx]["probability_map"] = prob
-
-                    self.current_slice_pos = pos + 1
+                if self.gpu_ids and self.current_slice_pos == 0:
+                    self._run_cellpose_multigpu(total_slices)
+                else:
+                    self._run_cellpose_serial(total_slices)
 
                 elapsed = time.monotonic() - start_time
                 self.time_update.emit("Cellpose", elapsed)
@@ -277,30 +266,10 @@ class MacroPipelineWorker(QThread):
             # PHASE 2: NuClick — seeds from Cellpose centroids
             if self.current_phase == 2 and self.run_nuclick:
                 start_time = time.monotonic()
-                for pos in range(self.current_slice_pos, total_slices):
-                    while self.is_paused and not self.is_cancelled:
-                        time.sleep(0.1)
-                    if self.is_cancelled:
-                        return
-
-                    i = self.slice_indices[pos]
-                    self.progress.emit(pos + 1, total_slices, f"NuClick: Slice {i+1} ({pos+1}/{total_slices})…")
-
-                    tile = self.session.tiles[i]
-                    centroids = []
-                    for layer in tile.segmentation_layers:
-                        if layer.get("name") == "Macro Cellpose":
-                            for poly in layer.get("polygons", []):
-                                centroids.append(get_polygon_centroid(poly))
-
-                    if centroids:
-                        nuclick_polys = self.interactive_service.segment_at_points(
-                            self.nuclick_model, self.session, i, centroids
-                        )
-                        if nuclick_polys:
-                            tile.add_layer("Macro NuClick", self.nuclick_model, nuclick_polys, "#00E5FF")
-
-                    self.current_slice_pos = pos + 1
+                if self.gpu_ids and self.current_slice_pos == 0:
+                    self._run_nuclick_multigpu(total_slices)
+                else:
+                    self._run_nuclick_serial(total_slices)
 
                 elapsed = time.monotonic() - start_time
                 self.time_update.emit("NuClick", elapsed)
@@ -311,6 +280,281 @@ class MacroPipelineWorker(QThread):
             logger.exception("Error in MacroPipelineWorker: %s", e)
             self.error.emit(str(e))
 
+    def _cellpose_centroids_for_slice(self, slice_idx: int) -> list[tuple[int, int]]:
+        tile = self.session.tiles[slice_idx]
+        centroids = []
+        for layer in tile.segmentation_layers:
+            if (
+                layer.get("name") == "Macro Cellpose"
+                and layer.get("pipeline_run_id") == self.pipeline_run_id
+            ):
+                for poly in layer.get("polygons", []):
+                    centroids.append(get_polygon_centroid(poly))
+        return centroids
+
+    def _run_nuclick_serial(self, total_slices: int) -> None:
+        for pos in range(self.current_slice_pos, total_slices):
+            while self.is_paused and not self.is_cancelled:
+                time.sleep(0.1)
+            if self.is_cancelled:
+                return
+
+            i = self.slice_indices[pos]
+            self.progress.emit(pos, total_slices, f"NuClick: Slice {i+1} ({pos+1}/{total_slices})…")
+            slice_start = time.monotonic()
+            vram_start = self._current_vram_snapshot()
+
+            tile = self.session.tiles[i]
+            centroids = self._cellpose_centroids_for_slice(i)
+
+            if centroids:
+                nuclick_polys = self.interactive_service.segment_at_points(
+                    self.nuclick_model, self.session, i, centroids
+                )
+                if nuclick_polys:
+                    self._add_nuclick_layer(tile, nuclick_polys, time.monotonic() - slice_start, vram_start)
+
+                    self.current_slice_pos = pos + 1
+                    self.progress.emit(pos + 1, total_slices, f"NuClick: Slice {i+1} done ({pos+1}/{total_slices})")
+
+    def _run_nuclick_multigpu(self, total_slices: int) -> None:
+        from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
+        from app.infrastructure.ml_models.gpu_memory import cleanup_cuda_memory, cuda_memory_snapshot
+
+        prepared_items = []
+        for pos, i in enumerate(self.slice_indices):
+            while self.is_paused and not self.is_cancelled:
+                time.sleep(0.1)
+            if self.is_cancelled:
+                return
+
+            centroids = self._cellpose_centroids_for_slice(i)
+            if not centroids:
+                continue
+            prepared = self.batch_service.prepare_tile_image(self.session, i)
+            if prepared is None:
+                continue
+            pil_img, origin = prepared
+            bx1, by1 = origin
+            local_points = [(gx - bx1, gy - by1) for gx, gy in centroids]
+            prepared_items.append((pos, i, pil_img, origin, local_points))
+
+        if not prepared_items:
+            return
+
+        work_queue = Queue()
+        result_queue = Queue()
+        for item in prepared_items:
+            work_queue.put(item)
+
+        completed = 0
+        completed_lock = Lock()
+
+        def run_on_device(device_id: int):
+            nonlocal completed
+            adapter = NuClickAdapter(device_id=device_id)
+            try:
+                while not self.is_cancelled:
+                    try:
+                        pos, i, pil_img, origin, local_points = work_queue.get_nowait()
+                    except Empty:
+                        break
+                    if self.is_cancelled:
+                        break
+                    slice_start = time.monotonic()
+                    vram_start = cuda_memory_snapshot(device_id)
+                    local_polys = adapter.predict_batch(pil_img, local_points)
+                    global_polys = self._offset_polygons(local_polys, origin)
+                    result_queue.put((pos, i, global_polys, time.monotonic() - slice_start, device_id, vram_start))
+                    with completed_lock:
+                        completed += 1
+                        self.progress.emit(
+                            completed,
+                            total_slices,
+                            f"NuClick GPU {device_id}: {completed}/{total_slices} slices done",
+                        )
+                    work_queue.task_done()
+            finally:
+                cleanup_cuda_memory(f"after NuClick GPU {device_id}")
+
+        with ThreadPoolExecutor(max_workers=len(self.gpu_ids), thread_name_prefix="nuclick-gpu") as pool:
+            futures = [pool.submit(run_on_device, device_id) for device_id in self.gpu_ids]
+            processed = 0
+            while processed < len(prepared_items):
+                if self.is_cancelled:
+                    return
+                try:
+                    _, i, polygons, elapsed, device_id, vram_start = result_queue.get(timeout=0.2)
+                except Empty:
+                    if all(f.done() for f in futures):
+                        break
+                    continue
+                if polygons:
+                    self._add_nuclick_layer(self.session.tiles[i], polygons, elapsed, vram_start)
+                    logger.info(
+                        "Macro NuClick multi-GPU: slice %d completed on CUDA device %d with %d polygons",
+                        i + 1, device_id, len(polygons),
+                    )
+                processed += 1
+                self.current_slice_pos = processed
+            for future in futures:
+                future.result()
+
+    def _run_cellpose_serial(self, total_slices: int) -> None:
+        for pos in range(self.current_slice_pos, total_slices):
+            while self.is_paused and not self.is_cancelled:
+                time.sleep(0.1)
+            if self.is_cancelled:
+                return
+
+            i = self.slice_indices[pos]
+            self.progress.emit(pos, total_slices, f"Cellpose: Slice {i+1} ({pos+1}/{total_slices})…")
+            slice_start = time.monotonic()
+
+            polys = self.batch_service.segment_tile(
+                self.cellpose_model, self.session, i,
+                **self.cellpose_params
+            )
+
+            if polys:
+                self._add_cellpose_layer(
+                    i,
+                    polys,
+                    time.monotonic() - slice_start,
+                    self.batch_service.probability_map(),
+                    self.batch_service.vram_snapshot_start()
+                    if hasattr(self.batch_service, "vram_snapshot_start")
+                    else None,
+                )
+
+            self.current_slice_pos = pos + 1
+            self.progress.emit(pos + 1, total_slices, f"Cellpose: Slice {i+1} done ({pos+1}/{total_slices})")
+
+    def _run_cellpose_multigpu(self, total_slices: int) -> None:
+        from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
+        from app.infrastructure.ml_models.gpu_memory import cleanup_cuda_memory, cuda_memory_snapshot
+
+        prepared_items = []
+        for pos, i in enumerate(self.slice_indices):
+            while self.is_paused and not self.is_cancelled:
+                time.sleep(0.1)
+            if self.is_cancelled:
+                return
+            progress_total = max(total_slices * 2, 1)
+            self.progress.emit(pos + 1, progress_total, f"Preparing slice {i+1} ({pos+1}/{total_slices})…")
+            prepared = self.batch_service.prepare_tile_image(self.session, i)
+            if prepared is not None:
+                prepared_items.append((pos, i, prepared[0], prepared[1]))
+
+        if not prepared_items:
+            return
+
+        work_queue = Queue()
+        result_queue = Queue()
+        for item in prepared_items:
+            work_queue.put(item)
+
+        completed = 0
+        completed_lock = Lock()
+
+        def run_on_device(device_id: int):
+            nonlocal completed
+            adapter = CellposeAdapter(model_type="cpsam", gpu=True, device_id=device_id)
+            try:
+                while not self.is_cancelled:
+                    try:
+                        pos, i, pil_img, origin = work_queue.get_nowait()
+                    except Empty:
+                        break
+                    if self.is_cancelled:
+                        break
+                    slice_start = time.monotonic()
+                    self.progress.emit(
+                        total_slices + completed,
+                        progress_total,
+                        f"Cellpose GPU {device_id}: Slice {i+1}…",
+                    )
+                    vram_start = cuda_memory_snapshot(device_id)
+                    local_polys = adapter.segment(pil_img, **self.cellpose_params)
+                    global_polys = self._offset_polygons(local_polys, origin)
+                    prob = adapter.probability_map()
+                    result_queue.put((pos, i, global_polys, prob, time.monotonic() - slice_start, device_id, vram_start))
+                    with completed_lock:
+                        completed += 1
+                        self.progress.emit(
+                            total_slices + completed,
+                            progress_total,
+                            f"Cellpose multi-GPU: {completed}/{total_slices} slices done",
+                        )
+                    work_queue.task_done()
+            finally:
+                cleanup_cuda_memory(f"after Cellpose GPU {device_id}")
+
+        with ThreadPoolExecutor(max_workers=len(self.gpu_ids), thread_name_prefix="cellpose-gpu") as pool:
+            futures = [pool.submit(run_on_device, device_id) for device_id in self.gpu_ids]
+            processed = 0
+            while processed < len(prepared_items):
+                if self.is_cancelled:
+                    return
+                try:
+                    _, i, polys, prob, elapsed, device_id, vram_start = result_queue.get(timeout=0.2)
+                except Empty:
+                    if all(f.done() for f in futures):
+                        break
+                    continue
+                if polys:
+                    self._add_cellpose_layer(i, polys, elapsed, prob, vram_start)
+                    logger.info(
+                        "Macro Cellpose multi-GPU: slice %d completed on CUDA device %d with %d polygons",
+                        i + 1, device_id, len(polys),
+                    )
+                processed += 1
+                self.current_slice_pos = processed
+            for future in futures:
+                future.result()
+
+    @staticmethod
+    def _offset_polygons(polygons, origin):
+        if not polygons:
+            return []
+        bx1, by1 = origin
+        return [[(px + bx1, py + by1) for px, py in poly] for poly in polygons]
+
+    def _add_cellpose_layer(self, slice_idx: int, polygons, elapsed: float, probability_map, vram_start=None) -> None:
+        layer_idx = self.session.tiles[slice_idx].add_layer(
+            "Macro Cellpose", self.cellpose_model, polygons, LAYER_COLORS[0]
+        )
+        layer = self.session.tiles[slice_idx].segmentation_layers[layer_idx]
+        layer["execution_time_s"] = elapsed
+        layer["pipeline_run_id"] = self.pipeline_run_id
+        self._apply_vram_metadata(layer, vram_start)
+        if probability_map is not None:
+            layer["probability_map"] = probability_map
+
+    def _add_nuclick_layer(self, tile, polygons, elapsed: float, vram_start=None) -> None:
+        layer_idx = tile.add_layer("Macro NuClick", self.nuclick_model, polygons, LAYER_COLORS[1])
+        layer = tile.segmentation_layers[layer_idx]
+        layer["execution_time_s"] = elapsed
+        layer["pipeline_run_id"] = self.pipeline_run_id
+        layer["source_layer_name"] = "Macro Cellpose"
+        self._apply_vram_metadata(layer, vram_start)
+
+    @staticmethod
+    def _apply_vram_metadata(layer: dict, snapshot) -> None:
+        if not snapshot:
+            return
+        layer["vram_free_gb_start"] = snapshot.get("free_gb")
+        layer["vram_device_name"] = snapshot.get("device_name")
+        layer["vram_device_id"] = snapshot.get("device_id")
+
+    @staticmethod
+    def _current_vram_snapshot():
+        try:
+            from app.infrastructure.ml_models.gpu_memory import cuda_memory_snapshot
+            return cuda_memory_snapshot()
+        except Exception:
+            return None
+
 
 class SingleModelWorker(QThread):
     """Runs a single batch model across selected tiles."""
@@ -319,7 +563,8 @@ class SingleModelWorker(QThread):
     error = pyqtSignal(str)
 
     def __init__(self, session, batch_service, model_name: str, params: dict,
-                 layer_name: str, layer_color: str, slice_indices: Optional[list[int]] = None):
+                 layer_name: str, layer_color: str, slice_indices: Optional[list[int]] = None,
+                 gpu_ids: Optional[list[int]] = None):
         super().__init__()
         self.session = session
         self.batch_service = batch_service
@@ -327,6 +572,298 @@ class SingleModelWorker(QThread):
         self.params = params
         self.layer_name = layer_name
         self.layer_color = layer_color
+        self.slice_indices = list(slice_indices) if slice_indices is not None else list(range(len(session.tiles)))
+        self.gpu_ids = list(gpu_ids) if gpu_ids else []
+        self.is_cancelled = False
+
+    def cancel(self):
+        self.is_cancelled = True
+
+    def run(self):
+        try:
+            total_slices = len(self.slice_indices)
+            if total_slices == 0:
+                self.finished.emit(0.0)
+                return
+
+            start_time = time.monotonic()
+            can_prefetch = hasattr(self.batch_service, "prepare_tile_image") and hasattr(
+                self.batch_service, "segment_prepared_tile"
+            )
+            if self.model_name == "Cellpose (cpsam)" and self.gpu_ids:
+                self._run_cellpose_with_devices(total_slices)
+            elif self.model_name == "CellViT-SAM" and self.gpu_ids:
+                self._run_cellvit_with_devices(total_slices)
+            elif can_prefetch:
+                self._run_with_prefetch(total_slices)
+            else:
+                self._run_serial(total_slices)
+
+            elapsed = time.monotonic() - start_time
+            self.finished.emit(elapsed)
+
+        except Exception as e:
+            logger.exception("Error in SingleModelWorker (%s): %s", self.model_name, e)
+            self.error.emit(str(e))
+
+    def _run_serial(self, total_slices: int) -> None:
+        for pos, i in enumerate(self.slice_indices):
+            if self.is_cancelled:
+                return
+
+            self.progress.emit(
+                pos, total_slices,
+                f"{self.model_name}: Slice {i+1} ({pos+1}/{total_slices})…"
+            )
+
+            slice_start = time.monotonic()
+            polys = self.batch_service.segment_tile(
+                self.model_name, self.session, i, **self.params
+            )
+            slice_elapsed = time.monotonic() - slice_start
+
+            if polys:
+                layer_idx = self.session.tiles[i].add_layer(
+                    self.layer_name, self.model_name, polys, self.layer_color
+                )
+                self.session.tiles[i].segmentation_layers[layer_idx]["execution_time_s"] = slice_elapsed
+                if hasattr(self.batch_service, "vram_snapshot_start"):
+                    MacroPipelineWorker._apply_vram_metadata(
+                        self.session.tiles[i].segmentation_layers[layer_idx],
+                        self.batch_service.vram_snapshot_start(),
+                    )
+                prob = self.batch_service.probability_map()
+                if prob is not None:
+                    self.session.tiles[i].segmentation_layers[layer_idx]["probability_map"] = prob
+            self.progress.emit(
+                pos + 1,
+                total_slices,
+                f"{self.model_name}: Slice {i+1} done ({pos+1}/{total_slices})",
+            )
+
+    def _run_cellpose_with_devices(self, total_slices: int) -> None:
+        from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
+        from app.infrastructure.ml_models.gpu_memory import cleanup_cuda_memory, cuda_memory_snapshot
+
+        prepared_items = []
+        progress_total = max(total_slices * 2, 1)
+        for pos, i in enumerate(self.slice_indices):
+            if self.is_cancelled:
+                return
+            self.progress.emit(
+                pos + 1, progress_total,
+                f"Preparing slice {i+1} ({pos+1}/{total_slices})…"
+            )
+            prepared = self.batch_service.prepare_tile_image(self.session, i)
+            if prepared is not None:
+                prepared_items.append((pos, i, prepared[0], prepared[1]))
+
+        work_queue = Queue()
+        result_queue = Queue()
+        for item in prepared_items:
+            work_queue.put(item)
+
+        completed = 0
+        completed_lock = Lock()
+
+        def run_on_device(device_id: int):
+            nonlocal completed
+            adapter = CellposeAdapter(model_type="cpsam", gpu=True, device_id=device_id)
+            try:
+                while not self.is_cancelled:
+                    try:
+                        pos, i, pil_img, origin = work_queue.get_nowait()
+                    except Empty:
+                        break
+                    if self.is_cancelled:
+                        break
+                    slice_start = time.monotonic()
+                    vram_start = cuda_memory_snapshot(device_id)
+                    local_polys = adapter.segment(pil_img, **self.params)
+                    bx1, by1 = origin
+                    global_polys = [
+                        [(px + bx1, py + by1) for px, py in poly]
+                        for poly in local_polys
+                    ]
+                    result_queue.put(
+                        (pos, i, global_polys, adapter.probability_map(), time.monotonic() - slice_start, device_id, vram_start)
+                    )
+                    with completed_lock:
+                        completed += 1
+                        self.progress.emit(
+                            total_slices + completed,
+                            progress_total,
+                            f"{self.model_name} GPU {device_id}: {completed}/{total_slices} slices done",
+                        )
+                    work_queue.task_done()
+            finally:
+                cleanup_cuda_memory(f"after {self.model_name} GPU {device_id}")
+
+        with ThreadPoolExecutor(max_workers=len(self.gpu_ids), thread_name_prefix="single-cellpose-gpu") as pool:
+            futures = [pool.submit(run_on_device, device_id) for device_id in self.gpu_ids]
+            self._drain_batch_results(result_queue, futures, len(prepared_items))
+
+    def _run_cellvit_with_devices(self, total_slices: int) -> None:
+        from app.infrastructure.ml_models.cellvit_adapter import CellViTAdapter
+        from app.infrastructure.ml_models.gpu_memory import cleanup_cuda_memory, cuda_memory_snapshot
+
+        prepared_items = []
+        progress_total = max(total_slices * 2, 1)
+        for pos, i in enumerate(self.slice_indices):
+            if self.is_cancelled:
+                return
+            self.progress.emit(
+                pos + 1, progress_total,
+                f"Preparing slice {i+1} ({pos+1}/{total_slices})…"
+            )
+            prepared = self.batch_service.prepare_tile_image(self.session, i)
+            if prepared is not None:
+                prepared_items.append((pos, i, prepared[0], prepared[1]))
+
+        work_queue = Queue()
+        result_queue = Queue()
+        for item in prepared_items:
+            work_queue.put(item)
+
+        completed = 0
+        completed_lock = Lock()
+
+        def run_on_device(device_id: int):
+            nonlocal completed
+            adapter = CellViTAdapter(gpu=True, device_id=device_id)
+            try:
+                while not self.is_cancelled:
+                    try:
+                        pos, i, pil_img, origin = work_queue.get_nowait()
+                    except Empty:
+                        break
+                    if self.is_cancelled:
+                        break
+                    slice_start = time.monotonic()
+                    vram_start = cuda_memory_snapshot(device_id)
+                    local_polys = adapter.segment(pil_img, **self.params)
+                    bx1, by1 = origin
+                    global_polys = [
+                        [(px + bx1, py + by1) for px, py in poly]
+                        for poly in local_polys
+                    ]
+                    result_queue.put(
+                        (pos, i, global_polys, adapter.probability_map(), time.monotonic() - slice_start, device_id, vram_start)
+                    )
+                    with completed_lock:
+                        completed += 1
+                        self.progress.emit(
+                            total_slices + completed,
+                            progress_total,
+                            f"{self.model_name} GPU {device_id}: {completed}/{total_slices} slices done",
+                        )
+                    work_queue.task_done()
+            finally:
+                cleanup_hook = getattr(adapter, "cleanup_after_segment", None)
+                if callable(cleanup_hook):
+                    cleanup_hook()
+                cleanup_cuda_memory(f"after {self.model_name} GPU {device_id}")
+
+        with ThreadPoolExecutor(max_workers=len(self.gpu_ids), thread_name_prefix="single-cellvit-gpu") as pool:
+            futures = [pool.submit(run_on_device, device_id) for device_id in self.gpu_ids]
+            self._drain_batch_results(result_queue, futures, len(prepared_items))
+
+    def _drain_batch_results(self, result_queue: Queue, futures, expected_count: int) -> None:
+        processed = 0
+        while processed < expected_count:
+            if self.is_cancelled:
+                return
+            try:
+                _, i, polys, prob, elapsed, device_id, vram_start = result_queue.get(timeout=0.2)
+            except Empty:
+                if all(f.done() for f in futures):
+                    break
+                continue
+
+            if polys:
+                layer_idx = self.session.tiles[i].add_layer(
+                    self.layer_name, self.model_name, polys, self.layer_color
+                )
+                layer = self.session.tiles[i].segmentation_layers[layer_idx]
+                layer["execution_time_s"] = elapsed
+                MacroPipelineWorker._apply_vram_metadata(layer, vram_start)
+                if prob is not None:
+                    layer["probability_map"] = prob
+                logger.info(
+                    "%s: slice %d completed on CUDA device %d with %d polygons",
+                    self.model_name, i + 1, device_id, len(polys),
+                )
+            processed += 1
+
+        for future in futures:
+            future.result()
+
+    def _run_with_prefetch(self, total_slices: int) -> None:
+        def prepare(idx: int):
+            return self.batch_service.prepare_tile_image(self.session, idx)
+
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="slice-prefetch") as pool:
+            next_future = pool.submit(prepare, self.slice_indices[0])
+
+            for pos, i in enumerate(self.slice_indices):
+                if self.is_cancelled:
+                    return
+
+                self.progress.emit(
+                    pos, total_slices,
+                    f"{self.model_name}: Slice {i+1} ({pos+1}/{total_slices})…"
+                )
+
+                prepared = next_future.result()
+                if pos + 1 < total_slices:
+                    next_future = pool.submit(prepare, self.slice_indices[pos + 1])
+
+                if prepared is None:
+                    self.progress.emit(
+                        pos + 1,
+                        total_slices,
+                        f"{self.model_name}: Slice {i+1} skipped ({pos+1}/{total_slices})",
+                    )
+                    continue
+
+                slice_start = time.monotonic()
+                polys = self.batch_service.segment_prepared_tile(
+                    self.model_name, prepared[0], prepared[1], **self.params
+                )
+                slice_elapsed = time.monotonic() - slice_start
+
+                if polys:
+                    layer_idx = self.session.tiles[i].add_layer(
+                        self.layer_name, self.model_name, polys, self.layer_color
+                    )
+                    self.session.tiles[i].segmentation_layers[layer_idx]["execution_time_s"] = slice_elapsed
+                    if hasattr(self.batch_service, "vram_snapshot_start"):
+                        MacroPipelineWorker._apply_vram_metadata(
+                            self.session.tiles[i].segmentation_layers[layer_idx],
+                            self.batch_service.vram_snapshot_start(),
+                        )
+                    prob = self.batch_service.probability_map()
+                    if prob is not None:
+                        self.session.tiles[i].segmentation_layers[layer_idx]["probability_map"] = prob
+                self.progress.emit(
+                    pos + 1,
+                    total_slices,
+                    f"{self.model_name}: Slice {i+1} done ({pos+1}/{total_slices})",
+                )
+
+
+class NucleAIWorker(QThread):
+    """Runs NuClick on centroids from a user-selected segmentation layer."""
+    progress = pyqtSignal(int, int, str)
+    finished = pyqtSignal(float)
+    error = pyqtSignal(str)
+
+    def __init__(self, session, interactive_service, source_layer_name: str,
+                 slice_indices: Optional[list[int]] = None):
+        super().__init__()
+        self.session = session
+        self.interactive_service = interactive_service
+        self.source_layer_name = source_layer_name
         self.slice_indices = list(slice_indices) if slice_indices is not None else list(range(len(session.tiles)))
         self.is_cancelled = False
 
@@ -346,28 +883,73 @@ class SingleModelWorker(QThread):
                     return
 
                 self.progress.emit(
-                    pos + 1, total_slices,
-                    f"{self.model_name}: Slice {i+1} ({pos+1}/{total_slices})…"
+                    pos,
+                    total_slices,
+                    f"NucleAI: Slice {i + 1} ({pos + 1}/{total_slices})...",
                 )
 
-                polys = self.batch_service.segment_tile(
-                    self.model_name, self.session, i, **self.params
-                )
-
-                if polys:
-                    layer_idx = self.session.tiles[i].add_layer(
-                        self.layer_name, self.model_name, polys, self.layer_color
+                tile = self.session.tiles[i]
+                source_layer = self._find_source_layer(tile)
+                if source_layer is None:
+                    logger.info(
+                        "NucleAI: source layer '%s' not found on slice %d",
+                        self.source_layer_name,
+                        i + 1,
                     )
-                    prob = self.batch_service.probability_map()
-                    if prob is not None:
-                        self.session.tiles[i].segmentation_layers[layer_idx]["probability_map"] = prob
+                    self.progress.emit(
+                        pos + 1,
+                        total_slices,
+                        f"NucleAI: Slice {i + 1} skipped ({pos + 1}/{total_slices})",
+                    )
+                    continue
 
-            elapsed = time.monotonic() - start_time
-            self.finished.emit(elapsed)
+                centroids = [
+                    get_polygon_centroid(poly)
+                    for poly in source_layer.get("polygons", [])
+                    if poly
+                ]
+                if not centroids:
+                    self.progress.emit(
+                        pos + 1,
+                        total_slices,
+                        f"NucleAI: Slice {i + 1} skipped ({pos + 1}/{total_slices})",
+                    )
+                    continue
 
-        except Exception as e:
-            logger.exception("Error in SingleModelWorker (%s): %s", self.model_name, e)
-            self.error.emit(str(e))
+                slice_start = time.monotonic()
+                vram_start = MacroPipelineWorker._current_vram_snapshot()
+                nuclick_polys = self.interactive_service.segment_at_points(
+                    "NuClick (PyTorch)", self.session, i, centroids
+                )
+                if nuclick_polys:
+                    layer_idx = tile.add_layer(
+                        f"NucleAI · {self.source_layer_name}",
+                        "NuClick (PyTorch)",
+                        nuclick_polys,
+                        LAYER_COLORS[1],
+                    )
+                    layer = tile.segmentation_layers[layer_idx]
+                    layer["execution_time_s"] = time.monotonic() - slice_start
+                    layer["source_layer_name"] = self.source_layer_name
+                    MacroPipelineWorker._apply_vram_metadata(layer, vram_start)
+                self.progress.emit(
+                    pos + 1,
+                    total_slices,
+                    f"NucleAI: Slice {i + 1} done ({pos + 1}/{total_slices})",
+                )
+
+            self.finished.emit(time.monotonic() - start_time)
+
+        except Exception as exc:
+            logger.exception("Error in NucleAIWorker: %s", exc)
+            self.error.emit(str(exc))
+
+    def _find_source_layer(self, tile):
+        for layer in tile.segmentation_layers:
+            name = layer.get("name") or layer.get("model") or "Segmentation"
+            if name == self.source_layer_name:
+                return layer
+        return None
 
 
 class DINOSimCellposeReferenceWorker(QThread):
@@ -454,6 +1036,7 @@ class _ModelCard(QWidget):
         super().__init__(parent)
         self.model_name = model_name
         self._selected = False
+        self.setObjectName("ModelCard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(SIZE["lg"])  # 44px
@@ -469,12 +1052,12 @@ class _ModelCard(QWidget):
         self._name_lbl = QLabel(model_name)
         self._name_lbl.setStyleSheet(
             f"font-size: 13px; font-weight: 600;"
-            f" color: {COLORS['text_primary']}; background: transparent;"
+            f" color: {COLORS['text_primary']}; background: transparent; border: none;"
         )
 
         self._desc_lbl = QLabel(description)
         self._desc_lbl.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['text_muted']}; background: transparent;"
+            f"font-size: 11px; color: {COLORS['text_muted']}; background: transparent; border: none;"
         )
 
         col.addStretch()
@@ -499,15 +1082,19 @@ class _ModelCard(QWidget):
     def _refresh_style(self) -> None:
         if self._selected:
             self.setStyleSheet(
-                f"background: {COLORS['bg_elevated']};"
+                f"QWidget#ModelCard {{"
+                f" background: {COLORS['bg_elevated']};"
                 f" border-radius: {RADIUS['md']}px;"
-                f" border-left: 2px solid {COLORS['accent_action']};"
+                f" border: 1.5px solid {COLORS['accent_action']};"
+                f"}}"
             )
         else:
             self.setStyleSheet(
-                f"background: {COLORS['bg_panel']};"
+                f"QWidget#ModelCard {{"
+                f" background: {COLORS['bg_panel']};"
                 f" border-radius: {RADIUS['md']}px;"
                 f" border: 1px solid {COLORS['border_default']};"
+                f"}}"
             )
 
 
@@ -518,8 +1105,7 @@ class MacroPipelinePanel(QDockWidget):
     Unified segmentation dock.
 
     Model cards let the user pick which model to run.
-    When Cellpose is selected, a checkbox appears offering to chain NuClick
-    refinement after Cellpose (using Cellpose centroids as NuClick seed points).
+    NucleAI runs NuClick from centroids of a user-selected segmentation layer.
     When DINOSim is selected, a reference-point section appears — the user must
     pick reference nuclei before running.
     All other models run as single independent passes.
@@ -527,13 +1113,14 @@ class MacroPipelinePanel(QDockWidget):
 
     _MODEL_DESCRIPTIONS = {
         "Cellpose (cpsam)":  "cpsam · CUDA",
-        "NuClick (PyTorch)": "PyTorch",
+        "NucleAI":           "NuClick from selected layer",
         "CellViT-SAM":       "ViT-SAM",
         "PathoSAM (ViT-B)":  "SAM · histopathology",
         "DINOSim (small)":   "DINOv2 · zero-shot similarity",
     }
 
     _DINOSIM_NAME = "DINOSim (small)"
+    _NUCLEAI_NAME = "NucleAI"
 
     def __init__(self, parent=None):
         super().__init__("Segmentation", parent)
@@ -562,11 +1149,51 @@ class MacroPipelinePanel(QDockWidget):
 
         layout.addSpacing(SPACE[1])
 
-        # ── Chain option — only shown when Cellpose is selected ───────────────
-        self.chk_chain = QCheckBox("Refine with NuClick after Cellpose")
-        self.chk_chain.setChecked(True)
-        self.chk_chain.setVisible(False)
-        layout.addWidget(self.chk_chain)
+        # ── GPU selector — shown for models with explicit CUDA device support ──
+        self._gpu_row = QWidget()
+        gpu_layout = QHBoxLayout(self._gpu_row)
+        gpu_layout.setContentsMargins(0, 0, 0, 0)
+        gpu_layout.setSpacing(SPACE[2])
+        self._lbl_gpu = QLabel("GPU")
+        self._lbl_gpu.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
+        )
+        gpu_layout.addWidget(self._lbl_gpu)
+        self._cmb_gpu = QComboBox()
+        self._cmb_gpu.setToolTip("Choose which visible CUDA device the selected model should use.")
+        self._cmb_gpu.setMinimumHeight(SIZE["md"])
+        gpu_layout.addWidget(self._cmb_gpu, stretch=1)
+        self._gpu_row.setVisible(False)
+        layout.addWidget(self._gpu_row)
+        self._refresh_gpu_choices()
+
+        # ── NucleAI source layer — only shown when NucleAI is selected ────────
+        self._nucleai_row = QWidget()
+        self._nucleai_row.setStyleSheet(
+            f"background: {COLORS['bg_panel']}; border-radius: {RADIUS['sm']}px;"
+            f" border: 1px solid {COLORS['border_default']};"
+        )
+        nucleai_layout = QVBoxLayout(self._nucleai_row)
+        nucleai_layout.setContentsMargins(SPACE[3], SPACE[2], SPACE[3], SPACE[2])
+        nucleai_layout.setSpacing(SPACE[2])
+
+        self._lbl_nucleai_source = QLabel("Source layer")
+        self._lbl_nucleai_source.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 600;"
+            " background: transparent;"
+        )
+        nucleai_layout.addWidget(self._lbl_nucleai_source)
+
+        self._cmb_nucleai_source = QComboBox()
+        self._cmb_nucleai_source.setToolTip(
+            "Choose which existing membrane/mask layer provides centroids for NucleAI."
+        )
+        self._cmb_nucleai_source.setMinimumHeight(SIZE["md"])
+        self._cmb_nucleai_source.currentIndexChanged.connect(self.refresh_selection_state)
+        nucleai_layout.addWidget(self._cmb_nucleai_source)
+
+        self._nucleai_row.setVisible(False)
+        layout.addWidget(self._nucleai_row)
 
         # ── DINOSim reference row — only shown when DINOSim is selected ───────
         self._dinosim_row = QWidget()
@@ -615,17 +1242,6 @@ class MacroPipelinePanel(QDockWidget):
         )
         layout.addWidget(self.lbl_status)
 
-        # ── Timing labels (hidden until a phase completes) ────────────────────
-        self.lbl_time_cellpose = QLabel("")
-        self.lbl_time_cellpose.setStyleSheet(label_timer())
-        self.lbl_time_cellpose.setVisible(False)
-        layout.addWidget(self.lbl_time_cellpose)
-
-        self.lbl_time_nuclick = QLabel("")
-        self.lbl_time_nuclick.setStyleSheet(label_timer())
-        self.lbl_time_nuclick.setVisible(False)
-        layout.addWidget(self.lbl_time_nuclick)
-
         layout.addSpacing(SPACE[1])
 
         # ── Buttons ───────────────────────────────────────────────────────────
@@ -657,14 +1273,19 @@ class MacroPipelinePanel(QDockWidget):
                 card.set_selected(card is clicked_card)
 
             is_cellpose = clicked_card.model_name == "Cellpose (cpsam)"
+            supports_gpu_choice = clicked_card.model_name in {"Cellpose (cpsam)", "CellViT-SAM"}
             is_dinosim  = clicked_card.model_name == self._DINOSIM_NAME
+            is_nucleai = clicked_card.model_name == self._NUCLEAI_NAME
 
-            self.chk_chain.setVisible(is_cellpose)
+            self._gpu_row.setVisible(supports_gpu_choice)
+            self._nucleai_row.setVisible(is_nucleai)
             self._dinosim_row.setVisible(is_dinosim)
             self._set_properties_params_visible(is_cellpose)
 
             if is_dinosim:
                 self._refresh_dinosim_ref_status()
+            if is_nucleai:
+                self._refresh_nucleai_sources()
             self.refresh_selection_state()
 
             _ModelCard.mousePressEvent(clicked_card, event)
@@ -683,6 +1304,81 @@ class MacroPipelinePanel(QDockWidget):
             return []
         return slice_previews.selected_batch_indices()
 
+    def _refresh_nucleai_sources(self) -> None:
+        current = self._cmb_nucleai_source.currentData()
+        self._cmb_nucleai_source.blockSignals(True)
+        self._cmb_nucleai_source.clear()
+
+        sources = self._available_nucleai_sources()
+        if sources:
+            for source in sources:
+                self._cmb_nucleai_source.addItem(source, source)
+        else:
+            self._cmb_nucleai_source.addItem("No membrane/layer available", None)
+
+        if current in sources:
+            self._cmb_nucleai_source.setCurrentIndex(sources.index(current))
+
+        self._cmb_nucleai_source.blockSignals(False)
+
+    def _available_nucleai_sources(self) -> list[str]:
+        s = getattr(self.main_window, "current_session", None)
+        if s is None:
+            return []
+
+        indices = self._selected_slice_indices()
+        if not indices:
+            indices = list(range(len(s.tiles)))
+
+        names: list[str] = []
+        seen: set[str] = set()
+        for idx in indices:
+            if idx < 0 or idx >= len(s.tiles):
+                continue
+            for layer in s.tiles[idx].segmentation_layers:
+                if not layer.get("polygons"):
+                    continue
+                name = layer.get("name") or layer.get("model") or "Segmentation"
+                model = layer.get("model_name") or layer.get("model")
+                if name.startswith("NucleAI") or model == "NuClick (PyTorch)":
+                    continue
+                if name not in seen:
+                    seen.add(name)
+                    names.append(name)
+        return names
+
+    def _selected_nucleai_source(self) -> Optional[str]:
+        return self._cmb_nucleai_source.currentData()
+
+    def _refresh_gpu_choices(self) -> None:
+        self._cmb_gpu.clear()
+        self._cmb_gpu.addItem("Auto", None)
+        try:
+            from app.infrastructure.config.gpu_selector import list_compatible_cuda_devices
+            devices = list_compatible_cuda_devices()
+        except Exception as exc:
+            logger.debug("Could not list CUDA devices for macro panel: %s", exc)
+            devices = []
+
+        for device in devices:
+            device_id = int(device["id"])
+            total_gb = float(device.get("total_memory", 0)) / (1024 ** 3)
+            label = f"GPU {device_id} · {device['name']}"
+            if total_gb > 0:
+                label = f"{label} · {total_gb:.1f} GB"
+            self._cmb_gpu.addItem(label, [device_id])
+
+        if len(devices) > 1:
+            ids = [int(device["id"]) for device in devices]
+            self._cmb_gpu.addItem("All visible GPUs", ids)
+            self._cmb_gpu.setCurrentIndex(self._cmb_gpu.count() - 1)
+
+    def _selected_gpu_ids(self) -> Optional[list[int]]:
+        data = self._cmb_gpu.currentData()
+        if not data:
+            return None
+        return list(data)
+
     def _set_properties_params_visible(self, visible: bool) -> None:
         panel = getattr(self.main_window, "properties_dock", None)
         if panel is not None and hasattr(panel, "show_cellpose_params"):
@@ -699,6 +1395,9 @@ class MacroPipelinePanel(QDockWidget):
 
         if model_name == self._DINOSIM_NAME:
             can_run = can_run and self._dinosim_has_reference()
+        if model_name == self._NUCLEAI_NAME:
+            self._refresh_nucleai_sources()
+            can_run = can_run and self._selected_nucleai_source() is not None
 
         self.btn_run.setEnabled(can_run)
 
@@ -708,6 +1407,13 @@ class MacroPipelinePanel(QDockWidget):
             self.lbl_status.setText(f"{selected_count} slice{'s' if selected_count != 1 else ''} selected. Choose a model.")
         elif model_name == self._DINOSIM_NAME and not self._dinosim_has_reference():
             self.lbl_status.setText("Pick DINOSim reference points before running selected slices.")
+        elif model_name == self._NUCLEAI_NAME and self._selected_nucleai_source() is None:
+            self.lbl_status.setText("Choose a source membrane/layer before running NucleAI.")
+        elif model_name == self._NUCLEAI_NAME:
+            self.lbl_status.setText(
+                f"Ready to run <b>NucleAI</b> from <b>{self._selected_nucleai_source()}</b> "
+                f"on {selected_count} selected slice{'s' if selected_count != 1 else ''}."
+            )
         else:
             self.lbl_status.setText(
                 f"Ready to run <b>{model_name}</b> on {selected_count} selected slice"
@@ -920,11 +1626,33 @@ class MacroPipelinePanel(QDockWidget):
             self.lbl_status.setText("Pick reference points first (use the button above).")
             return
 
-        use_pipeline = (model_name == "Cellpose (cpsam)" and self.chk_chain.isChecked())
-        if use_pipeline:
-            self._start_pipeline(s, selected_indices)
+        if model_name == self._NUCLEAI_NAME:
+            self._run_nucleai(s, selected_indices)
         else:
             self._run_single_model(model_name, color, s, selected_indices)
+
+    def _run_nucleai(self, s, slice_indices: list[int]) -> None:
+        source_layer = self._selected_nucleai_source()
+        if not source_layer:
+            self.lbl_status.setText("Choose a source membrane/layer before running NucleAI.")
+            return
+
+        self.worker = NucleAIWorker(
+            s,
+            self.main_window.segmentation_service,
+            source_layer,
+            slice_indices=slice_indices,
+        )
+        self.worker.progress.connect(self._on_progress)
+        self.worker.finished.connect(self._on_single_finished)
+        self.worker.error.connect(self._on_error)
+
+        self.progress_bar.setValue(0)
+        self.lbl_status.setText(
+            f"Running <b>NucleAI</b> from <b>{source_layer}</b> on {len(slice_indices)} selected slices..."
+        )
+        self._set_running(True, pipeline=False)
+        self.worker.start()
 
     def _run_single_model(self, model_name: str, color: str, s, slice_indices: list[int]) -> None:
         params = self._build_params()
@@ -932,6 +1660,7 @@ class MacroPipelinePanel(QDockWidget):
             s, self.main_window.batch_segmentation_service,
             model_name, params, _layer_name(model_name), color,
             slice_indices=slice_indices,
+            gpu_ids=self._selected_gpu_ids() if model_name in {"Cellpose (cpsam)", "CellViT-SAM"} else None,
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.finished.connect(self._on_single_finished)
@@ -953,18 +1682,11 @@ class MacroPipelinePanel(QDockWidget):
             params,
             run_nuclick=True,
             slice_indices=slice_indices,
+            gpu_ids=self._selected_gpu_ids(),
         )
         self.worker.progress.connect(self._on_progress)
-        self.worker.time_update.connect(self._on_time_update)
         self.worker.finished.connect(self._on_pipeline_finished)
         self.worker.error.connect(self._on_error)
-
-        self.lbl_time_cellpose.setText("Cellpose: --")
-        self.lbl_time_cellpose.setStyleSheet(label_timer())
-        self.lbl_time_cellpose.setVisible(True)
-        self.lbl_time_nuclick.setText("NuClick: --")
-        self.lbl_time_nuclick.setStyleSheet(label_timer())
-        self.lbl_time_nuclick.setVisible(True)
 
         self.progress_bar.setValue(0)
         self.lbl_status.setText(f"Starting pipeline on {len(slice_indices)} selected slices…")
@@ -983,6 +1705,8 @@ class MacroPipelinePanel(QDockWidget):
                 card.setEnabled(False)
             self._btn_pick_ref.setEnabled(False)
             self._btn_cellpose_ref.setEnabled(False)
+            self._cmb_gpu.setEnabled(False)
+            self._cmb_nucleai_source.setEnabled(False)
         else:
             self.btn_run.setText("Run selected")
             self.btn_cancel.setEnabled(False)
@@ -990,6 +1714,8 @@ class MacroPipelinePanel(QDockWidget):
                 card.setEnabled(True)
             self._btn_pick_ref.setEnabled(True)
             self._btn_cellpose_ref.setEnabled(True)
+            self._cmb_gpu.setEnabled(True)
+            self._cmb_nucleai_source.setEnabled(True)
             self.refresh_selection_state()
 
     def _cancel(self) -> None:
@@ -1022,17 +1748,6 @@ class MacroPipelinePanel(QDockWidget):
         self._set_running(False)
         self._refresh_views()
 
-    def _on_time_update(self, phase: str, elapsed: float) -> None:
-        done_style = f"color: {PALETTE['exec_time_done']}; font-weight: bold;"
-        if phase == "Cellpose":
-            self.lbl_time_cellpose.setText(f"Cellpose: {elapsed:.2f}s")
-            self.lbl_time_cellpose.setStyleSheet(done_style)
-        elif phase == "NuClick":
-            self.lbl_time_nuclick.setText(f"NuClick: {elapsed:.2f}s")
-            self.lbl_time_nuclick.setStyleSheet(done_style)
-        if hasattr(self.main_window, "layer_dropdown"):
-            self.main_window.layer_dropdown.refresh()
-
     def _on_error(self, err_msg: str) -> None:
         self.lbl_status.setText(f"Error: {err_msg}")
         self.worker = None
@@ -1052,6 +1767,9 @@ class MacroPipelinePanel(QDockWidget):
     def _refresh_views(self) -> None:
         if hasattr(self.main_window, "layer_dropdown"):
             self.main_window.layer_dropdown.refresh()
+        panel = getattr(self.main_window, "properties_dock", None)
+        if panel is not None and hasattr(panel, "refresh_segmentation_summary"):
+            panel.refresh_segmentation_summary()
         if hasattr(self.main_window, "canvas_renderer"):
             self.main_window.canvas_renderer.redraw()
         if hasattr(self.main_window, "tile_renderer"):

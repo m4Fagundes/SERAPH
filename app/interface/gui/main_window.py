@@ -259,11 +259,6 @@ class SlicerLabApp(QMainWindow):
         self.slice_previews = SlicePreviews(self, show_header=False)
         self.slice_previews.batchSelectionChanged.connect(self._on_batch_selection_changed)
 
-        self.add_tile_btn = PrimaryButton("Import Tile...", size="md")
-        self.add_tile_btn.setToolTip("Import a tile descriptor (XML or GeoJSON) into the current image")
-        self.add_tile_btn.clicked.connect(self._add_tile)
-        self.slice_previews.add_footer_widget(self.add_tile_btn)
-
         self.sidebar_shell = CollapsibleSidebar("Slices", self.slice_previews, self)
         self.slice_previews.countChanged.connect(self._on_slice_count_changed)
         self.sidebar_shell.collapsedChanged.connect(self._set_sidebar_collapsed)
@@ -403,11 +398,10 @@ class SlicerLabApp(QMainWindow):
 
     def _set_sidebar_collapsed(self, collapsed: bool) -> None:
         if collapsed:
-            self.sidebar_dock.setMinimumWidth(44)
-            self.sidebar_dock.setMaximumWidth(44)
+            self.sidebar_dock.setFixedHeight(36)
         else:
-            self.sidebar_dock.setMaximumWidth(16777215)
-            self.sidebar_dock.setMinimumWidth(220)
+            self.sidebar_dock.setMinimumHeight(0)
+            self.sidebar_dock.setMaximumHeight(16777215)
 
     def _on_slice_count_changed(self, count: int) -> None:
         self.sidebar_shell.set_badge_count(count)
@@ -421,7 +415,6 @@ class SlicerLabApp(QMainWindow):
         has_image = s is not None
         has_slices = has_image and slice_count > 0
 
-        self.add_tile_btn.setVisible(has_image)
         self.macro_pipeline_dock.setVisible(has_slices)
         self._update_context_bar()
 
@@ -617,7 +610,6 @@ class SlicerLabApp(QMainWindow):
         self.image_tabs.hide()
         self.context_bar.hide()
         self.context_bar.set_overview(None)
-        self.add_tile_btn.setVisible(False)
         self.macro_pipeline_dock.hide()
         self.properties_dock.hide()
         self._sb_refresh()
@@ -662,6 +654,11 @@ class SlicerLabApp(QMainWindow):
         act_add_img.setStatusTip("Add a new image to the project")
         act_add_img.triggered.connect(self.project_manager.add_image)
         file_menu.addAction(act_add_img)
+
+        act_import_tile = QAction("Import Tile...", self)
+        act_import_tile.setStatusTip("Import a tile descriptor into the current image")
+        act_import_tile.triggered.connect(self._add_tile)
+        file_menu.addAction(act_import_tile)
 
         file_menu.addSeparator()
 

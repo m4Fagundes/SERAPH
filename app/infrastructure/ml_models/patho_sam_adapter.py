@@ -22,6 +22,7 @@ Inference pipeline:
 
 import logging
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -144,21 +145,23 @@ class PathoSAMAdapter(IBatchSegmentationModel):
             from micro_sam.automatic_segmentation import automatic_instance_segmentation
 
             batch_size = self._batch_size or self._auto_batch_size()
+            logger.info("PathoSAM.segment: using batch_size=%d", batch_size)
 
-            result = automatic_instance_segmentation(
-                predictor=self._predictor,
-                segmenter=self._segmenter,
-                input_path=img_np,
-                output_path=None,
-                embedding_path=None,
-                ndim=2,
-                tile_shape=self._tile_shape,
-                halo=self._halo,
-                verbose=False,
-                output_mode="instance_segmentation",
-                return_embeddings=False,
-                batch_size=batch_size,
-            )
+            with self._inference_context():
+                result = automatic_instance_segmentation(
+                    predictor=self._predictor,
+                    segmenter=self._segmenter,
+                    input_path=img_np,
+                    output_path=None,
+                    embedding_path=None,
+                    ndim=2,
+                    tile_shape=self._tile_shape,
+                    halo=self._halo,
+                    verbose=False,
+                    output_mode="instance_segmentation",
+                    return_embeddings=False,
+                    batch_size=batch_size,
+                )
 
             # micro_sam versions differ: some return (masks, embeddings), others just masks
             label_map = result[0] if isinstance(result, tuple) else result
@@ -175,6 +178,20 @@ class PathoSAMAdapter(IBatchSegmentationModel):
 
     def probability_map(self):
         return self._last_probability_map
+
+    def cleanup_after_segment(self) -> None:
+        """Release per-image micro-sam state after SERAPH has copied outputs."""
+        try:
+            if self._segmenter is not None and hasattr(self._segmenter, "clear_state"):
+                self._segmenter.clear_state()
+        except Exception as exc:
+            logger.debug("PathoSAM segmenter state cleanup skipped: %s", exc)
+
+        try:
+            if self._predictor is not None and hasattr(self._predictor, "reset_image"):
+                self._predictor.reset_image()
+        except Exception as exc:
+            logger.debug("PathoSAM predictor image cleanup skipped: %s", exc)
 
     def _capture_probability_map(self) -> None:
         """Capture micro_sam AIS foreground probabilities from the last run."""
@@ -262,6 +279,7 @@ class PathoSAMAdapter(IBatchSegmentationModel):
 
         try:
             self._device = self._select_device()
+            self._configure_runtime()
             logger.info("PathoSAM: loading %s on %s", self._model_type, self._device)
 
             self._predictor, self._segmenter = get_predictor_and_segmenter(
@@ -279,6 +297,37 @@ class PathoSAMAdapter(IBatchSegmentationModel):
             logger.error("Failed to load PathoSAM model: %s", exc, exc_info=True)
             self._predictor = None
             self._segmenter = None
+
+    def _configure_runtime(self) -> None:
+        """Enable faster inference defaults for the selected PyTorch backend."""
+        try:
+            import torch
+        except ImportError:
+            return
+
+        if self._device == "cuda" and torch.cuda.is_available():
+            try:
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                if hasattr(torch, "set_float32_matmul_precision"):
+                    torch.set_float32_matmul_precision("high")
+                free_vram, total_vram = torch.cuda.mem_get_info()
+                logger.info(
+                    "PathoSAM CUDA runtime tuned: free=%.1fGB total=%.1fGB",
+                    free_vram / 1e9,
+                    total_vram / 1e9,
+                )
+            except Exception as exc:
+                logger.warning("PathoSAM CUDA runtime tuning skipped: %s", exc)
+
+    def _inference_context(self):
+        """Use torch inference mode where available without coupling callers to torch."""
+        try:
+            import torch
+            return torch.inference_mode()
+        except Exception:
+            return nullcontext()
 
     # ── Device helpers ────────────────────────────────────────────────────────
 
@@ -322,15 +371,17 @@ class PathoSAMAdapter(IBatchSegmentationModel):
         try:
             import torch
             if torch.cuda.is_available():
-                _, vram = torch.cuda.mem_get_info()
-                vram_gb = vram / 1e9
-                if vram_gb > 80:
-                    return 30
-                elif vram_gb > 30:
+                free_vram, _ = torch.cuda.mem_get_info()
+                free_gb = free_vram / 1e9
+                if free_gb > 40:
+                    return 32
+                if free_gb > 24:
+                    return 16
+                if free_gb > 14:
                     return 10
-                elif vram_gb > 14:
-                    return 5
-                elif vram_gb > 8:
+                if free_gb > 8:
+                    return 6
+                if free_gb > 5:
                     return 3
         except Exception:
             pass

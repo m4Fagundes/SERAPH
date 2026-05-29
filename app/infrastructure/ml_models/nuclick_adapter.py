@@ -10,7 +10,7 @@ from app.infrastructure.ml_models.model_downloader import ModelDownloader
 logger = logging.getLogger(__name__)
 
 
-def _get_device() -> "torch.device":
+def _get_device(device_id: int | None = None) -> "torch.device":
     """Returns the best available torch device: CUDA > MPS > CPU.
 
     Uses a try/except around get_best_cuda_device so the adapter
@@ -20,7 +20,9 @@ def _get_device() -> "torch.device":
     import torch
     try:
         from app.infrastructure.config.gpu_selector import get_best_cuda_device
-        best_gpu = get_best_cuda_device()
+        best_gpu = device_id
+        if best_gpu is None:
+            best_gpu = get_best_cuda_device()
         if torch.cuda.is_available() and best_gpu is not None:
             return torch.device(f'cuda:{best_gpu}')
     except Exception:
@@ -45,7 +47,7 @@ class NuClickAdapter(ISegmentationModel):
     PATCH_SIZE = 128   # NuClick operates on 128×128 patches
     PAD = PATCH_SIZE // 2  # Padding to guarantee safe patch extraction at edges
 
-    def __init__(self, model_path: str = None):
+    def __init__(self, model_path: str = None, device_id: int | None = None):
         """
         Initialize NuClick adapter.
         
@@ -54,6 +56,7 @@ class NuClickAdapter(ISegmentationModel):
                        from configured URL to ~/.grid-analyzer/models/nuclick.pth
         """
         self.model_path = model_path
+        self._device_id = device_id
         self._model = None
         self._load_attempted = False
         self._device = None  # set by _load_model on first use
@@ -96,7 +99,7 @@ class NuClickAdapter(ISegmentationModel):
             # Ensure model file exists (download if needed)
             model_path = self._get_model_path()
 
-            device = _get_device()
+            device = _get_device(self._device_id)
             self._device = device  # store for reuse in predict/predict_batch
                 
             self._model = NuClick_NN(n_channels=5, n_classes=1)

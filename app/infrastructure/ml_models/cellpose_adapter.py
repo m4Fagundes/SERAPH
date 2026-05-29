@@ -50,6 +50,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         cellprob_threshold: float = DEFAULT_CELLPROB_THRESHOLD,
         min_size: int = DEFAULT_MIN_SIZE,
         config_override: Optional[dict] = None,
+        device_id: Optional[int] = None,
     ):
         """
         Args:
@@ -59,8 +60,10 @@ class CellposeAdapter(IBatchSegmentationModel):
             cellprob_threshold: Cell probability threshold.
             min_size: Minimum mask area in pixels.
             config_override: Override specific config values.
+            device_id: Optional CUDA device index to pin this adapter to.
         """
         self._model_type = model_type
+        self._device_id = device_id
 
         # Load performance configuration
         self._config = get_performance_config()
@@ -528,7 +531,9 @@ class CellposeAdapter(IBatchSegmentationModel):
 
             device = None
             if self._gpu and torch.cuda.is_available():
-                device_index = get_best_cuda_device()
+                device_index = self._device_id
+                if device_index is None:
+                    device_index = get_best_cuda_device()
                 if device_index is None:
                     device_index = torch.cuda.current_device()
                 device = torch.device(f"cuda:{device_index}")

@@ -681,8 +681,10 @@ class TileRenderer(QGraphicsView):
 
         seg_service = self.main_window.segmentation_service
         worker = _SegWorker(seg_service, model_name, s, idx, gx, gy)
+        import time
+        start_time = time.monotonic()
         worker.signals.finished.connect(
-            lambda poly, _s=s, _idx=idx, _m=model_name: self._on_seg_done(poly, _s, _idx, _m)
+            lambda poly, _s=s, _idx=idx, _m=model_name, _t=start_time: self._on_seg_done(poly, _s, _idx, _m, _t)
         )
         worker.signals.error.connect(self._on_seg_error)
         self._threadpool.start(worker)
@@ -801,33 +803,47 @@ class TileRenderer(QGraphicsView):
             if "manual" in layer.get("model", "").lower():
                 return i
         from app.domain.tile import LAYER_COLORS
-        tile.add_layer("Manual Fine Tune", "manual_fine_tune", [], "#00E676")
+        tile.add_layer("Manual Fine Tune", "manual_fine_tune", [], LAYER_COLORS[2])
         return len(tile.segmentation_layers) - 1
 
 
     # ----- Segmentation callbacks --------------------------------------------
 
-    def _on_seg_done(self, polygon: list, session, slice_idx: int, model_name: str = "Unknown"):
+    def _on_seg_done(self, polygon: list, session, slice_idx: int, model_name: str = "Unknown", start_time: float = None):
         """Single-polygon segmentation completed (e.g. NuClick click)."""
         sb = getattr(self.main_window, "statusBar", lambda: None)()
         if polygon:
+            import time
+            elapsed = time.monotonic() - start_time if start_time is not None else None
             tile = session.tiles[slice_idx]
             # Find existing layer for this model, or create a new one
             layer_found = False
             for layer in tile.segmentation_layers:
                 if layer.get("model", "").lower() == model_name.lower():
                     layer["polygons"].append(polygon)
+                    if elapsed is not None:
+                        layer["execution_time_s"] = elapsed
+                    layer["model_name"] = model_name
                     layer_found = True
                     break
             if not layer_found:
-                tile.add_layer(model_name, model_name, [polygon])
+                layer_idx = tile.add_layer(model_name, model_name, [polygon])
+                if elapsed is not None:
+                    tile.segmentation_layers[layer_idx]["execution_time_s"] = elapsed
+                tile.segmentation_layers[layer_idx]["model_name"] = model_name
             if sb:
                 sb.showMessage(f"Segmentation successful: {len(polygon)} points.")
             self._refresh_membrane_controls()
+            self._refresh_properties_panel(tile)
         else:
             if sb:
                 sb.showMessage("Failed to find nucleus at coordinates.")
         self.viewport().update()
+
+    def _refresh_properties_panel(self, tile) -> None:
+        panel = getattr(self.main_window, "properties_dock", None)
+        if panel is not None and getattr(panel, "_current_tile", None) is tile:
+            panel.refresh_segmentation_summary()
 
     def _on_seg_error(self, error_msg: str):
         logger.error("Inference failed: %s", error_msg)
@@ -906,7 +922,15 @@ class TileRenderer(QGraphicsView):
             tile = session.tiles[slice_idx]
             # Always create a NEW layer for batch runs
             layer_idx = tile.add_layer(model_name, model_name, polygons)
+            if start_time is not None:
+                tile.segmentation_layers[layer_idx]["execution_time_s"] = elapsed
             if batch_service is not None:
+                if hasattr(batch_service, "vram_snapshot_start"):
+                    snapshot = batch_service.vram_snapshot_start()
+                    if snapshot:
+                        tile.segmentation_layers[layer_idx]["vram_free_gb_start"] = snapshot.get("free_gb")
+                        tile.segmentation_layers[layer_idx]["vram_device_name"] = snapshot.get("device_name")
+                        tile.segmentation_layers[layer_idx]["vram_device_id"] = snapshot.get("device_id")
                 prob = batch_service.probability_map()
                 if prob is not None:
                     tile.segmentation_layers[layer_idx]["probability_map"] = prob
@@ -915,6 +939,7 @@ class TileRenderer(QGraphicsView):
                     f"Batch segmentation: {len(polygons)} nuclei detected{time_msg}."
                 )
             self._refresh_membrane_controls()
+            self._refresh_properties_panel(tile)
         else:
             if sb:
                 sb.showMessage(f"Batch segmentation returned 0 results{time_msg}.")
