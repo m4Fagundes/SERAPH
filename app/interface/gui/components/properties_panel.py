@@ -167,6 +167,50 @@ class PropertiesPanel(QDockWidget):
         if hasattr(self, "_cellpose_group"):
             self._cellpose_group.setVisible(visible)
 
+    def setup_idisf_params(self, spin_crop, spin_n0, spin_iterations, spin_path_cost, spin_c1, spin_c2):
+        """Inject iDISF parameter controls into the panel."""
+        self._idisf_group = QGroupBox("iDISF PARAMETERS")
+
+        form = QFormLayout(self._idisf_group)
+        form.setContentsMargins(8, 12, 8, 8)
+        form.setSpacing(8)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        lbl_crop = QLabel("Crop")
+        lbl_crop.setToolTip("Local window size around the click. Larger = more context, slower and less local.")
+        form.addRow(lbl_crop, spin_crop)
+
+        lbl_n0 = QLabel("N0")
+        lbl_n0.setToolTip("Initial number of GRID seeds. Higher = finer graph/superpixel sampling.")
+        form.addRow(lbl_n0, spin_n0)
+
+        lbl_iter = QLabel("Iter.")
+        lbl_iter.setToolTip("Number of iDISF seed-removal iterations.")
+        form.addRow(lbl_iter, spin_iterations)
+
+        lbl_f = QLabel("Path Cost")
+        lbl_f.setToolTip("iDISF path-cost function ID: 1=color, 2=gradient, 3=beta norm, 4=CV tree norm, 5=sum gradient, 6=sum beta.")
+        form.addRow(lbl_f, spin_path_cost)
+
+        lbl_c1 = QLabel("c1")
+        lbl_c1.setToolTip("Gradient/path-cost constant. Valid range: 0.1 to 1.0.")
+        form.addRow(lbl_c1, spin_c1)
+
+        lbl_c2 = QLabel("c2")
+        lbl_c2.setToolTip("Gradient/path-cost constant. Valid range: 0.1 to 1.0.")
+        form.addRow(lbl_c2, spin_c2)
+
+        self._idisf_group.setVisible(False)
+        count = self.main_layout.count()
+        self.main_layout.takeAt(count - 1)
+        self.main_layout.addWidget(self._idisf_group)
+        self.main_layout.addStretch(1)
+
+    def show_idisf_params(self, visible: bool):
+        """Show or hide the iDISF parameter section."""
+        if hasattr(self, "_idisf_group"):
+            self._idisf_group.setVisible(visible)
+
     def setup_overlay_controls(self, chk_show_membrane, layer_dropdown):
         """Inject the membrane toggle and layer dropdown into a panel section."""
         from PyQt6.QtWidgets import QGroupBox, QVBoxLayout

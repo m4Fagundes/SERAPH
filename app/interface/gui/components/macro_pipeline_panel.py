@@ -25,7 +25,7 @@ _KNOWN_MODELS = [
     ("Cellpose (cpsam)",   LAYER_COLORS[0]),
     ("NucleAI",            LAYER_COLORS[1]),
     ("CellViT-SAM",        LAYER_COLORS[3]),
-    ("PathoSAM (ViT-B)",   LAYER_COLORS[2]),
+    ("PathoSAM (ViT-L)",   LAYER_COLORS[2]),
     ("DINOSim (small)",    LAYER_COLORS[1]),
 ]
 
@@ -853,17 +853,19 @@ class SingleModelWorker(QThread):
 
 
 class NucleAIWorker(QThread):
-    """Runs NuClick on centroids from a user-selected segmentation layer."""
+    """Runs a click-based model on centroids from a user-selected layer."""
     progress = pyqtSignal(int, int, str)
     finished = pyqtSignal(float)
     error = pyqtSignal(str)
 
     def __init__(self, session, interactive_service, source_layer_name: str,
+                 click_model_name: str = "NuClick (PyTorch)",
                  slice_indices: Optional[list[int]] = None):
         super().__init__()
         self.session = session
         self.interactive_service = interactive_service
         self.source_layer_name = source_layer_name
+        self.click_model_name = click_model_name
         self.slice_indices = list(slice_indices) if slice_indices is not None else list(range(len(session.tiles)))
         self.is_cancelled = False
 
@@ -918,14 +920,14 @@ class NucleAIWorker(QThread):
 
                 slice_start = time.monotonic()
                 vram_start = MacroPipelineWorker._current_vram_snapshot()
-                nuclick_polys = self.interactive_service.segment_at_points(
-                    "NuClick (PyTorch)", self.session, i, centroids
+                click_polys = self.interactive_service.segment_at_points(
+                    self.click_model_name, self.session, i, centroids
                 )
-                if nuclick_polys:
+                if click_polys:
                     layer_idx = tile.add_layer(
-                        f"NucleAI · {self.source_layer_name}",
-                        "NuClick (PyTorch)",
-                        nuclick_polys,
+                        f"NucleAI {self._short_click_name()} · {self.source_layer_name}",
+                        self.click_model_name,
+                        click_polys,
                         LAYER_COLORS[1],
                     )
                     layer = tile.segmentation_layers[layer_idx]
@@ -950,6 +952,11 @@ class NucleAIWorker(QThread):
             if name == self.source_layer_name:
                 return layer
         return None
+
+    def _short_click_name(self) -> str:
+        if self.click_model_name == "NuClick (PyTorch)":
+            return "NuClick"
+        return self.click_model_name
 
 
 class DINOSimCellposeReferenceWorker(QThread):
@@ -1105,7 +1112,7 @@ class MacroPipelinePanel(QDockWidget):
     Unified segmentation dock.
 
     Model cards let the user pick which model to run.
-    NucleAI runs NuClick from centroids of a user-selected segmentation layer.
+    NucleAI runs a click-based model from centroids of a user-selected segmentation layer.
     When DINOSim is selected, a reference-point section appears — the user must
     pick reference nuclei before running.
     All other models run as single independent passes.
@@ -1113,9 +1120,9 @@ class MacroPipelinePanel(QDockWidget):
 
     _MODEL_DESCRIPTIONS = {
         "Cellpose (cpsam)":  "cpsam · CUDA",
-        "NucleAI":           "NuClick from selected layer",
+        "NucleAI":           "Click model from selected layer",
         "CellViT-SAM":       "ViT-SAM",
-        "PathoSAM (ViT-B)":  "SAM · histopathology",
+        "PathoSAM (ViT-L)":  "SAM · histopathology",
         "DINOSim (small)":   "DINOv2 · zero-shot similarity",
     }
 
@@ -1191,6 +1198,22 @@ class MacroPipelinePanel(QDockWidget):
         self._cmb_nucleai_source.setMinimumHeight(SIZE["md"])
         self._cmb_nucleai_source.currentIndexChanged.connect(self.refresh_selection_state)
         nucleai_layout.addWidget(self._cmb_nucleai_source)
+
+        self._lbl_nucleai_click_model = QLabel("Click model")
+        self._lbl_nucleai_click_model.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 600;"
+            " background: transparent;"
+        )
+        nucleai_layout.addWidget(self._lbl_nucleai_click_model)
+
+        self._cmb_nucleai_click_model = QComboBox()
+        self._cmb_nucleai_click_model.setToolTip(
+            "Choose which click-based model will refine each source-layer centroid."
+        )
+        self._cmb_nucleai_click_model.setMinimumHeight(SIZE["md"])
+        self._cmb_nucleai_click_model.currentIndexChanged.connect(self._on_nucleai_click_model_changed)
+        nucleai_layout.addWidget(self._cmb_nucleai_click_model)
+        self._refresh_nucleai_click_models()
 
         self._nucleai_row.setVisible(False)
         layout.addWidget(self._nucleai_row)
@@ -1280,12 +1303,20 @@ class MacroPipelinePanel(QDockWidget):
             self._gpu_row.setVisible(supports_gpu_choice)
             self._nucleai_row.setVisible(is_nucleai)
             self._dinosim_row.setVisible(is_dinosim)
-            self._set_properties_params_visible(is_cellpose)
+            self._set_properties_params_visible(
+                cellpose_visible=is_cellpose,
+                idisf_visible=is_nucleai and self._selected_nucleai_click_model() == "iDISF",
+            )
 
             if is_dinosim:
                 self._refresh_dinosim_ref_status()
             if is_nucleai:
                 self._refresh_nucleai_sources()
+                self._refresh_nucleai_click_models()
+                if self._selected_nucleai_click_model() == "iDISF":
+                    panel = getattr(self.main_window, "properties_dock", None)
+                    if panel is not None:
+                        panel.setVisible(True)
             self.refresh_selection_state()
 
             _ModelCard.mousePressEvent(clicked_card, event)
@@ -1320,6 +1351,45 @@ class MacroPipelinePanel(QDockWidget):
             self._cmb_nucleai_source.setCurrentIndex(sources.index(current))
 
         self._cmb_nucleai_source.blockSignals(False)
+
+    def _refresh_nucleai_click_models(self) -> None:
+        current = self._cmb_nucleai_click_model.currentData()
+        self._cmb_nucleai_click_model.blockSignals(True)
+        self._cmb_nucleai_click_model.clear()
+
+        service = getattr(self.main_window, "segmentation_service", None)
+        available = service.get_available_models() if service is not None else []
+        preferred = ["NuClick (PyTorch)", "iDISF"]
+        models = [name for name in preferred if name in available]
+        models.extend(name for name in available if name not in models)
+
+        for model_name in models:
+            label = "NuClick" if model_name == "NuClick (PyTorch)" else model_name
+            self._cmb_nucleai_click_model.addItem(label, model_name)
+
+        if current is not None:
+            idx = self._cmb_nucleai_click_model.findData(current)
+            if idx >= 0:
+                self._cmb_nucleai_click_model.setCurrentIndex(idx)
+
+        self._cmb_nucleai_click_model.blockSignals(False)
+
+    def _selected_nucleai_click_model(self) -> Optional[str]:
+        return self._cmb_nucleai_click_model.currentData()
+
+    def _on_nucleai_click_model_changed(self, _index: int) -> None:
+        model_name, _ = self._selected_model()
+        is_nucleai = model_name == self._NUCLEAI_NAME
+        show_idisf = is_nucleai and self._selected_nucleai_click_model() == "iDISF"
+        self._set_properties_params_visible(
+            cellpose_visible=False,
+            idisf_visible=show_idisf,
+        )
+        if show_idisf:
+            panel = getattr(self.main_window, "properties_dock", None)
+            if panel is not None:
+                panel.setVisible(True)
+        self.refresh_selection_state()
 
     def _available_nucleai_sources(self) -> list[str]:
         s = getattr(self.main_window, "current_session", None)
@@ -1379,10 +1449,14 @@ class MacroPipelinePanel(QDockWidget):
             return None
         return list(data)
 
-    def _set_properties_params_visible(self, visible: bool) -> None:
+    def _set_properties_params_visible(self, cellpose_visible: bool = False, idisf_visible: bool = False) -> None:
         panel = getattr(self.main_window, "properties_dock", None)
-        if panel is not None and hasattr(panel, "show_cellpose_params"):
-            panel.show_cellpose_params(visible)
+        if panel is None:
+            return
+        if hasattr(panel, "show_cellpose_params"):
+            panel.show_cellpose_params(cellpose_visible)
+        if hasattr(panel, "show_idisf_params"):
+            panel.show_idisf_params(idisf_visible)
 
     def refresh_selection_state(self) -> None:
         if self._running:
@@ -1397,7 +1471,12 @@ class MacroPipelinePanel(QDockWidget):
             can_run = can_run and self._dinosim_has_reference()
         if model_name == self._NUCLEAI_NAME:
             self._refresh_nucleai_sources()
-            can_run = can_run and self._selected_nucleai_source() is not None
+            self._refresh_nucleai_click_models()
+            can_run = (
+                can_run
+                and self._selected_nucleai_source() is not None
+                and self._selected_nucleai_click_model() is not None
+            )
 
         self.btn_run.setEnabled(can_run)
 
@@ -1409,9 +1488,13 @@ class MacroPipelinePanel(QDockWidget):
             self.lbl_status.setText("Pick DINOSim reference points before running selected slices.")
         elif model_name == self._NUCLEAI_NAME and self._selected_nucleai_source() is None:
             self.lbl_status.setText("Choose a source membrane/layer before running NucleAI.")
+        elif model_name == self._NUCLEAI_NAME and self._selected_nucleai_click_model() is None:
+            self.lbl_status.setText("Choose NuClick or iDISF before running NucleAI.")
         elif model_name == self._NUCLEAI_NAME:
+            click_model = self._selected_nucleai_click_model()
+            click_label = "NuClick" if click_model == "NuClick (PyTorch)" else click_model
             self.lbl_status.setText(
-                f"Ready to run <b>NucleAI</b> from <b>{self._selected_nucleai_source()}</b> "
+                f"Ready to run <b>NucleAI {click_label}</b> from <b>{self._selected_nucleai_source()}</b> "
                 f"on {selected_count} selected slice{'s' if selected_count != 1 else ''}."
             )
         else:
@@ -1636,11 +1719,18 @@ class MacroPipelinePanel(QDockWidget):
         if not source_layer:
             self.lbl_status.setText("Choose a source membrane/layer before running NucleAI.")
             return
+        click_model = self._selected_nucleai_click_model()
+        if not click_model:
+            self.lbl_status.setText("Choose NuClick or iDISF before running NucleAI.")
+            return
+        if click_model == "iDISF" and hasattr(self.main_window, "_sync_idisf_params"):
+            self.main_window._sync_idisf_params()
 
         self.worker = NucleAIWorker(
             s,
             self.main_window.segmentation_service,
             source_layer,
+            click_model_name=click_model,
             slice_indices=slice_indices,
         )
         self.worker.progress.connect(self._on_progress)
@@ -1648,8 +1738,9 @@ class MacroPipelinePanel(QDockWidget):
         self.worker.error.connect(self._on_error)
 
         self.progress_bar.setValue(0)
+        click_label = "NuClick" if click_model == "NuClick (PyTorch)" else click_model
         self.lbl_status.setText(
-            f"Running <b>NucleAI</b> from <b>{source_layer}</b> on {len(slice_indices)} selected slices..."
+            f"Running <b>NucleAI {click_label}</b> from <b>{source_layer}</b> on {len(slice_indices)} selected slices..."
         )
         self._set_running(True, pipeline=False)
         self.worker.start()
@@ -1707,6 +1798,7 @@ class MacroPipelinePanel(QDockWidget):
             self._btn_cellpose_ref.setEnabled(False)
             self._cmb_gpu.setEnabled(False)
             self._cmb_nucleai_source.setEnabled(False)
+            self._cmb_nucleai_click_model.setEnabled(False)
         else:
             self.btn_run.setText("Run selected")
             self.btn_cancel.setEnabled(False)
@@ -1716,6 +1808,7 @@ class MacroPipelinePanel(QDockWidget):
             self._btn_cellpose_ref.setEnabled(True)
             self._cmb_gpu.setEnabled(True)
             self._cmb_nucleai_source.setEnabled(True)
+            self._cmb_nucleai_click_model.setEnabled(True)
             self.refresh_selection_state()
 
     def _cancel(self) -> None:

@@ -64,14 +64,14 @@ class PathoSAMAdapter(IBatchSegmentationModel):
     Adapter wrapping micro_sam Patho-SAM AIS as an IBatchSegmentationModel.
 
     Usage:
-        adapter = PathoSAMAdapter()                          # ViT-B (default)
-        adapter = PathoSAMAdapter("vit_l_histopathology")    # ViT-L
+        adapter = PathoSAMAdapter()                          # ViT-L (default)
+        adapter = PathoSAMAdapter("vit_b_histopathology")    # ViT-B
         polygons = adapter.segment(pil_image)
     """
 
     def __init__(
         self,
-        model_type: str = "vit_b_histopathology",
+        model_type: str = "vit_l_histopathology",
         checkpoint_path: Optional[str] = None,
         tile_shape: Tuple[int, int] = (384, 384),
         halo: Tuple[int, int] = (64, 64),

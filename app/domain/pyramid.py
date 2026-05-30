@@ -33,6 +33,175 @@ OPENSLIDE_EXTENSIONS = {
     '.bif', '.svslide',
 }
 
+FOLDER_IMAGE_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"
+}
+
+
+class ImageFolderPyramid:
+    """Virtual image pyramid that lays a folder of small images into a mosaic.
+
+    Each source image keeps its own rectangle in a virtual canvas. SERAPH can
+    then treat every image as a slice without requiring a WSI/base image.
+    """
+
+    GAP = 32
+    BACKGROUND = (20, 20, 20)
+
+    def __init__(self, folder_path: str):
+        self.image_path = os.path.abspath(folder_path)
+        self.is_ready = True
+        self._image_cache: dict[str, Image.Image] = {}
+        self.items = self._build_layout(self.image_path)
+        if not self.items:
+            raise ValueError(f"No supported image files found in folder: {folder_path}")
+
+        self.image_width = max(item["x"] + item["width"] for item in self.items)
+        self.image_height = max(item["y"] + item["height"] for item in self.items)
+        self.bands = 3
+
+    @classmethod
+    def _supported_files(cls, folder_path: str) -> list[str]:
+        files = []
+        for name in os.listdir(folder_path):
+            path = os.path.join(folder_path, name)
+            if not os.path.isfile(path):
+                continue
+            if os.path.splitext(name)[1].lower() in FOLDER_IMAGE_EXTENSIONS:
+                files.append(path)
+        return sorted(files, key=lambda p: os.path.basename(p).lower())
+
+    def _build_layout(self, folder_path: str) -> list[dict]:
+        files = self._supported_files(folder_path)
+        if not files:
+            return []
+
+        sizes = []
+        for path in files:
+            with Image.open(path) as img:
+                sizes.append((path, img.width, img.height))
+
+        cols = max(1, math.ceil(math.sqrt(len(sizes))))
+        col_widths = [0] * cols
+        row_heights = []
+        for index, (_, width, height) in enumerate(sizes):
+            col = index % cols
+            row = index // cols
+            if row >= len(row_heights):
+                row_heights.append(0)
+            col_widths[col] = max(col_widths[col], width)
+            row_heights[row] = max(row_heights[row], height)
+
+        col_x = []
+        x = 0
+        for width in col_widths:
+            col_x.append(x)
+            x += width + self.GAP
+
+        row_y = []
+        y = 0
+        for height in row_heights:
+            row_y.append(y)
+            y += height + self.GAP
+
+        items = []
+        for index, (path, width, height) in enumerate(sizes):
+            col = index % cols
+            row = index // cols
+            items.append({
+                "path": path,
+                "name": os.path.splitext(os.path.basename(path))[0],
+                "x": col_x[col],
+                "y": row_y[row],
+                "width": width,
+                "height": height,
+            })
+        return items
+
+    def get_tile(self, col: int, row: int, zoom: float, tile_size: int = 256):
+        cam_x = (col * tile_size) / zoom
+        cam_y = (row * tile_size) / zoom
+        return self.get_viewport(cam_x, cam_y, tile_size, tile_size, zoom)
+
+    def get_viewport(self, cam_x, cam_y, vp_w, vp_h, zoom):
+        if vp_w < 1 or vp_h < 1:
+            return Image.new("RGB", (max(1, vp_w), max(1, vp_h)), self.BACKGROUND)
+
+        result = Image.new("RGB", (int(vp_w), int(vp_h)), self.BACKGROUND)
+        src_left = max(0, int(math.floor(cam_x)))
+        src_top = max(0, int(math.floor(cam_y)))
+        src_right = min(self.image_width, int(math.ceil(cam_x + vp_w / zoom)))
+        src_bottom = min(self.image_height, int(math.ceil(cam_y + vp_h / zoom)))
+        if src_right <= src_left or src_bottom <= src_top:
+            return result
+
+        for item in self.items:
+            ix1, iy1 = item["x"], item["y"]
+            ix2, iy2 = ix1 + item["width"], iy1 + item["height"]
+            left = max(src_left, ix1)
+            top = max(src_top, iy1)
+            right = min(src_right, ix2)
+            bottom = min(src_bottom, iy2)
+            if right <= left or bottom <= top:
+                continue
+
+            img = self._read_image(item["path"])
+            crop = img.crop((left - ix1, top - iy1, right - ix1, bottom - iy1))
+            dest_x = int(round((left - cam_x) * zoom))
+            dest_y = int(round((top - cam_y) * zoom))
+            dest_w = max(1, int(round((right - left) * zoom)))
+            dest_h = max(1, int(round((bottom - top) * zoom)))
+            if crop.size != (dest_w, dest_h):
+                resample = Image.Resampling.NEAREST if zoom > 2.0 else Image.Resampling.LANCZOS
+                crop = crop.resize((dest_w, dest_h), resample)
+            result.paste(crop, (dest_x, dest_y))
+
+        return result
+
+    def get_region_fullres(self, x, y, w, h):
+        x, y = max(0, int(x)), max(0, int(y))
+        w = min(int(w), self.image_width - x)
+        h = min(int(h), self.image_height - y)
+        if w <= 0 or h <= 0:
+            return Image.new("RGB", (1, 1), self.BACKGROUND)
+
+        result = Image.new("RGB", (w, h), self.BACKGROUND)
+        req_right = x + w
+        req_bottom = y + h
+        for item in self.items:
+            ix1, iy1 = item["x"], item["y"]
+            ix2, iy2 = ix1 + item["width"], iy1 + item["height"]
+            left = max(x, ix1)
+            top = max(y, iy1)
+            right = min(req_right, ix2)
+            bottom = min(req_bottom, iy2)
+            if right <= left or bottom <= top:
+                continue
+
+            img = self._read_image(item["path"])
+            crop = img.crop((left - ix1, top - iy1, right - ix1, bottom - iy1))
+            result.paste(crop, (left - x, top - y))
+        return result
+
+    def get_thumbnail(self, max_size=256):
+        ratio = min(max_size / self.image_width, max_size / self.image_height, 1.0)
+        return self.get_viewport(0, 0, max(1, int(self.image_width * ratio)), max(1, int(self.image_height * ratio)), ratio)
+
+    def unload(self) -> None:
+        self._image_cache.clear()
+        self.is_ready = False
+
+    def _read_image(self, path: str) -> Image.Image:
+        img = self._image_cache.get(path)
+        if img is None:
+            img = Image.open(path).convert("RGB")
+            self._image_cache[path] = img
+            if len(self._image_cache) > 64:
+                first_key = next(iter(self._image_cache))
+                if first_key != path:
+                    self._image_cache.pop(first_key, None)
+        return img
+
 
 class ImagePyramid:
     """On-demand image reader with 3-tier zoom quality.
@@ -53,6 +222,12 @@ class ImagePyramid:
 
     def __init__(self, image_path: str):
         """Open an image lazily — no pixel data loaded into RAM."""
+        if os.path.isdir(image_path):
+            folder_pyramid = ImageFolderPyramid(image_path)
+            self.__dict__.update(folder_pyramid.__dict__)
+            self._folder_pyramid = folder_pyramid
+            return
+
         self._pil_image_fallback = None
 
         self.image_path = os.path.abspath(image_path)
@@ -113,6 +288,9 @@ class ImagePyramid:
         """Return a single square tile of dimension `tile_size` at the given grid coordinates.
         This provides the backend for OpenSeadragon-style progressive deep zooming.
         """
+        if hasattr(self, "_folder_pyramid"):
+            return self._folder_pyramid.get_tile(col, row, zoom, tile_size)
+
         # Calculate full-res coordinates for this tile
         cam_x = (col * tile_size) / zoom
         cam_y = (row * tile_size) / zoom
@@ -140,6 +318,9 @@ class ImagePyramid:
             vp_w, vp_h:   viewport size in screen pixels.
             zoom:          zoom factor (1.0 = 100%).
         """
+        if hasattr(self, "_folder_pyramid"):
+            return self._folder_pyramid.get_viewport(cam_x, cam_y, vp_w, vp_h, zoom)
+
         if vp_w < 1 or vp_h < 1:
             return Image.new("RGB", (max(1, vp_w), max(1, vp_h)), (20, 20, 20))
 
@@ -155,6 +336,9 @@ class ImagePyramid:
 
     def get_region_fullres(self, x, y, w, h):
         """Crop a full-resolution region (for export). Streaming, low RAM."""
+        if hasattr(self, "_folder_pyramid"):
+            return self._folder_pyramid.get_region_fullres(x, y, w, h)
+
         x, y = max(0, int(x)), max(0, int(y))
         w = min(int(w), self.image_width - x)
         h = min(int(h), self.image_height - y)
@@ -165,6 +349,9 @@ class ImagePyramid:
 
     def get_thumbnail(self, max_size=256):
         """Small thumbnail for sidebar. Very fast."""
+        if hasattr(self, "_folder_pyramid"):
+            return self._folder_pyramid.get_thumbnail(max_size=max_size)
+
         if self._openslide is not None:
             return self._openslide.get_thumbnail(
                 (max_size, max_size)
@@ -189,6 +376,11 @@ class ImagePyramid:
         After calling this, get_viewport() will raise AttributeError —
         call the owning ImageSession.reload() before rendering again.
         """
+        if hasattr(self, "_folder_pyramid"):
+            self._folder_pyramid.unload()
+            self.is_ready = False
+            return
+
         if self._openslide is not None:
             try:
                 self._openslide.close()

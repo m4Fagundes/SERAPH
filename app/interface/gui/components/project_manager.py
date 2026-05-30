@@ -1,7 +1,8 @@
 import os
 import logging
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
-from app.domain.session import ImageSession
+from app.domain.session import ImageSession, TILE_COLORS
+from app.domain.tile import Tile
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,53 @@ class ProjectManager:
                 self._activate_session(s)
             except Exception as e:
                 QMessageBox.warning(self.mw, "Load Error", str(e))
+
+    def import_slice_images_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self.mw,
+            "Import Slice Images Folder",
+            "",
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if not folder:
+            return
+
+        try:
+            s = ImageSession(folder)
+            s.name = os.path.basename(os.path.normpath(folder)) or "Image slices"
+            s.grid_w = self._grid_w
+            s.grid_h = self._grid_h
+            s.tiles = []
+
+            items = getattr(s.pyramid, "items", [])
+            if not items:
+                QMessageBox.warning(self.mw, "Import Slice Images", "No supported image files found in this folder.")
+                return
+
+            for idx, item in enumerate(items):
+                x1 = int(item["x"])
+                y1 = int(item["y"])
+                x2 = x1 + int(item["width"])
+                y2 = y1 + int(item["height"])
+                tile = Tile(rects=[(x1, y1, x2, y2)])
+                tile.color = TILE_COLORS[idx % len(TILE_COLORS)]
+                tile.metadata["name"] = item.get("name", f"Slice {idx + 1}")
+                tile.metadata["description"] = os.path.basename(item.get("path", ""))
+                tile.metadata["source_image_path"] = item.get("path", "")
+                s.tiles.append(tile)
+
+            self.mw.sessions.append(s)
+            self.mw.image_tabs.tab_bar.blockSignals(True)
+            self.mw.image_tabs.add_session_tab(s.name, tooltip=folder)
+            self.mw.image_tabs.set_current_index(self.mw.image_tabs.count() - 1)
+            self.mw.image_tabs.tab_bar.blockSignals(False)
+            self._activate_session(s)
+            self.mw.statusBar().showMessage(
+                f"Imported {len(s.tiles)} image slice{'s' if len(s.tiles) != 1 else ''} from {os.path.basename(folder)}"
+            )
+        except Exception as e:
+            logger.exception("Failed to import image slice folder: %s", e)
+            QMessageBox.warning(self.mw, "Import Slice Images Error", str(e))
 
     def _activate_session(self, session):
         self.mw.current_session = session

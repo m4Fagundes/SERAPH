@@ -19,7 +19,6 @@ skills/
 .env
 .venv/
 venv/
-venv-sm120/
 .icloud/
 dist/
 /build/
@@ -34,3 +33,4 @@ ruvector.db
 elf/
 micro-sam/
 torch-em/
+venv-sm120/

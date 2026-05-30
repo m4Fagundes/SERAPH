@@ -17,6 +17,7 @@ from app.application.interactive_segmentation_service import InteractiveSegmenta
 from app.application.batch_segmentation_service import BatchSegmentationService
 from app.application.manual_adjustment_service import ManualAdjustmentService
 from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
+from app.infrastructure.ml_models.idisf_adapter import IDISFAdapter
 from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
 from app.infrastructure.ml_models.cellvit_adapter import CellViTAdapter
 from app.infrastructure.ml_models.patho_sam_adapter import PathoSAMAdapter
@@ -79,11 +80,20 @@ class SlicerLabApp(QMainWindow):
         # Interactive models (click-based)
 
         ml_models = []
+        self.idisf_adapter = None
         try:
             nuclick_adapter = NuClickAdapter()
             ml_models.append(nuclick_adapter)
         except Exception as e:
             _cr_logger.error("Failed to load NuClick adapter: %s", e)
+
+        try:
+            idisf_adapter = IDISFAdapter()
+            self.idisf_adapter = idisf_adapter
+            ml_models.append(idisf_adapter)
+            _cr_logger.info("IDISFAdapter registered: %s", idisf_adapter.name)
+        except Exception as e:
+            _cr_logger.error("Failed to load iDISF adapter: %s", e)
 
         self.segmentation_service = InteractiveSegmentationService(
             models=ml_models
@@ -224,6 +234,62 @@ class SlicerLabApp(QMainWindow):
         self.spin_cellprob.setToolTip("Cell probability threshold — lower = more detections (default 0.0)")
         self.spin_cellprob.setFixedWidth(70)
 
+        # ── iDISF parameters — used by click-based iDISF segmentation ───────
+        self.spin_idisf_crop = QSpinBox()
+        self.spin_idisf_crop.setRange(64, 768)
+        self.spin_idisf_crop.setValue(256)
+        self.spin_idisf_crop.setSingleStep(32)
+        self.spin_idisf_crop.setSuffix(" px")
+        self.spin_idisf_crop.setToolTip("Local crop around the click. Larger = more context, slower and less local.")
+        self.spin_idisf_crop.setFixedWidth(82)
+
+        self.spin_idisf_n0 = QSpinBox()
+        self.spin_idisf_n0.setRange(10, 2000)
+        self.spin_idisf_n0.setValue(160)
+        self.spin_idisf_n0.setSingleStep(25)
+        self.spin_idisf_n0.setToolTip("Initial number of GRID seeds. Higher = finer segmentation.")
+        self.spin_idisf_n0.setFixedWidth(82)
+
+        self.spin_idisf_iterations = QSpinBox()
+        self.spin_idisf_iterations.setRange(1, 20)
+        self.spin_idisf_iterations.setValue(4)
+        self.spin_idisf_iterations.setSingleStep(1)
+        self.spin_idisf_iterations.setToolTip("Number of iDISF seed-removal iterations.")
+        self.spin_idisf_iterations.setFixedWidth(82)
+
+        self.spin_idisf_path_cost = QSpinBox()
+        self.spin_idisf_path_cost.setRange(1, 6)
+        self.spin_idisf_path_cost.setValue(4)
+        self.spin_idisf_path_cost.setSingleStep(1)
+        self.spin_idisf_path_cost.setToolTip("Path-cost function ID: 1=color, 2=gradient, 3=beta norm, 4=CV tree norm, 5=sum gradient, 6=sum beta.")
+        self.spin_idisf_path_cost.setFixedWidth(82)
+
+        self.spin_idisf_c1 = QDoubleSpinBox()
+        self.spin_idisf_c1.setRange(0.1, 1.0)
+        self.spin_idisf_c1.setValue(0.7)
+        self.spin_idisf_c1.setSingleStep(0.05)
+        self.spin_idisf_c1.setDecimals(2)
+        self.spin_idisf_c1.setToolTip("iDISF c1 constant for path-cost functions.")
+        self.spin_idisf_c1.setFixedWidth(82)
+
+        self.spin_idisf_c2 = QDoubleSpinBox()
+        self.spin_idisf_c2.setRange(0.1, 1.0)
+        self.spin_idisf_c2.setValue(0.8)
+        self.spin_idisf_c2.setSingleStep(0.05)
+        self.spin_idisf_c2.setDecimals(2)
+        self.spin_idisf_c2.setToolTip("iDISF c2 constant for path-cost functions.")
+        self.spin_idisf_c2.setFixedWidth(82)
+
+        for widget in (
+            self.spin_idisf_crop,
+            self.spin_idisf_n0,
+            self.spin_idisf_iterations,
+            self.spin_idisf_path_cost,
+            self.spin_idisf_c1,
+            self.spin_idisf_c2,
+        ):
+            widget.valueChanged.connect(self._sync_idisf_params)
+
         # ── Membrane toggle + layer dropdown (injected into PropertiesPanel) ─
         self.chk_show_membrane = QCheckBox("Show Membrane")
         self.chk_show_membrane.setChecked(True)
@@ -276,6 +342,14 @@ class SlicerLabApp(QMainWindow):
         self.properties_dock.hide()
         self.properties_dock.setup_cellpose_params(
             self.spin_diameter, self.spin_flow, self.spin_cellprob
+        )
+        self.properties_dock.setup_idisf_params(
+            self.spin_idisf_crop,
+            self.spin_idisf_n0,
+            self.spin_idisf_iterations,
+            self.spin_idisf_path_cost,
+            self.spin_idisf_c1,
+            self.spin_idisf_c2,
         )
         self.properties_dock.setup_overlay_controls(
             self.chk_show_membrane, self.layer_dropdown
@@ -476,10 +550,25 @@ class SlicerLabApp(QMainWindow):
         self._update_tool_pill()
         self._sb_refresh()
 
+    def _sync_idisf_params(self, *_args) -> None:
+        adapter = getattr(self, "idisf_adapter", None)
+        if adapter is None:
+            return
+        adapter.set_parameters(
+            crop_size=self.spin_idisf_crop.value(),
+            n0=self.spin_idisf_n0.value(),
+            iterations=self.spin_idisf_iterations.value(),
+            path_cost_function=self.spin_idisf_path_cost.value(),
+            c1=self.spin_idisf_c1.value(),
+            c2=self.spin_idisf_c2.value(),
+        )
+
     def _on_model_changed(self, model_name: str) -> None:
-        show_params = False
         if hasattr(self, "properties_dock"):
-            self.properties_dock.show_cellpose_params(show_params)
+            self.properties_dock.show_cellpose_params(False)
+            self.properties_dock.show_idisf_params(model_name == "iDISF")
+        if model_name == "iDISF":
+            self._sync_idisf_params()
 
     def _run_batch_segmentation(self) -> None:
         """Trigger batch segmentation on the current isolated tile."""
@@ -655,6 +744,11 @@ class SlicerLabApp(QMainWindow):
         act_add_img.triggered.connect(self.project_manager.add_image)
         file_menu.addAction(act_add_img)
 
+        act_import_slice_images = QAction("Import Slice Images Folder...", self)
+        act_import_slice_images.setStatusTip("Create one slice per image from a folder of small images")
+        act_import_slice_images.triggered.connect(self.project_manager.import_slice_images_folder)
+        file_menu.addAction(act_import_slice_images)
+
         act_import_tile = QAction("Import Tile...", self)
         act_import_tile.setStatusTip("Import a tile descriptor into the current image")
         act_import_tile.triggered.connect(self._add_tile)
@@ -780,7 +874,7 @@ class SlicerLabApp(QMainWindow):
         tools_menu.addSeparator()
 
         act_tool_seg = QAction("Segment Nucleus  [S]", self)
-        act_tool_seg.setStatusTip("Click-based NuClick segmentation (tile view only)")
+        act_tool_seg.setStatusTip("Click-based segmentation (tile view only)")
         act_tool_seg.triggered.connect(lambda: self._activate_tool("segment"))
         tools_menu.addAction(act_tool_seg)
 
@@ -1130,7 +1224,7 @@ class SlicerLabApp(QMainWindow):
             ("── Mouse", ""),
             ("Pan",                "Left-click drag"),
             ("Zoom",               "Ctrl + Scroll"),
-            ("NuClick Segment",    "Right-click (tile view)"),
+            ("Click Segment",      "Right-click (tile view)"),
         ]
 
         table.setRowCount(len(rows))
@@ -1164,6 +1258,6 @@ class SlicerLabApp(QMainWindow):
             "IMSCIENCE — Image and Multimedia Data Science Laboratory<br>"
             "Developed by <b>Matheus Fagundes</b>"
             "<br><br>"
-            "PyQt6 &nbsp;·&nbsp; Cellpose &nbsp;·&nbsp; NuClick"
+            "PyQt6 &nbsp;·&nbsp; Cellpose &nbsp;·&nbsp; NuClick &nbsp;·&nbsp; iDISF"
             " &nbsp;·&nbsp; OpenSlide &nbsp;·&nbsp; pyvips"
         )

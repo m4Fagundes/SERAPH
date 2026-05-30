@@ -46,8 +46,9 @@ Developed by **Matheus Fagundes** under the Scientific Initiation Program at IMS
 |---|---|---|
 | Cellpose `cpsam` | Whole-tile batch | Main fast baseline. Supports GPU selection and multi-GPU tile scheduling. |
 | NuClick | Click-based and pipeline refinement | Can refine Cellpose detections using one centroid per nucleus. Supports GPU selection inside the macro pipeline. |
+| iDISF | Click-based interactive | CPU graph-based segmentation via Interactive Dynamic and Iterative Spanning Forest. Uses a local crop, one foreground click, and border background seeds; crop, N0, iterations, path cost, c1, and c2 are configurable in the UI. |
 | CellViT-SAM | Whole-tile batch | ViT/SAM-based nuclear segmentation. Supports GPU selection and multi-GPU tile scheduling. |
-| PathoSAM (ViT-B) | Whole-tile batch | Histopathology SAM via `micro_sam`; exports raw probability maps. Uses conservative OOM retry with `batch_size=1`. |
+| PathoSAM (ViT-L) | Whole-tile batch | Histopathology SAM via `micro_sam`; exports raw probability maps. Uses conservative OOM retry with `batch_size=1`. |
 | DINOSim | Similarity-guided segmentation | Few-shot/zero-shot similarity method using reference points or Cellpose-derived prompts. |
 
 Current multi-GPU support:
@@ -56,6 +57,7 @@ Current multi-GPU support:
 |---|---:|---:|
 | Cellpose | Yes | Yes |
 | NuClick | Yes, in pipeline | Yes, in pipeline |
+| iDISF | CPU | No GPU needed |
 | CellViT-SAM | Yes | Yes |
 | PathoSAM | Limited | Not in-process; needs per-GPU subprocess isolation |
 | DINOSim | Not yet exposed in UI | Not yet |
@@ -183,7 +185,7 @@ Large WSI files are read through a multiscale pyramid so only the visible or sel
 3. Select one or more slices in the sidebar.
 4. Choose a segmentation method in the segmentation panel.
 5. Select the GPU mode when available.
-6. Run the model or Cellpose -> NuClick macro pipeline.
+6. Run the model or NucleAI centroid-refinement pipeline with NuClick or iDISF.
 7. Compare layers in the dashboard and layer menu.
 8. Optionally remove border-touching nuclei for cleaner method comparison.
 9. Export nuclei, probability maps, HDF5 datasets, or project files.
@@ -222,7 +224,7 @@ Key modules:
 | `app/domain/tile.py` | Slice geometry, masks, segmentation layers, serialization |
 | `app/application/batch_segmentation_service.py` | Whole-tile segmentation orchestration |
 | `app/application/interactive_segmentation_service.py` | Click/point-based segmentation orchestration |
-| `app/infrastructure/ml_models/` | Cellpose, NuClick, CellViT, PathoSAM, DINOSim adapters |
+| `app/infrastructure/ml_models/` | Cellpose, NuClick, iDISF, CellViT, PathoSAM, DINOSim adapters |
 | `app/interface/gui/components/macro_pipeline_panel.py` | Batch/macro segmentation UI and multi-GPU workers |
 | `app/interface/gui/components/layer_dropdown.py` | Layer visibility, deletion, border cleanup |
 | `app/interface/gui/components/properties_panel.py` | Segmentation dashboard and metadata |
