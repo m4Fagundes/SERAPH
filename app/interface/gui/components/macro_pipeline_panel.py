@@ -27,6 +27,7 @@ _KNOWN_MODELS = [
     ("CellViT-SAM",        LAYER_COLORS[3]),
     ("PathoSAM (ViT-L)",   LAYER_COLORS[2]),
     ("DINOSim (small)",    LAYER_COLORS[1]),
+    ("InstanSeg",          LAYER_COLORS[4]),
 ]
 
 def _layer_name(model_name: str) -> str:

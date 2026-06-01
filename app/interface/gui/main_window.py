@@ -22,6 +22,7 @@ from app.infrastructure.ml_models.cellpose_adapter import CellposeAdapter
 from app.infrastructure.ml_models.cellvit_adapter import CellViTAdapter
 from app.infrastructure.ml_models.patho_sam_adapter import PathoSAMAdapter
 from app.infrastructure.ml_models.dinosim_adapter import DINOSimAdapter
+from app.infrastructure.ml_models.instanseg_adapter import InstanSegAdapter
 from PyQt6.QtWidgets import QComboBox, QCheckBox
 from app.interface.gui.theme import (
     PALETTE,
@@ -138,6 +139,13 @@ class SlicerLabApp(QMainWindow):
             _cr_logger.info("DINOSimAdapter registered: %s", dinosim_adapter.name)
         except Exception as e:
             _cr_logger.error("Failed to load DINOSim adapter: %s", e)
+
+        try:
+            instanseg_adapter = InstanSegAdapter()
+            batch_models.append(instanseg_adapter)
+            _cr_logger.info("InstanSegAdapter registered: %s", instanseg_adapter.name)
+        except Exception as e:
+            _cr_logger.error("Failed to load InstanSeg adapter: %s", e)
 
         self.batch_segmentation_service = BatchSegmentationService(
             models=batch_models

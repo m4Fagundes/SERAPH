@@ -342,9 +342,54 @@ instance split follow HoVer-Net's argmax+watershed, not a tunable probability (G
 our measurement confirms 99.58% saturation on this dataset → the foreground threshold is inert,
 so a fair PR curve for CellViT requires per-instance confidence ranking, not pixel thresholding.
 
+- **2026-06-01** — Q15: InstanSeg grid search (56 configs). Best F1 0.641 @ seed=0.8/peak=7/
+  mask=0.5 vs default 0.635 (+0.006, noise). seed_threshold the only strong knob (collapses at
+  0.9); mask inert; peak minor. Tuned InstanSeg still 2nd, ranking unchanged.
+- **2026-06-01** — Q14: InstanSeg (embedding-based, non-SAM) implemented as SERAPH adapter
+  (`external/instanseg`, `instanseg_adapter.py`, registered in composition root + UI) and
+  benchmarked: pooled F1 0.635 → 2nd place (above CellViT/PathoSAM, below Cellpose); more
+  precise than the SAM models (~40% fewer FP) but most conservative (lowest recall).
 - **2026-06-01** — Q13 ensemble (`ensemble_study.py`): Cellpose+PathoSAM consensus = highest
   precision (0.78/0.87), union = highest recall (0.78/0.86), but neither beats Cellpose F1
   (0.732/0.821). Ensemble gives tunable precision/recall extremes, not a better F1.
+
+### Q14 — InstanSeg (non-SAM, embedding-based) added as 4th method
+**Setup:** InstanSeg (`brightfield_nuclei`, pixel_size 0.25) integrated as a SERAPH adapter
+(`instanseg_adapter.py`, repo in `external/instanseg`). Embedding-based — no foreground
+threshold + watershed, so none of the CellViT-style binarization/saturation. Evaluated on the
+pooled 100 ROIs (`run_instanseg.py` → `results_instanseg.csv`).
+
+| Method | Precision | Recall | F1 | Dice | Boundary F | TP | FP | FN |
+|---|---|---|---|---|---|---|---|---|
+| Cellpose | 0.811 | 0.743 | **0.775** | 0.875 | 0.632 | 2005 | 466 | 695 |
+| **InstanSeg** | 0.601 | 0.672 | **0.635** | 0.864 | 0.547 | 1824 | 1211 | 890 |
+| CellViT-SAM | 0.521 | 0.787 | 0.627 | 0.874 | 0.616 | 2137 | 1967 | 577 |
+| PathoSAM | 0.511 | 0.762 | 0.612 | 0.867 | 0.572 | 2069 | 1983 | 645 |
+
+**Conclusion:** InstanSeg lands **2nd in F1** (0.635) — above both SAM models, below Cellpose.
+It is markedly **more precise** than CellViT/PathoSAM (0.60 vs 0.52/0.51; ~40% fewer FP) but the
+**most conservative** (lowest recall 0.672, highest FN). Dice tied (~0.86). Adds a genuinely
+different detection profile (conservative, non-SAM, no binary-map saturation).
+
+### Q15 — InstanSeg hyperparameter grid search (56 configs, pooled 100 ROIs)
+**Setup:** `instanseg_gridsearch.py` swept seed_threshold {0.3–0.9} × peak_distance {3,5,7,10}
+× mask_threshold {0.3,0.5}, optimizing micro-F1 (pixel_size 0.25, deterministic model).
+Results: `instanseg_gridsearch.csv`.
+
+**Best:** seed_threshold=0.8, peak_distance=7, mask_threshold=0.5 → **F1 0.641** (P 0.675, R 0.611).
+Default ≈ F1 0.635. **Tuning gain = +0.006** (within noise).
+
+| Knob | Effect (mean F1) |
+|---|---|
+| seed_threshold | 0.3→0.61, peak at 0.8→0.640, **collapses at 0.9→0.47** (too strict) |
+| peak_distance | minor (3→0.600 … 10→0.609; higher = slightly more precise) |
+| mask_threshold | inert (0.604 vs 0.603) |
+
+**Conclusions:** (1) InstanSeg is near its ceiling at default — tuning adds essentially nothing
+(+0.006 F1, noise-level), it only re-balances precision↔recall (seed=0.8 lifts precision to
+0.675 at the cost of recall). (2) seed_threshold is the only strong knob; mask_threshold inert,
+peak_distance minor. (3) **Even tuned, InstanSeg (0.641) stays 2nd** — above CellViT (0.627) and
+PathoSAM (0.612), below Cellpose (0.775). Ranking is robust to tuning, consistent with Q12.
 
 ## Changelog
 - **2026-06-01** — Initial consolidation: setup, headline results, Q1–Q8, methodology,
