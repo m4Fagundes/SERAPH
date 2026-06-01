@@ -749,8 +749,8 @@ class SlicerLabApp(QMainWindow):
         act_import_slice_images.triggered.connect(self.project_manager.import_slice_images_folder)
         file_menu.addAction(act_import_slice_images)
 
-        act_import_tile = QAction("Import Tile...", self)
-        act_import_tile.setStatusTip("Import a tile descriptor into the current image")
+        act_import_tile = QAction("Import Tiles...", self)
+        act_import_tile.setStatusTip("Import one or more tile descriptors into the current image")
         act_import_tile.triggered.connect(self._add_tile)
         file_menu.addAction(act_import_tile)
 
@@ -772,6 +772,11 @@ class SlicerLabApp(QMainWindow):
         act_export_probability_map.setStatusTip("Export TIFF probability maps from existing segmentation layers")
         act_export_probability_map.triggered.connect(self.export_handler.export_probability_maps)
         export_menu.addAction(act_export_probability_map)
+
+        act_export_instance_masks = QAction("Export Instance Masks...", self)
+        act_export_instance_masks.setStatusTip("Export uint32 TIFF/NPY instance masks for benchmarking")
+        act_export_instance_masks.triggered.connect(self.export_handler.export_instance_masks)
+        export_menu.addAction(act_export_instance_masks)
 
         act_export_h5_file = QAction("Export Nuclei (HDF5)...", self)
         act_export_h5_file.setShortcut(QKeySequence("Ctrl+E"))

@@ -425,6 +425,9 @@ class MacroPipelineWorker(QThread):
                     self.batch_service.vram_snapshot_start()
                     if hasattr(self.batch_service, "vram_snapshot_start")
                     else None,
+                    self.batch_service.instance_map()
+                    if hasattr(self.batch_service, "instance_map")
+                    else None,
                 )
 
             self.current_slice_pos = pos + 1
@@ -478,7 +481,8 @@ class MacroPipelineWorker(QThread):
                     local_polys = adapter.segment(pil_img, **self.cellpose_params)
                     global_polys = self._offset_polygons(local_polys, origin)
                     prob = adapter.probability_map()
-                    result_queue.put((pos, i, global_polys, prob, time.monotonic() - slice_start, device_id, vram_start))
+                    instance_map = getattr(adapter, "instance_map", lambda: None)()
+                    result_queue.put((pos, i, global_polys, prob, instance_map, time.monotonic() - slice_start, device_id, vram_start))
                     with completed_lock:
                         completed += 1
                         self.progress.emit(
@@ -497,13 +501,13 @@ class MacroPipelineWorker(QThread):
                 if self.is_cancelled:
                     return
                 try:
-                    _, i, polys, prob, elapsed, device_id, vram_start = result_queue.get(timeout=0.2)
+                    _, i, polys, prob, instance_map, elapsed, device_id, vram_start = result_queue.get(timeout=0.2)
                 except Empty:
                     if all(f.done() for f in futures):
                         break
                     continue
                 if polys:
-                    self._add_cellpose_layer(i, polys, elapsed, prob, vram_start)
+                    self._add_cellpose_layer(i, polys, elapsed, prob, vram_start, instance_map)
                     logger.info(
                         "Macro Cellpose multi-GPU: slice %d completed on CUDA device %d with %d polygons",
                         i + 1, device_id, len(polys),
@@ -520,7 +524,7 @@ class MacroPipelineWorker(QThread):
         bx1, by1 = origin
         return [[(px + bx1, py + by1) for px, py in poly] for poly in polygons]
 
-    def _add_cellpose_layer(self, slice_idx: int, polygons, elapsed: float, probability_map, vram_start=None) -> None:
+    def _add_cellpose_layer(self, slice_idx: int, polygons, elapsed: float, probability_map, vram_start=None, instance_map=None) -> None:
         layer_idx = self.session.tiles[slice_idx].add_layer(
             "Macro Cellpose", self.cellpose_model, polygons, LAYER_COLORS[0]
         )
@@ -530,6 +534,9 @@ class MacroPipelineWorker(QThread):
         self._apply_vram_metadata(layer, vram_start)
         if probability_map is not None:
             layer["probability_map"] = probability_map
+        if instance_map is not None:
+            layer["instance_map"] = instance_map
+            layer["instance_map_source"] = "raw_model_output"
 
     def _add_nuclick_layer(self, tile, polygons, elapsed: float, vram_start=None) -> None:
         layer_idx = tile.add_layer("Macro NuClick", self.nuclick_model, polygons, LAYER_COLORS[1])
@@ -635,6 +642,10 @@ class SingleModelWorker(QThread):
                 prob = self.batch_service.probability_map()
                 if prob is not None:
                     self.session.tiles[i].segmentation_layers[layer_idx]["probability_map"] = prob
+                instance_map = getattr(self.batch_service, "instance_map", lambda: None)()
+                if instance_map is not None:
+                    self.session.tiles[i].segmentation_layers[layer_idx]["instance_map"] = instance_map
+                    self.session.tiles[i].segmentation_layers[layer_idx]["instance_map_source"] = "raw_model_output"
             self.progress.emit(
                 pos + 1,
                 total_slices,
@@ -680,13 +691,28 @@ class SingleModelWorker(QThread):
                     slice_start = time.monotonic()
                     vram_start = cuda_memory_snapshot(device_id)
                     local_polys = adapter.segment(pil_img, **self.params)
+                    cleanup_hook = getattr(adapter, "cleanup_after_segment", None)
+                    if callable(cleanup_hook):
+                        cleanup_hook()
+                    actual_device_id = getattr(adapter, "current_cuda_device_id", lambda: device_id)()
+                    actual_device_label = getattr(adapter, "current_device_label", lambda: f"cuda:{device_id}")()
                     bx1, by1 = origin
                     global_polys = [
                         [(px + bx1, py + by1) for px, py in poly]
                         for poly in local_polys
                     ]
                     result_queue.put(
-                        (pos, i, global_polys, adapter.probability_map(), time.monotonic() - slice_start, device_id, vram_start)
+                        (
+                            pos,
+                            i,
+                            global_polys,
+                            adapter.probability_map(),
+                            getattr(adapter, "instance_map", lambda: None)(),
+                            time.monotonic() - slice_start,
+                            actual_device_id if actual_device_id is not None else device_id,
+                            vram_start,
+                            actual_device_label,
+                        )
                     )
                     with completed_lock:
                         completed += 1
@@ -742,13 +768,28 @@ class SingleModelWorker(QThread):
                     slice_start = time.monotonic()
                     vram_start = cuda_memory_snapshot(device_id)
                     local_polys = adapter.segment(pil_img, **self.params)
+                    cleanup_hook = getattr(adapter, "cleanup_after_segment", None)
+                    if callable(cleanup_hook):
+                        cleanup_hook()
+                    actual_device_id = getattr(adapter, "current_cuda_device_id", lambda: device_id)()
+                    actual_device_label = getattr(adapter, "current_device_label", lambda: f"cuda:{device_id}")()
                     bx1, by1 = origin
                     global_polys = [
                         [(px + bx1, py + by1) for px, py in poly]
                         for poly in local_polys
                     ]
                     result_queue.put(
-                        (pos, i, global_polys, adapter.probability_map(), time.monotonic() - slice_start, device_id, vram_start)
+                        (
+                            pos,
+                            i,
+                            global_polys,
+                            adapter.probability_map(),
+                            getattr(adapter, "instance_map", lambda: None)(),
+                            time.monotonic() - slice_start,
+                            actual_device_id if actual_device_id is not None else device_id,
+                            vram_start,
+                            actual_device_label,
+                        )
                     )
                     with completed_lock:
                         completed += 1
@@ -774,11 +815,16 @@ class SingleModelWorker(QThread):
             if self.is_cancelled:
                 return
             try:
-                _, i, polys, prob, elapsed, device_id, vram_start = result_queue.get(timeout=0.2)
+                item = result_queue.get(timeout=0.2)
             except Empty:
                 if all(f.done() for f in futures):
                     break
                 continue
+            if len(item) == 9:
+                _, i, polys, prob, instance_map, elapsed, device_id, vram_start, device_label = item
+            else:
+                _, i, polys, prob, instance_map, elapsed, device_id, vram_start = item
+                device_label = f"cuda:{device_id}"
 
             if polys:
                 layer_idx = self.session.tiles[i].add_layer(
@@ -786,12 +832,16 @@ class SingleModelWorker(QThread):
                 )
                 layer = self.session.tiles[i].segmentation_layers[layer_idx]
                 layer["execution_time_s"] = elapsed
+                layer["execution_device"] = device_label
                 MacroPipelineWorker._apply_vram_metadata(layer, vram_start)
                 if prob is not None:
                     layer["probability_map"] = prob
+                if instance_map is not None:
+                    layer["instance_map"] = instance_map
+                    layer["instance_map_source"] = "raw_model_output"
                 logger.info(
-                    "%s: slice %d completed on CUDA device %d with %d polygons",
-                    self.model_name, i + 1, device_id, len(polys),
+                    "%s: slice %d completed on %s with %d polygons",
+                    self.model_name, i + 1, device_label, len(polys),
                 )
             processed += 1
 
@@ -845,6 +895,10 @@ class SingleModelWorker(QThread):
                     prob = self.batch_service.probability_map()
                     if prob is not None:
                         self.session.tiles[i].segmentation_layers[layer_idx]["probability_map"] = prob
+                    instance_map = getattr(self.batch_service, "instance_map", lambda: None)()
+                    if instance_map is not None:
+                        self.session.tiles[i].segmentation_layers[layer_idx]["instance_map"] = instance_map
+                        self.session.tiles[i].segmentation_layers[layer_idx]["instance_map_source"] = "raw_model_output"
                 self.progress.emit(
                     pos + 1,
                     total_slices,

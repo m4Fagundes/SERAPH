@@ -191,47 +191,53 @@ class ProjectManager:
             QMessageBox.warning(self.mw, "Add Tile", "No image session is active.")
             return
 
-        path, _ = QFileDialog.getOpenFileName(
+        paths, _ = QFileDialog.getOpenFileNames(
             self.mw,
-            "Open Tile Descriptor",
+            "Open Tile Descriptor(s)",
             "",
             "All Supported (*.xml *.geojson *.json);;Tile Descriptor (*.xml);;GeoJSON Annotations (*.geojson);;JSON Annotations (*.json)",
         )
-        if not path:
+        if not paths:
             return
 
-        try:
+        imported_indices: list[int] = []
+        failures: list[tuple[str, str]] = []
+
+        for path in paths:
             ext = os.path.splitext(path)[1].lower()
-            if ext == ".geojson":
-                new_indices = self.mw.tile_import_service.load_geojson(path, s)
-                if not new_indices:
-                    QMessageBox.warning(self.mw, "Import", "No valid annotations found.")
-                    return
-                self.mw.slice_previews.update_previews()
-                self.mw.statusBar().showMessage(
-                    f"GeoJSON imported → {len(new_indices)} slices | {len(s.tiles)} total"
-                )
-                self.mw.switch_to_tile(new_indices[0])
-                return
-            elif ext == ".json":
-                new_indices = self.mw.tile_import_service.load_json(path, s)
-                if not new_indices:
-                    QMessageBox.warning(self.mw, "Import", "No valid annotations found.")
-                    return
-                self.mw.slice_previews.update_previews()
-                self.mw.statusBar().showMessage(
-                    f"JSON imported → {len(new_indices)} slices | {len(s.tiles)} total"
-                )
-                self.mw.switch_to_tile(new_indices[0])
-                return
+            try:
+                if ext == ".geojson":
+                    imported_indices.extend(self.mw.tile_import_service.load_geojson(path, s))
+                elif ext == ".json":
+                    imported_indices.extend(self.mw.tile_import_service.load_json(path, s))
+                else:
+                    imported_indices.append(self.mw.tile_import_service.load_tile_xml(path, s))
+            except Exception as exc:
+                failures.append((os.path.basename(path), str(exc)))
+
+        if not imported_indices:
+            if failures:
+                msg = "\n".join(f"{name}: {err}" for name, err in failures[:8])
+                if len(failures) > 8:
+                    msg += f"\n...and {len(failures) - 8} more."
+                QMessageBox.critical(self.mw, "Import Error", msg)
             else:
-                new_idx = self.mw.tile_import_service.load_tile_xml(path, s)
-        except Exception as exc:
-            QMessageBox.critical(self.mw, "Import Error", str(exc))
+                QMessageBox.warning(self.mw, "Import", "No valid annotations found.")
             return
 
         self.mw.slice_previews.update_previews()
         self.mw.statusBar().showMessage(
-            f"Tile imported → Slice {new_idx + 1} | {len(s.tiles)} slices total"
+            f"Imported {len(imported_indices)} slice{'s' if len(imported_indices) != 1 else ''} "
+            f"from {len(paths)} file{'s' if len(paths) != 1 else ''} | {len(s.tiles)} slices total"
         )
-        self.mw.switch_to_tile(new_idx)
+        self.mw.switch_to_tile(imported_indices[0])
+
+        if failures:
+            msg = "\n".join(f"{name}: {err}" for name, err in failures[:8])
+            if len(failures) > 8:
+                msg += f"\n...and {len(failures) - 8} more."
+            QMessageBox.warning(
+                self.mw,
+                "Partial Import",
+                f"Imported {len(imported_indices)} slice(s), but {len(failures)} file(s) failed:\n\n{msg}",
+            )

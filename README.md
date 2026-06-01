@@ -229,6 +229,17 @@ Key modules:
 | `app/interface/gui/components/layer_dropdown.py` | Layer visibility, deletion, border cleanup |
 | `app/interface/gui/components/properties_panel.py` | Segmentation dashboard and metadata |
 
+Repository layout:
+
+| Path | Purpose |
+|---|---|
+| `external/` | Local third-party source checkouts and submodules used by adapters |
+| `benchmark/evaluationMethod/` | Ground-truth comparison scripts and metric helpers |
+| `benchmark/data/` | Local datasets and generated benchmark assets, ignored by git |
+| `sample_data/` | Small tracked sample files |
+| `var/` | Local scratch/runtime files, ignored by git |
+| `scripts/` | Developer and inspection utilities |
+
 ---
 
 ## Project Files

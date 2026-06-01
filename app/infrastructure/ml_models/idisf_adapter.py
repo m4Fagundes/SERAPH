@@ -8,6 +8,7 @@ from typing import List, Tuple
 from PIL.Image import Image
 
 from app.domain.interfaces.segmentation_model import ISegmentationModel
+from app.infrastructure.external_repos import repo_path
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,7 @@ class IDISFAdapter(ISegmentationModel):
         c1: float = 0.7,
         c2: float = 0.8,
     ):
-        root = Path(__file__).resolve().parents[3]
-        self.repo_dir = Path(repo_dir) if repo_dir else root / "iDISF"
+        self.repo_dir = Path(repo_dir) if repo_dir else repo_path("iDISF")
         self.crop_size = crop_size
         self.n0 = n0
         self.iterations = iterations

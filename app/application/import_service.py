@@ -79,19 +79,30 @@ class TileImportService:
                 candidate_abs, candidate_rel,
             )
 
-        # ── Append Tile to session ──
+        # ── Append Tile to session, or merge into an existing matching tile ──
         from app.domain.tile import Tile
-        tile = Tile(rects=list(rects))
-        tile.metadata = {
+        metadata = {
             "name": sl.get("name", ""),
             "description": sl.get("description", ""),
             "microns_per_pixel": sl.get("microns_per_pixel", ""),
         }
-        tile.pixel_mask = {(p[0], p[1]) for p in sl.get("pixel_mask", [])}
-        tile.polygon = polygon
-        
-        session.tiles.append(tile)
-        new_idx = len(session.tiles) - 1
+        pixel_mask = {(p[0], p[1]) for p in sl.get("pixel_mask", [])}
+
+        match_idx = self._find_matching_tile(session, list(rects), metadata, polygon)
+        if match_idx is not None:
+            tile = session.tiles[match_idx]
+            tile.pixel_mask.update(pixel_mask)
+            if polygon and not getattr(tile, "polygon", None):
+                tile.polygon = polygon
+            new_idx = match_idx
+            logger.info("Tile XML matched existing slice idx %d; merging layers.", new_idx)
+        else:
+            tile = Tile(rects=list(rects))
+            tile.metadata = metadata
+            tile.pixel_mask = pixel_mask
+            tile.polygon = polygon
+            session.tiles.append(tile)
+            new_idx = len(session.tiles) - 1
 
         # Restore segmentations as layers on the tile
         segmentations = sl.get("segmentations", [])
@@ -100,13 +111,14 @@ class TileImportService:
             grouped = defaultdict(list)
             for seg in segmentations:
                 poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
-                model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
+                raw_model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
+                model = self._normalize_segmentation_source(raw_model)
                 int_poly = [(int(pt[0]), int(pt[1])) for pt in poly]
                 grouped[model].append(int_poly)
             from app.domain.tile import LAYER_COLORS
             for i, (model, polys) in enumerate(grouped.items()):
                 color = LAYER_COLORS[i % len(LAYER_COLORS)]
-                tile.add_layer(model, model, polys, color)
+                self._add_or_extend_layer(tile, model, polys, color)
 
         logger.info(
             "Tile XML imported: type=%s, rect=%s, polygon=%s, %d removed pixels, %d nuclei → slice idx %d",
@@ -118,6 +130,72 @@ class TileImportService:
             new_idx,
         )
         return new_idx
+
+    def _normalize_segmentation_source(self, source: str) -> str:
+        text = (source or "").strip()
+        key = text.lower().replace("_", "-").strip()
+        gt_aliases = {
+            "gt",
+            "gt-pathology",
+            "gt pathology",
+            "gt-pathologist",
+            "gt pathologist",
+            "gt (pathologist)",
+            "ground truth",
+            "ground-truth",
+            "groundtruth",
+            "pathologist",
+            "pathology",
+        }
+        return "gt-pathology" if key in gt_aliases else (text or "Imported")
+
+    def _find_matching_tile(self, session: ImageSession, rects: list, metadata: dict, polygon):
+        target_name = (metadata.get("name") or "").strip()
+        target_rects = {tuple(r) for r in rects}
+        target_bbox = self._rects_bbox(target_rects)
+
+        for idx, tile in enumerate(session.tiles):
+            tile_name = (tile.metadata.get("name") or "").strip()
+            if target_name and tile_name and target_name == tile_name:
+                return idx
+            tile_rects = {tuple(r) for r in getattr(tile, "rects", [])}
+            if target_rects and tile_rects == target_rects:
+                return idx
+            if target_bbox and getattr(tile, "bounding_box", None) == target_bbox:
+                return idx
+        return None
+
+    def _rects_bbox(self, rects: set[tuple[int, int, int, int]]):
+        if not rects:
+            return None
+        return (
+            min(r[0] for r in rects),
+            min(r[1] for r in rects),
+            max(r[2] for r in rects),
+            max(r[3] for r in rects),
+        )
+
+    def _add_or_extend_layer(self, tile, model: str, polys: list, color: str) -> None:
+        for layer in tile.segmentation_layers:
+            layer_model = self._normalize_segmentation_source(
+                layer.get("model_name") or layer.get("model") or layer.get("name") or ""
+            )
+            layer_name = self._normalize_segmentation_source(layer.get("name") or "")
+            if layer_model == model or layer_name == model:
+                existing = {
+                    tuple((int(x), int(y)) for x, y in poly)
+                    for poly in layer.setdefault("polygons", [])
+                }
+                for poly in polys:
+                    key = tuple((int(x), int(y)) for x, y in poly)
+                    if key not in existing:
+                        layer["polygons"].append(poly)
+                        existing.add(key)
+                layer["model"] = model
+                layer["model_name"] = model
+                layer["name"] = model
+                return
+        tile.add_layer(model, model, polys, color)
 
     def load_geojson(self, path: str, session: ImageSession) -> list[int]:
         """Parse a GeoJSON annotation file.  Each annotated region becomes

@@ -10,6 +10,7 @@
 .claude/
 
 __pycache__/
+.pytest_cache/
 *.pyc
 skills/
 *.pth
@@ -22,6 +23,7 @@ venv/
 .icloud/
 dist/
 /build/
+portable/
 skills/
 *.exe
 .gitnexus
@@ -29,8 +31,16 @@ AGENTS.md
 CLAUDE.md
 ruvector.db
 
-# Local cloned libraries
-elf/
-micro-sam/
-torch-em/
+# Local runtime environments
 venv-sm120/
+
+# Local cloned libraries that are used from source but are not submodules
+external/elf/
+external/micro-sam/
+external/torch-em/
+
+# Local benchmark data and scratch outputs
+benchmark/data/
+benchmark/outputs/
+benchmark/results/
+var/

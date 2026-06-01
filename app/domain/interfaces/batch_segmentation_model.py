@@ -53,3 +53,11 @@ class IBatchSegmentationModel(ABC):
         Subclasses override this to expose model-internal probabilities.
         """
         return None
+
+    def instance_map(self):
+        """Return the H×W integer instance-label map from the last segment() call.
+
+        Label 0 is background; each positive integer is one detected instance.
+        Returns None if the adapter cannot expose a raw model/postprocessor label map.
+        """
+        return None

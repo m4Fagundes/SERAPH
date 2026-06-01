@@ -934,6 +934,10 @@ class TileRenderer(QGraphicsView):
                 prob = batch_service.probability_map()
                 if prob is not None:
                     tile.segmentation_layers[layer_idx]["probability_map"] = prob
+                instance_map = getattr(batch_service, "instance_map", lambda: None)()
+                if instance_map is not None:
+                    tile.segmentation_layers[layer_idx]["instance_map"] = instance_map
+                    tile.segmentation_layers[layer_idx]["instance_map_source"] = "raw_model_output"
             if sb:
                 sb.showMessage(
                     f"Batch segmentation: {len(polygons)} nuclei detected{time_msg}."

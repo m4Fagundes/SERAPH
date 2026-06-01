@@ -335,6 +335,124 @@ class ExportService:
             f"max={float(finite.max()):.6f}, near_binary={near_binary:.2f}%"
         )
 
+    def export_instance_masks(
+        self,
+        session,
+        output_dir,
+        selected_layer="All Segmentations",
+        tile_indices=None,
+        progress_callback=None,
+    ):
+        """Export benchmark-ready instance masks as uint32 TIFF + NPY files.
+
+        Prediction layers are exported only when they carry a raw instance map
+        captured from the model/postprocessor. Ground-truth layers may be
+        rasterized from polygons because the annotation itself is vector data.
+        """
+        if not session or not output_dir:
+            return 0
+
+        import numpy as np
+        import tifffile
+
+        os.makedirs(output_dir, exist_ok=True)
+        if tile_indices is None:
+            tile_indices = range(len(session.tiles))
+        tile_indices = [idx for idx in tile_indices if idx is not None and 0 <= idx < len(session.tiles)]
+
+        base = os.path.splitext(session.name)[0]
+        manifest_rows = []
+        count = 0
+        total = len(tile_indices)
+
+        for progress_idx, tile_idx in enumerate(tile_indices, start=1):
+            tile = session.tiles[tile_idx]
+            bx1, by1, bx2, by2 = tile.bounding_box
+            expected_shape = (by2 - by1, bx2 - bx1)
+            if expected_shape[0] <= 0 or expected_shape[1] <= 0:
+                continue
+
+            for layer in tile.segmentation_layers:
+                layer_name = layer.get("name", "Unknown")
+                if selected_layer != "All Segmentations" and layer_name != selected_layer:
+                    continue
+
+                instance_map = layer.get("instance_map")
+                source_kind = layer.get("instance_map_source", "")
+                if instance_map is not None:
+                    mask = np.asarray(instance_map)
+                    if mask.shape != expected_shape:
+                        logger.warning(
+                            "Skipping instance map for slice %d layer '%s': got shape %s, expected %s",
+                            tile_idx + 1,
+                            layer_name,
+                            mask.shape,
+                            expected_shape,
+                        )
+                        continue
+                    mask = mask.astype(np.uint32, copy=False)
+                    source_kind = source_kind or "raw_model_output"
+                elif self._is_ground_truth_layer(layer):
+                    mask = self._rasterize_layer_polygons(tile, layer).astype(np.uint32, copy=False)
+                    source_kind = "polygon_ground_truth"
+                else:
+                    continue
+
+                safe_layer = self._safe_filename(layer_name)
+                stem = f"{base}_slice{tile_idx + 1}_{safe_layer}_instance_mask"
+                tiff_path = os.path.join(output_dir, f"{stem}.tiff")
+                npy_path = os.path.join(output_dir, f"{stem}.npy")
+                tifffile.imwrite(tiff_path, mask, dtype=mask.dtype)
+                np.save(npy_path, mask)
+
+                count += 1
+                manifest_rows.append({
+                    "slice_index": tile_idx + 1,
+                    "slice_name": tile.metadata.get("name", ""),
+                    "layer": layer_name,
+                    "model": layer.get("model_name") or layer.get("model", ""),
+                    "source_kind": source_kind,
+                    "height": expected_shape[0],
+                    "width": expected_shape[1],
+                    "instances": int(mask.max()) if mask.size else 0,
+                    "tiff": os.path.basename(tiff_path),
+                    "npy": os.path.basename(npy_path),
+                })
+
+            if progress_callback:
+                progress_callback(progress_idx, total)
+
+        if manifest_rows:
+            manifest_path = os.path.join(output_dir, f"{base}_instance_masks_manifest.csv")
+            with open(manifest_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=manifest_rows[0].keys())
+                writer.writeheader()
+                writer.writerows(manifest_rows)
+
+        return count
+
+    @staticmethod
+    def _is_ground_truth_layer(layer: dict) -> bool:
+        text = " ".join(str(layer.get(k, "")) for k in ("name", "model", "model_name")).lower()
+        return "gt" in text or "ground" in text or "patholog" in text
+
+    @staticmethod
+    def _rasterize_layer_polygons(tile, layer: dict):
+        import numpy as np
+
+        bx1, by1, bx2, by2 = tile.bounding_box
+        w, h = bx2 - bx1, by2 - by1
+        label_img = Image.new("I", (w, h), 0)
+        draw = ImageDraw.Draw(label_img)
+        label_id = 1
+        for poly in layer.get("polygons", []):
+            if not poly or len(poly) < 3:
+                continue
+            local = [(int(x - bx1), int(y - by1)) for x, y in poly]
+            draw.polygon(local, fill=label_id)
+            label_id += 1
+        return np.asarray(label_img, dtype=np.uint32)
+
     @staticmethod
     def _safe_filename(value):
         value = str(value or "unknown")

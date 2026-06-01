@@ -13,7 +13,7 @@ Workflow:
        but the reference vectors persist until explicitly cleared.
 
 Repository requirement:
-    napari-dinoSim must be present at <seraph_root>/napari-dinoSim/ (already
+    napari-dinoSim must be present at external/napari-dinoSim/ (already
     cloned). DINOv2 weights are downloaded on first use via torch.hub
     (~87 MB small / ~330 MB large).
 """
@@ -26,14 +26,11 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from app.domain.interfaces.batch_segmentation_model import IBatchSegmentationModel
+from app.infrastructure.external_repos import repo_path
 
 logger = logging.getLogger(__name__)
 
-_DINOSIM_SRC = (
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "napari-dinoSim"
-    / "src"
-)
+_DINOSIM_SRC = repo_path("napari-dinoSim", "src")
 
 _MODEL_DIMS = {"small": 384, "base": 768, "large": 1024, "giant": 1536}
 _MODEL_LETTERS = {"small": "s", "base": "b", "large": "l", "giant": "g"}
@@ -45,7 +42,7 @@ def _add_dinosim_to_path() -> bool:
     if not _DINOSIM_SRC.exists():
         logger.error(
             "napari-dinoSim source not found at '%s'. "
-            "Clone: git clone https://github.com/AAitorG/napari-dinoSim",
+            "Clone into external/: git clone https://github.com/AAitorG/napari-dinoSim",
             _DINOSIM_SRC,
         )
         return False
@@ -715,7 +712,7 @@ class DINOSimAdapter(IBatchSegmentationModel):
         except ImportError as exc:
             logger.error(
                 "Failed to import DINOSim: %s\n"
-                "Ensure napari-dinoSim/src exists and torch/torchvision are installed.",
+                "Ensure external/napari-dinoSim/src exists and torch/torchvision are installed.",
                 exc,
             )
             return

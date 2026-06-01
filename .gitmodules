@@ -1,12 +1,15 @@
 [submodule "CellViT"]
-	path = CellViT
+	path = external/CellViT
 	url = https://github.com/TIO-IKIM/CellViT
 
 [submodule "napari-dinoSim"]
-	path = napari-dinoSim
+	path = external/napari-dinoSim
 	url = https://github.com/AAitorG/napari-dinoSim
 
 [submodule "patho-sam"]
-	path = patho-sam
+	path = external/patho-sam
 	url = https://github.com/computational-cell-analytics/patho-sam
 
+[submodule "iDISF"]
+	path = external/iDISF
+	url = https://github.com/IsabelaBB/iDISF

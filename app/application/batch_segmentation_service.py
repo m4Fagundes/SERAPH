@@ -42,6 +42,7 @@ class BatchSegmentationService:
     def __init__(self, models: Optional[List[IBatchSegmentationModel]] = None):
         self._models: Dict[str, IBatchSegmentationModel] = {}
         self._last_probability_map = None
+        self._last_instance_map = None
         self._last_vram_snapshot_start = None
         if models:
             for model in models:
@@ -101,12 +102,15 @@ class BatchSegmentationService:
                 cellprob_threshold=cellprob_threshold,
             )
             self._last_probability_map = model.probability_map()
+            instance_map = getattr(model, "instance_map", lambda: None)()
+            self._last_instance_map = instance_map
             return polygons
         except Exception as e:
             logger.exception(
                 "Error running batch segmentation for %s: %s", model_name, e
             )
             self._last_probability_map = None
+            self._last_instance_map = None
             self._last_vram_snapshot_start = None
             return []
         finally:
@@ -231,6 +235,10 @@ class BatchSegmentationService:
     def probability_map(self):
         """Return the probability map from the most recent segment() or segment_tile() call."""
         return self._last_probability_map
+
+    def instance_map(self):
+        """Return the raw instance-label map from the most recent segmentation call."""
+        return self._last_instance_map
 
     def vram_snapshot_start(self):
         """Return CUDA memory snapshot captured immediately before the last segmentation."""

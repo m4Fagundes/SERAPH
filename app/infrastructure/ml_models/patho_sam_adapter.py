@@ -29,14 +29,14 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from app.domain.interfaces.batch_segmentation_model import IBatchSegmentationModel
+from app.infrastructure.external_repos import repo_path
 
 logger = logging.getLogger(__name__)
 
-_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_PATHO_SAM_REPO = _ROOT / "patho-sam"
-_MICRO_SAM_REPO = _ROOT / "micro-sam"
-_TORCH_EM_REPO  = _ROOT / "torch-em"
-_ELF_REPO       = _ROOT / "elf"
+_PATHO_SAM_REPO = repo_path("patho-sam")
+_MICRO_SAM_REPO = repo_path("micro-sam")
+_TORCH_EM_REPO  = repo_path("torch-em")
+_ELF_REPO       = repo_path("elf")
 
 _MODEL_DISPLAY_NAMES = {
     "vit_b_histopathology": "PathoSAM (ViT-B)",
@@ -55,7 +55,7 @@ def _add_patho_sam_to_path() -> None:
         else:
             logger.warning(
                 "PathoSAM: expected repo not found at '%s' — "
-                "run: git clone <url> from the SERAPH root", repo
+                "clone the dependency into SERAPH/external/", repo
             )
 
 
@@ -103,6 +103,7 @@ class PathoSAMAdapter(IBatchSegmentationModel):
         self._device: Optional[str] = None
         self._load_attempted = False
         self._last_probability_map = None
+        self._last_instance_map = None
 
         self._display_name = _MODEL_DISPLAY_NAMES.get(model_type, f"PathoSAM ({model_type})")
 
@@ -191,11 +192,13 @@ class PathoSAMAdapter(IBatchSegmentationModel):
 
             # micro_sam versions differ: some return (masks, embeddings), others just masks
             label_map = result[0] if isinstance(result, tuple) else result
+            self._last_instance_map = np.asarray(label_map).astype(np.uint32, copy=False)
             self._capture_probability_map()
 
         except Exception as exc:
             logger.error("PathoSAM inference failed: %s", exc, exc_info=True)
             self._last_probability_map = None
+            self._last_instance_map = None
             self.cleanup_after_segment()
             self._clear_cuda_cache()
             return []
@@ -206,6 +209,9 @@ class PathoSAMAdapter(IBatchSegmentationModel):
 
     def probability_map(self):
         return self._last_probability_map
+
+    def instance_map(self):
+        return self._last_instance_map
 
     def cleanup_after_segment(self) -> None:
         """Release per-image micro-sam state after SERAPH has copied outputs."""

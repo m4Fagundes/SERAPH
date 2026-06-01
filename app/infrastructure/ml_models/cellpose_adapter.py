@@ -116,6 +116,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         self._cellprob_threshold = cellprob_threshold
         self._min_size = min_size
         self._last_probability_map = None
+        self._last_instance_map = None
 
         # Performance settings
         self._batch_size = self._config.cellpose.batch_size
@@ -396,6 +397,7 @@ class CellposeAdapter(IBatchSegmentationModel):
 
         try:
             import numpy as _np
+            self._last_instance_map = _np.asarray(masks).astype(_np.uint32, copy=False)
             cprob = _np.asarray(flows[2], dtype=_np.float32)
             self._last_probability_map = cprob if cprob.ndim == 2 else None
             logger.info(
@@ -405,6 +407,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         except Exception as _e:
             logger.warning("Could not capture Cellpose probability map: %s", _e)
             self._last_probability_map = None
+            self._last_instance_map = None
 
         logger.info("Cellpose detected %d objects.", masks.max() if masks.size else 0)
 
@@ -416,6 +419,9 @@ class CellposeAdapter(IBatchSegmentationModel):
 
     def probability_map(self):
         return self._last_probability_map
+
+    def instance_map(self):
+        return self._last_instance_map
 
     # ── Private Methods ─────────────────────────────────────────────────────
 

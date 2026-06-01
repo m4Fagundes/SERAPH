@@ -4,7 +4,7 @@ CellViTAdapter — Infrastructure adapter for CellViT nucleus segmentation.
 Implements IBatchSegmentationModel, following the same lazy-loading and GPU-fallback
 pattern as CellposeAdapter.
 
-The CellViT repository must be present at <seraph_root>/CellViT/ (cloned from
+The CellViT repository must be present at external/CellViT/ (cloned from
 github.com/TIO-IKIM/CellViT). A pre-trained checkpoint (.pth) is expected in
 ~/.grid-analyzer/models/ (auto-detected) or supplied explicitly via model_path.
 
@@ -31,12 +31,13 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from app.domain.interfaces.batch_segmentation_model import IBatchSegmentationModel
+from app.infrastructure.external_repos import repo_path
 from app.infrastructure.ml_models.cellvit.postprocess import DetectionCellPostProcessor
 
 logger = logging.getLogger(__name__)
 
-# Path to the cloned CellViT repository at the SERAPH project root
-_CELLVIT_REPO = Path(__file__).resolve().parent.parent.parent.parent / "CellViT"
+# Path to the cloned CellViT repository.
+_CELLVIT_REPO = repo_path("CellViT")
 
 # Default directory for CellViT checkpoints
 _CHECKPOINT_DIR = Path.home() / ".grid-analyzer" / "models"
@@ -140,6 +141,7 @@ class CellViTAdapter(IBatchSegmentationModel):
         # Resolve display name at init from checkpoint filename (no torch import needed)
         self._display_name = self._infer_display_name()
         self._last_probability_map = None
+        self._last_instance_map = None
 
     # ── IBatchSegmentationModel ──────────────────────────────────────────────
 
@@ -192,6 +194,8 @@ class CellViTAdapter(IBatchSegmentationModel):
 
         all_polygons: List[List[Tuple[int, int]]] = []
         prob_canvas = np.full((H, W), -np.inf, dtype=np.float32)
+        inst_canvas = np.zeros((H, W), dtype=np.uint32)
+        next_instance_id = 1
 
         for batch_start in range(0, len(patch_list), self._batch_size):
             batch = patch_list[batch_start: batch_start + self._batch_size]
@@ -204,11 +208,8 @@ class CellViTAdapter(IBatchSegmentationModel):
                 )
                 predictions = self._forward(patches_tensor)
             except RuntimeError as exc:
-                if "out of memory" in str(exc).lower() and self._use_gpu:
-                    logger.warning("CUDA OOM — falling back to CPU for CellViT")
-                    self._move_to_cpu()
-                    patches_tensor = patches_tensor.to(self._device)
-                    predictions = self._forward(patches_tensor)
+                if self._is_cuda_oom(exc) and self._use_gpu:
+                    predictions = self._retry_after_cuda_oom(patches_tensor, exc)
                 else:
                     logger.error("CellViT forward pass failed: %s", exc)
                     continue
@@ -231,7 +232,7 @@ class CellViTAdapter(IBatchSegmentationModel):
                     )
                     pred_map = self._assemble_pred_map(predictions, idx=i)
                     try:
-                        _, inst_info = self._postprocessor.post_process_cell_segmentation(pred_map)
+                        instance_map, inst_info = self._postprocessor.post_process_cell_segmentation(pred_map)
                     except Exception as exc:
                         logger.warning("CellViT postprocessing failed for patch: %s", exc)
                         continue
@@ -262,12 +263,21 @@ class CellViTAdapter(IBatchSegmentationModel):
                         )
                         if len(polygon) >= 3:
                             all_polygons.append(polygon)
+                            local_mask = instance_map[:actual_h, :actual_w] == inst_id
+                            if np.any(local_mask):
+                                target = inst_canvas[
+                                    row_start:row_start + actual_h,
+                                    col_start:col_start + actual_w,
+                                ]
+                                target[local_mask] = next_instance_id
+                                next_instance_id += 1
             finally:
                 del patches_tensor, predictions
 
         logger.info("CellViT detected %d nuclei", len(all_polygons))
         prob_canvas[~np.isfinite(prob_canvas)] = 0.0
         self._last_probability_map = prob_canvas.astype(np.float32, copy=False)
+        self._last_instance_map = inst_canvas
         self._log_probability_map_stats(self._last_probability_map)
         return all_polygons
 
@@ -302,14 +312,30 @@ class CellViTAdapter(IBatchSegmentationModel):
     def probability_map(self):
         return self._last_probability_map
 
+    def instance_map(self):
+        return self._last_instance_map
+
     def cleanup_after_segment(self) -> None:
         """Release transient CUDA cache after CellViT inference."""
         try:
+            import gc
             import torch
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
         except Exception:
             pass
+
+    def current_device_label(self) -> str:
+        if self._device is None:
+            return "unknown"
+        return str(self._device)
+
+    def current_cuda_device_id(self) -> int | None:
+        if self._device is None or getattr(self._device, "type", None) != "cuda":
+            return None
+        return int(self._device.index or 0)
 
     def release_gpu_memory(self) -> bool:
         """Unload CellViT weights from CUDA when another model is about to run."""
@@ -547,9 +573,13 @@ class CellViTAdapter(IBatchSegmentationModel):
 
             self._device = self._select_device()
             self._model = model.to(self._device)
-            self._mixed_precision = (
+            checkpoint_amp = bool(
                 self._run_conf.get("training", {}).get("mixed_precision", False)
             )
+            # Inference does not need to preserve the checkpoint's training
+            # precision. Autocast on CUDA cuts CellViT-SAM-H activation memory
+            # substantially and keeps smaller GPUs from falling back to CPU.
+            self._mixed_precision = checkpoint_amp or self._device.type == "cuda"
 
             nr_types = self._run_conf.get("data", {}).get("num_nuclei_classes", 6)
             self._postprocessor = DetectionCellPostProcessor(
@@ -701,6 +731,89 @@ class CellViTAdapter(IBatchSegmentationModel):
         if self._model is not None:
             self._model = self._model.to(self._device)
         logger.warning("CellViT permanently moved to CPU (CUDA OOM fallback)")
+
+    @staticmethod
+    def _is_cuda_oom(exc: RuntimeError) -> bool:
+        text = str(exc).lower()
+        return "out of memory" in text or "cuda error: out of memory" in text
+
+    def _retry_after_cuda_oom(self, patches_tensor, exc: RuntimeError) -> dict:
+        import gc
+        import torch
+
+        failed_device = self.current_cuda_device_id()
+        logger.warning(
+            "CellViT CUDA OOM on %s: %s",
+            self.current_device_label(),
+            str(exc).splitlines()[0],
+        )
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
+        alternate = self._select_alternate_cuda_device(exclude=failed_device)
+        if alternate is not None:
+            try:
+                self._move_to_cuda_device(alternate)
+                logger.warning("CellViT retrying on CUDA device %d after OOM", alternate)
+                return self._forward(patches_tensor)
+            except RuntimeError as retry_exc:
+                if not self._is_cuda_oom(retry_exc):
+                    raise
+                logger.warning(
+                    "CellViT retry also OOM on cuda:%d: %s",
+                    alternate,
+                    str(retry_exc).splitlines()[0],
+                )
+                gc.collect()
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+
+        logger.warning("CellViT falling back to CPU after CUDA OOM recovery failed")
+        self._move_to_cpu()
+        return self._forward(patches_tensor)
+
+    def _select_alternate_cuda_device(self, exclude: int | None = None) -> int | None:
+        try:
+            import torch
+
+            if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
+                return None
+
+            candidates = []
+            for idx in range(torch.cuda.device_count()):
+                if exclude is not None and idx == exclude:
+                    continue
+                try:
+                    free, total = torch.cuda.mem_get_info(idx)
+                    candidates.append((free, total, idx))
+                except Exception:
+                    continue
+            if not candidates:
+                return None
+
+            candidates.sort(reverse=True)
+            free, total, idx = candidates[0]
+            logger.info(
+                "CellViT alternate CUDA candidate: device=%d free=%.2fGB total=%.2fGB",
+                idx,
+                free / 1e9,
+                total / 1e9,
+            )
+            return idx
+        except Exception as select_exc:
+            logger.debug("CellViT alternate CUDA selection skipped: %s", select_exc)
+            return None
+
+    def _move_to_cuda_device(self, device_id: int) -> None:
+        import torch
+
+        self._use_gpu = True
+        self._device_id = int(device_id)
+        self._device = torch.device(f"cuda:{self._device_id}")
+        if self._model is not None:
+            self._model = self._model.to(self._device)
 
     @staticmethod
     def _runtime_gpu_available() -> bool:
