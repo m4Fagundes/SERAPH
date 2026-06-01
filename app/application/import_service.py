@@ -104,6 +104,23 @@ class TileImportService:
             session.tiles.append(tile)
             new_idx = len(session.tiles) - 1
 
+        # ── Re-base imported polygons onto the matched tile's coordinate frame ──
+        # A descriptor stores its polygons relative to its own <bounds> origin.
+        # When they merge into a tile placed at a DIFFERENT position — e.g. slices
+        # laid out across a WSI canvas via "Import Slice Images Folder", where each
+        # tile origin is its placement (x, y) — the polygons must be shifted by the
+        # difference so they land on the nuclei instead of at the canvas origin.
+        src_bounds = sl.get("bounds") or {}
+        if src_bounds:
+            sx1, sy1 = int(src_bounds.get("x1", 0)), int(src_bounds.get("y1", 0))
+        elif rects:
+            sx1 = min(r[0] for r in rects)
+            sy1 = min(r[1] for r in rects)
+        else:
+            sx1 = sy1 = 0
+        tx1, ty1, _, _ = tile.bounding_box
+        dx, dy = tx1 - sx1, ty1 - sy1
+
         # Restore segmentations as layers on the tile
         segmentations = sl.get("segmentations", [])
         if segmentations:
@@ -113,7 +130,7 @@ class TileImportService:
                 poly = seg.get("polygon", seg) if isinstance(seg, dict) else seg
                 raw_model = seg.get("model", "Imported") if isinstance(seg, dict) else "Imported"
                 model = self._normalize_segmentation_source(raw_model)
-                int_poly = [(int(pt[0]), int(pt[1])) for pt in poly]
+                int_poly = [(int(pt[0]) + dx, int(pt[1]) + dy) for pt in poly]
                 grouped[model].append(int_poly)
             from app.domain.tile import LAYER_COLORS
             for i, (model, polys) in enumerate(grouped.items()):
@@ -154,10 +171,19 @@ class TileImportService:
         target_rects = {tuple(r) for r in rects}
         target_bbox = self._rects_bbox(target_rects)
 
+        # Name is authoritative. A descriptor that carries a slice name only ever
+        # matches the slice with that exact name — never the rects/bbox fallback.
+        # Without this, several same-size tiles (e.g. equal-dimension ROIs all at
+        # origin 0,0) collide on rects/bbox and every import merges into the first
+        # tile instead of its own named slice.
+        if target_name:
+            for idx, tile in enumerate(session.tiles):
+                if (tile.metadata.get("name") or "").strip() == target_name:
+                    return idx
+            return None
+
+        # Unnamed descriptor: fall back to geometry matching.
         for idx, tile in enumerate(session.tiles):
-            tile_name = (tile.metadata.get("name") or "").strip()
-            if target_name and tile_name and target_name == tile_name:
-                return idx
             tile_rects = {tuple(r) for r in getattr(tile, "rects", [])}
             if target_rects and tile_rects == target_rects:
                 return idx
