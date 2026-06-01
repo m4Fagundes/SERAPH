@@ -1,15 +1,20 @@
 [submodule "CellViT"]
 	path = external/CellViT
 	url = https://github.com/TIO-IKIM/CellViT
+	ignore = untracked
 
 [submodule "napari-dinoSim"]
 	path = external/napari-dinoSim
 	url = https://github.com/AAitorG/napari-dinoSim
+	ignore = untracked
 
 [submodule "patho-sam"]
 	path = external/patho-sam
 	url = https://github.com/computational-cell-analytics/patho-sam
+	ignore = untracked
 
 [submodule "iDISF"]
 	path = external/iDISF
 	url = https://github.com/IsabelaBB/iDISF
+	ignore = untracked
+
