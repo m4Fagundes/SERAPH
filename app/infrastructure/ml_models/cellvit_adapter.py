@@ -175,6 +175,11 @@ class CellViTAdapter(IBatchSegmentationModel):
             logger.warning("CellViT model not available — returning empty segmentation.")
             return []
 
+        # Detection threshold: reuse cellprob_threshold as the foreground
+        # probability cutoff (CellViT's [0,1] scale). None keeps the default 0.5.
+        if cellprob_threshold is not None and self._postprocessor is not None:
+            self._postprocessor.fg_threshold = float(min(max(cellprob_threshold, 0.0), 1.0))
+
         import torch
 
         # Normalise input to uint8 numpy HxWx3
@@ -511,8 +516,12 @@ class CellViTAdapter(IBatchSegmentationModel):
             .numpy()
             .astype(np.float32)
         )
+        # Foreground (nucleus) probability — softmax channel 1, NOT the argmax.
+        # The postprocessor thresholds this at fg_threshold (default 0.5, which
+        # reproduces the old argmax behaviour). Passing the probability is what
+        # makes the detection threshold tunable for precision-recall sweeps.
         binary_map = (
-            torch.argmax(predictions["nuclei_binary_map"][idx], dim=0)
+            predictions["nuclei_binary_map"][idx, 1]
             .numpy()
             .astype(np.float32)
         )

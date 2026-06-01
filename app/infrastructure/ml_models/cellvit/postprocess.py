@@ -82,6 +82,11 @@ class DetectionCellPostProcessor:
             self.object_size = 100
             self.k_size = 21
 
+        # Foreground (binary nucleus) probability threshold. 0.5 reproduces the
+        # original argmax behaviour; lower → more foreground/detections, higher →
+        # fewer. Settable so callers can sweep it (e.g. precision-recall curves).
+        self.fg_threshold = 0.5
+
     def post_process_cell_segmentation(
         self,
         pred_map: np.ndarray,
@@ -109,7 +114,7 @@ class DetectionCellPostProcessor:
             pred_inst = pred_map
 
         pred_inst = np.squeeze(pred_inst)  # [H, W, 3]
-        pred_inst = self._proc_np_hv(pred_inst, self.object_size, self.k_size)
+        pred_inst = self._proc_np_hv(pred_inst, self.object_size, self.k_size, self.fg_threshold)
 
         inst_id_list = np.unique(pred_inst)[1:]  # exclude background (0)
         inst_info_dict = {}
@@ -173,6 +178,7 @@ class DetectionCellPostProcessor:
         pred: np.ndarray,
         object_size: int = 10,
         ksize: int = 21,
+        fg_threshold: float = 0.5,
     ) -> np.ndarray:
         """
         Watershed instance separation using the HoVer-Net approach.
@@ -191,7 +197,7 @@ class DetectionCellPostProcessor:
         v_dir_raw = pred[..., 2]
 
         # 1. Binarise and label connected components; remove noise
-        blb = (blb_raw >= 0.5).astype(np.int32)
+        blb = (blb_raw >= fg_threshold).astype(np.int32)
         blb = measurements.label(blb)[0]
         blb = _remove_small_objects(blb, min_size=10)
         blb[blb > 0] = 1

@@ -562,7 +562,13 @@ class SlicePreviews(QWidget):
             for old_idx in self._checked_slice_indices
             if old_idx != idx
         }
+        # Preserve the list scroll position: update_previews() clears and
+        # rebuilds the QListWidget, which otherwise snaps the scrollbar back
+        # to the top. Clamp to the new maximum since the list is now shorter.
+        vbar = self.list_widget.verticalScrollBar()
+        scroll_pos = vbar.value()
         self.update_previews()
+        vbar.setValue(min(scroll_pos, vbar.maximum()))
         self.mw.canvas_renderer.redraw()
 
     def on_item_clicked(self, item):

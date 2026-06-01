@@ -13,6 +13,11 @@ Delineation metrics — computed over matched TP pairs:
   boundary_iou          : IoU on contour band (width=2px)
   area_bias             : mean(pred_area / gt_area) over TPs
 
+Boundary metrics — class-agnostic, computed on combined boundary maps (no matching):
+  boundary_recall       : frac. of GT boundary px with a pred boundary within tol (px)
+  boundary_precision    : frac. of pred boundary px with a GT boundary within tol (px)
+  boundary_f            : harmonic mean of boundary_precision and boundary_recall
+
 Aggregate metrics:
   dq, sq, pq           : Panoptic Quality components (DQ=F1, SQ=mean IoU, PQ=DQ*SQ)
   aji                   : Aggregated Jaccard Index (HoVer-Net formulation)
@@ -28,6 +33,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 from skimage.morphology import erosion, disk
+from skimage.segmentation import find_boundaries
 
 try:
     from .matching import MatchResult
@@ -40,6 +46,7 @@ def compute_metrics(
     pred: np.ndarray,
     result: MatchResult,
     boundary_width: int = 2,
+    boundary_tolerance: int = 2,
 ) -> dict[str, float]:
     """Compute all metrics for one (gt, pred) tile pair.
 
@@ -105,6 +112,29 @@ def compute_metrics(
         m["asd"]          = float(np.mean(asd_vals))
         m["boundary_iou"] = float(np.mean(biou_vals))
         m["area_bias"]    = float(np.mean(bias_vals))
+
+    # ── Boundary adherence (class-agnostic, tolerance in px) ────────────────
+    # Boundary Recall (BR): fraction of GT boundary pixels that have a predicted
+    # boundary pixel within `boundary_tolerance` px. Computed on the combined
+    # boundary maps of all instances (no matching), so it measures how well the
+    # true edge structure is recovered, independent of detection count.
+    # NOTE: BR alone can be inflated by over-segmentation (more predicted edges
+    # everywhere → more GT edges happen to be "covered"); always read it next to
+    # Boundary Precision (BP) and their F-score.
+    gt_b = find_boundaries(gt, mode="thick")
+    pred_b = find_boundaries(pred, mode="thick")
+    if gt_b.any() and pred_b.any():
+        d_to_pred = distance_transform_edt(~pred_b)
+        d_to_gt = distance_transform_edt(~gt_b)
+        br = float(np.mean(d_to_pred[gt_b] <= boundary_tolerance))
+        bp = float(np.mean(d_to_gt[pred_b] <= boundary_tolerance))
+        m["boundary_recall"]    = br
+        m["boundary_precision"] = bp
+        m["boundary_f"]         = (2 * br * bp / (br + bp)) if (br + bp) > 0 else 0.0
+    else:
+        m["boundary_recall"]    = float("nan")
+        m["boundary_precision"] = float("nan")
+        m["boundary_f"]         = float("nan")
 
     # ── Panoptic Quality ───────────────────────────────────────────────────
     m["dq"] = m["f1"]

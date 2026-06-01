@@ -1876,6 +1876,22 @@ class MacroPipelinePanel(QDockWidget):
 
     # ── Worker callbacks ──────────────────────────────────────────────────────
 
+    def _release_worker(self) -> None:
+        """Tear down the worker thread safely after it signals completion.
+
+        The workers emit their custom ``finished``/``error`` signal from *inside*
+        ``run()``, so the QThread is still running when these slots fire. Simply
+        dropping the only reference (``self.worker = None``) lets Python GC the
+        QThread while it is still running, which makes Qt abort the process with
+        "QThread: Destroyed while thread is still running". Wait for ``run()`` to
+        return first (mirrors ``_cancel``), then release.
+        """
+        worker = self.worker
+        self.worker = None
+        if worker is not None:
+            worker.wait()
+            worker.deleteLater()
+
     def _on_progress(self, current: int, total: int, text: str) -> None:
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
@@ -1884,20 +1900,20 @@ class MacroPipelinePanel(QDockWidget):
     def _on_single_finished(self, elapsed: float) -> None:
         self.progress_bar.setValue(self.progress_bar.maximum())
         self.lbl_status.setText(f"Done in {elapsed:.2f}s")
-        self.worker = None
+        self._release_worker()
         self._set_running(False)
         self._refresh_views()
 
     def _on_pipeline_finished(self) -> None:
         self.progress_bar.setValue(self.progress_bar.maximum())
         self.lbl_status.setText("Pipeline completed.")
-        self.worker = None
+        self._release_worker()
         self._set_running(False)
         self._refresh_views()
 
     def _on_error(self, err_msg: str) -> None:
         self.lbl_status.setText(f"Error: {err_msg}")
-        self.worker = None
+        self._release_worker()
         self._set_running(False)
 
     # ── Helpers ───────────────────────────────────────────────────────────────

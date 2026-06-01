@@ -66,7 +66,7 @@ def read_json_features(path: str) -> List[dict]:
         if desc:
             descriptors.append(desc)
 
-    _label_unlabeled_regions_inside_roi(descriptors)
+    _label_regions_inside_roi(descriptors)
 
     if not descriptors:
         raise ValueError("No valid features found in JSON.")
@@ -80,12 +80,15 @@ def read_json_features(path: str) -> List[dict]:
     return descriptors
 
 
-def _label_unlabeled_regions_inside_roi(descriptors: List[dict]) -> None:
-    """Name unlabeled regions enclosed by JSON ROI container annotations.
+def _label_regions_inside_roi(descriptors: List[dict]) -> None:
+    """Suffix every region enclosed by a JSON ROI container with its circle index.
 
-    A JSON annotation named "ROI" acts as a spatial container. Any unlabeled
-    annotation whose centroid falls inside that ROI receives the contextual
-    INV_C label for the ROI index.
+    A JSON annotation named "ROI" acts as a spatial container. Any other
+    annotation whose centroid falls inside that ROI keeps its own class label
+    and gains a ``_C{roi_idx}`` suffix identifying which ROI (circle) encloses
+    it — e.g. an "INV" region inside the first ROI becomes ``INV_C1``, an "ST"
+    region becomes ``ST_C1``, and so on. Unlabeled regions fall back to the
+    implicit ``INV`` class, preserving the previous behaviour.
     """
     roi_polygons = []
     for desc in descriptors:
@@ -105,15 +108,18 @@ def _label_unlabeled_regions_inside_roi(descriptors: List[dict]) -> None:
         sl = desc.get("slice", {})
         name = sl.get("name", "").strip()
         polygon = sl.get("polygon")
-        if name and name.lower() != "unknown":
-            continue
+        if name.lower() == "roi":
+            continue  # never relabel the container itself
         if not polygon:
             continue
+
+        # The region's own class is the label prefix; unlabeled → implicit INV.
+        base = name if name and name.lower() != "unknown" else "INV"
 
         cx, cy = _polygon_centroid(polygon)
         for roi_idx, roi_polygon in enumerate(roi_polygons, 1):
             if _is_point_in_polygon(cx, cy, roi_polygon):
-                label = f"INV_C{roi_idx}"
+                label = f"{base}_C{roi_idx}"
                 sl["name"] = label
                 feat_id = _description_feature_id(sl.get("description", ""))
                 sl["description"] = f"JSON annotation '{label}'{feat_id}"
@@ -122,7 +128,7 @@ def _label_unlabeled_regions_inside_roi(descriptors: List[dict]) -> None:
 
     if renamed:
         logger.info(
-            "JSON ROI context labels applied: %d unlabeled feature(s) renamed across %d ROI container(s).",
+            "JSON ROI context labels applied: %d feature(s) suffixed across %d ROI container(s).",
             renamed,
             len(roi_polygons),
         )
