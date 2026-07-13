@@ -55,14 +55,17 @@ def cuda_memory_summary(label: str, *, log_level: int = logging.INFO) -> None:
 
 
 def cleanup_cuda_memory(label: str = "cleanup") -> None:
-    """Run Python GC and release PyTorch's unused CUDA cache."""
+    """
+    Run Python GC and release PyTorch's cached GPU memory.
+
+    Despite the name (kept for its call sites), this frees the Metal cache on
+    Apple Silicon too — MPS memory used to be held until process exit.
+    """
     gc.collect()
     try:
-        import torch
+        from app.infrastructure.config.device import empty_cache
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+        empty_cache()
     except Exception as exc:
-        logger.debug("CUDA cleanup skipped: %s", exc)
+        logger.debug("GPU cache cleanup skipped: %s", exc)
     cuda_memory_summary(label)

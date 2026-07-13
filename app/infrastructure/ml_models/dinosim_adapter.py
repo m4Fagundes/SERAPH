@@ -767,31 +767,12 @@ class DINOSimAdapter(IBatchSegmentationModel):
     # ── Device helpers ───────────────────────────────────────────────────────
 
     def _select_device(self):
-        import torch
+        from app.infrastructure.config.device import select_device
 
-        try:
-            from app.infrastructure.config.gpu_selector import get_best_cuda_device
-            if self._use_gpu and torch.cuda.is_available():
-                idx = get_best_cuda_device()
-                if idx is not None:
-                    return torch.device(f"cuda:{idx}")
-        except Exception:
-            pass
-
-        if self._use_gpu and torch.cuda.is_available():
-            return torch.device("cuda:0")
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-        return torch.device("cpu")
+        return select_device(use_gpu=self._use_gpu)
 
     @staticmethod
     def _runtime_gpu_available() -> bool:
-        try:
-            import torch
-            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-                return True
-            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                return True
-        except ImportError:
-            pass
-        return False
+        from app.infrastructure.config.device import gpu_available
+
+        return gpu_available()

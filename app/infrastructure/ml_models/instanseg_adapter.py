@@ -182,23 +182,21 @@ class InstanSegAdapter(IBatchSegmentationModel):
     def _resolve_device(self) -> Optional[str]:
         if self._device is not None:
             return self._device
-        if self._gpu is False:
-            return "cpu"
         try:
-            import torch
-            if torch.cuda.is_available():
-                return "cuda"
+            from app.infrastructure.config.device import select_device_str
+
+            return select_device_str(use_gpu=self._gpu)
         except Exception:
-            pass
-        return None  # let InstanSeg auto-choose
+            return None  # let InstanSeg auto-choose
 
     @staticmethod
     def _clear_cuda_cache() -> None:
         try:
             import gc
-            import torch
+
+            from app.infrastructure.config.device import empty_cache
+
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            empty_cache()
         except Exception:
             pass

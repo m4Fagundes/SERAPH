@@ -75,24 +75,12 @@ class CellposeAdapter(IBatchSegmentationModel):
             logger.info("Config overrides provided: %s", config_override)
 
         def _runtime_gpu_available() -> bool:
-            try:
-                import torch
-            except ImportError:
+            if self._config.disable_gpu or self._config.force_cpu_only:
                 return False
 
-            if self._config.disable_gpu:
-                return False
+            from app.infrastructure.config.device import gpu_available
 
-            if self._config.force_cpu_only:
-                return False
-
-            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-                return True
-
-            if hasattr(torch.backends, "mps"):
-                return torch.backends.mps.is_available() and torch.backends.mps.is_built()
-
-            return False
+            return gpu_available()
 
         # Decide whether to use GPU (automatic or manual configuration)
         if gpu is None:
@@ -430,28 +418,25 @@ class CellposeAdapter(IBatchSegmentationModel):
         """Returns True if exc is a GPU error that should trigger CPU fallback.
 
         Covers:
-        - CUDA out-of-memory errors
+        - CUDA and MPS out-of-memory errors
         - cuDNN errors
         - MPS NotImplementedError for unsupported ops (e.g., sparse tensors in
           Cellpose 4.x mask creation on Apple Silicon — see Cellpose issue #1063)
         """
-        msg = str(exc).lower()
-        return (
-            "cuda out of memory" in msg
-            or "cudnn error" in msg
-            or "not implemented" in msg
-            or "could not run" in msg
-        )
+        from app.infrastructure.config.device import is_gpu_failure
+
+        return is_gpu_failure(exc)
 
     @staticmethod
     def _clear_cuda_cache() -> None:
-        """Frees unused CUDA memory so the next allocation has maximum headroom."""
+        """Frees unused GPU memory (CUDA or MPS) so the next allocation has headroom."""
         try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                import gc
-                gc.collect()
+            import gc
+
+            from app.infrastructure.config.device import empty_cache
+
+            empty_cache()
+            gc.collect()
         except Exception:  # pragma: no cover
             pass
 
@@ -466,7 +451,7 @@ class CellposeAdapter(IBatchSegmentationModel):
     ) -> list:
         """Fallback: reload the model on CPU and re-run the segmentation."""
         logger.warning(
-            "CUDA OOM detected (%s). Clearing VRAM and retrying on CPU…",
+            "GPU failure detected (%s). Clearing GPU memory and retrying on CPU…",
             original_error,
         )
         self._clear_cuda_cache()
@@ -533,17 +518,14 @@ class CellposeAdapter(IBatchSegmentationModel):
         try:
             from cellpose import models as cp_models
             import torch
-            from app.infrastructure.config.gpu_selector import get_best_cuda_device
+            from app.infrastructure.config.device import describe_device, select_device
 
-            device = None
-            if self._gpu and torch.cuda.is_available():
-                device_index = self._device_id
-                if device_index is None:
-                    device_index = get_best_cuda_device()
-                if device_index is None:
-                    device_index = torch.cuda.current_device()
-                device = torch.device(f"cuda:{device_index}")
-                logger.info("Using explicit CUDA device for Cellpose: %s", device)
+            # Pass the device explicitly rather than letting Cellpose guess from
+            # gpu=True: on Apple Silicon its own probe is what used to leave the
+            # model on the CPU.
+            device = select_device(use_gpu=self._gpu, device_id=self._device_id)
+            if device.type != "cpu":
+                logger.info("Using explicit device for Cellpose: %s", describe_device(device))
 
             try:
                 self._model = cp_models.CellposeModel(

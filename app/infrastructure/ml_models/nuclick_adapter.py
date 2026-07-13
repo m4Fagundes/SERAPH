@@ -11,27 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 def _get_device(device_id: int | None = None) -> "torch.device":
-    """Returns the best available torch device: CUDA > MPS > CPU.
+    """Returns the best available torch device: CUDA > MPS > CPU."""
+    from app.infrastructure.config.device import select_device
 
-    Uses a try/except around get_best_cuda_device so the adapter
-    works even if the GPU selector module cannot be imported.
-    MPS check uses hasattr guard for torch < 1.12 compatibility.
-    """
-    import torch
-    try:
-        from app.infrastructure.config.gpu_selector import get_best_cuda_device
-        best_gpu = device_id
-        if best_gpu is None:
-            best_gpu = get_best_cuda_device()
-        if torch.cuda.is_available() and best_gpu is not None:
-            return torch.device(f'cuda:{best_gpu}')
-    except Exception:
-        pass
-
-    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        return torch.device('mps')
-
-    return torch.device('cpu')
+    return select_device(device_id=device_id)
 
 
 class NuClickAdapter(ISegmentationModel):

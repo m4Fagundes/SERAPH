@@ -8,6 +8,7 @@ installed PyTorch wheel.
 
 import logging
 import os
+import sys
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,20 @@ def initialize_gpu_visibility() -> None:
     and sets CUDA_VISIBLE_DEVICES in the parent process BEFORE torch is imported.
     This prevents GPUs unsupported by the installed PyTorch wheel from corrupting
     the PyTorch/cuDNN context.
+
+    Skipped on macOS (no CUDA) and in frozen builds: under PyInstaller
+    ``sys.executable`` is the GridAnalyzer binary itself, not a Python
+    interpreter, so the probe below would relaunch the whole GUI instead of
+    running a script.
     """
+    if sys.platform == "darwin":
+        logger.debug("macOS uses MPS/CPU; skipping CUDA visibility probe.")
+        return
+
+    if getattr(sys, "frozen", False):
+        logger.debug("Frozen build; skipping subprocess CUDA visibility probe.")
+        return
+
     if multi_gpu_visibility_requested():
         logger.info(
             "%s is enabled; keeping all compatible CUDA devices visible.",
@@ -184,8 +198,7 @@ def initialize_gpu_visibility() -> None:
 
     try:
         import subprocess
-        import sys
-        
+
         # Run a subprocess with SERAPH_GPU_PROBE set to 1 to find the best device
         env = os.environ.copy()
         env["SERAPH_GPU_PROBE"] = "1"

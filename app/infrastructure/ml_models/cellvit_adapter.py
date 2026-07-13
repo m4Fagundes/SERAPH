@@ -333,14 +333,14 @@ class CellViTAdapter(IBatchSegmentationModel):
         return self._last_instance_map
 
     def cleanup_after_segment(self) -> None:
-        """Release transient CUDA cache after CellViT inference."""
+        """Release transient GPU cache (CUDA or MPS) after CellViT inference."""
         try:
             import gc
-            import torch
+
+            from app.infrastructure.config.device import empty_cache
+
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
+            empty_cache()
         except Exception:
             pass
 
@@ -355,10 +355,10 @@ class CellViTAdapter(IBatchSegmentationModel):
         return int(self._device.index or 0)
 
     def release_gpu_memory(self) -> bool:
-        """Unload CellViT weights from CUDA when another model is about to run."""
+        """Unload CellViT weights from the GPU when another model is about to run."""
         if self._model is None or self._device is None:
             return False
-        if getattr(self._device, "type", None) != "cuda":
+        if getattr(self._device, "type", None) not in ("cuda", "mps"):
             return False
 
         logger.info("CellViT: releasing GPU model weights")
@@ -370,11 +370,11 @@ class CellViTAdapter(IBatchSegmentationModel):
 
         try:
             import gc
-            import torch
+
+            from app.infrastructure.config.device import empty_cache
+
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
+            empty_cache()
         except Exception:
             pass
         return True
@@ -492,11 +492,13 @@ class CellViTAdapter(IBatchSegmentationModel):
         import torch
         import torch.nn.functional as F
 
+        from app.infrastructure.config.device import supports_autocast
+
         batch = batch.to(self._device)
 
         with torch.no_grad():
-            if self._mixed_precision and self._device.type == "cuda":
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
+            if self._mixed_precision and supports_autocast(self._device):
+                with torch.autocast(device_type=self._device.type, dtype=torch.float16):
                     preds = self._model(batch)
             else:
                 preds = self._model(batch)
@@ -594,13 +596,13 @@ class CellViTAdapter(IBatchSegmentationModel):
 
             self._device = self._select_device()
             self._model = model.to(self._device)
-            checkpoint_amp = bool(
-                self._run_conf.get("training", {}).get("mixed_precision", False)
-            )
             # Inference does not need to preserve the checkpoint's training
             # precision. Autocast on CUDA cuts CellViT-SAM-H activation memory
             # substantially and keeps smaller GPUs from falling back to CPU.
-            self._mixed_precision = checkpoint_amp or self._device.type == "cuda"
+            # It stays off on MPS/CPU (see device.supports_autocast).
+            from app.infrastructure.config.device import supports_autocast
+
+            self._mixed_precision = supports_autocast(self._device)
 
             nr_types = self._run_conf.get("data", {}).get("num_nuclei_classes", 6)
             self._postprocessor = DetectionCellPostProcessor(
@@ -722,56 +724,40 @@ class CellViTAdapter(IBatchSegmentationModel):
     # ── Device helpers ────────────────────────────────────────────────────────
 
     def _select_device(self):
-        import torch
+        from app.infrastructure.config.device import select_device
 
-        try:
-            from app.infrastructure.config.gpu_selector import get_best_cuda_device
-            if self._use_gpu and torch.cuda.is_available():
-                idx = self._device_id
-                if idx is None:
-                    idx = get_best_cuda_device()
-                if idx is not None:
-                    logger.info("CellViT using CUDA device %d", idx)
-                    return torch.device(f"cuda:{idx}")
-        except Exception:
-            pass
-
-        if self._use_gpu and torch.cuda.is_available():
-            return torch.device("cuda:0")
-
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-
-        return torch.device("cpu")
+        return select_device(use_gpu=self._use_gpu, device_id=self._device_id)
 
     def _move_to_cpu(self) -> None:
-        """Permanently move model to CPU after CUDA OOM."""
+        """Permanently move model to CPU after a GPU OOM."""
         import torch
         self._use_gpu = False
         self._device = torch.device("cpu")
+        self._mixed_precision = False
         if self._model is not None:
             self._model = self._model.to(self._device)
-        logger.warning("CellViT permanently moved to CPU (CUDA OOM fallback)")
+        logger.warning("CellViT permanently moved to CPU (GPU OOM fallback)")
 
     @staticmethod
     def _is_cuda_oom(exc: RuntimeError) -> bool:
-        text = str(exc).lower()
-        return "out of memory" in text or "cuda error: out of memory" in text
+        """True on an out-of-memory error from any backend (CUDA or MPS)."""
+        from app.infrastructure.config.device import is_oom_error
+
+        return is_oom_error(exc)
 
     def _retry_after_cuda_oom(self, patches_tensor, exc: RuntimeError) -> dict:
         import gc
-        import torch
+
+        from app.infrastructure.config.device import empty_cache
 
         failed_device = self.current_cuda_device_id()
         logger.warning(
-            "CellViT CUDA OOM on %s: %s",
+            "CellViT GPU OOM on %s: %s",
             self.current_device_label(),
             str(exc).splitlines()[0],
         )
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+        empty_cache()
 
         alternate = self._select_alternate_cuda_device(exclude=failed_device)
         if alternate is not None:
@@ -788,10 +774,9 @@ class CellViTAdapter(IBatchSegmentationModel):
                     str(retry_exc).splitlines()[0],
                 )
                 gc.collect()
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
+                empty_cache()
 
-        logger.warning("CellViT falling back to CPU after CUDA OOM recovery failed")
+        logger.warning("CellViT falling back to CPU after GPU OOM recovery failed")
         self._move_to_cpu()
         return self._forward(patches_tensor)
 
@@ -838,15 +823,9 @@ class CellViTAdapter(IBatchSegmentationModel):
 
     @staticmethod
     def _runtime_gpu_available() -> bool:
-        try:
-            import torch
-            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-                return True
-            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                return True
-        except ImportError:
-            pass
-        return False
+        from app.infrastructure.config.device import gpu_available
+
+        return gpu_available()
 
     # ── Display name helpers ──────────────────────────────────────────────────
 

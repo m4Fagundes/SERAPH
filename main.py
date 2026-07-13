@@ -1,10 +1,18 @@
+import os
 import sys
 import logging
 import warnings
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-# Initialize GPU selector first to isolate compatible GPUs BEFORE importing torch
+# On Apple Silicon, several operators used by Cellpose/SAM/CellViT have no Metal
+# kernel. This must be set before torch is imported or they raise instead of
+# falling back to the CPU. (The frozen build also sets it in hooks/rthook_torch_env.py.)
+if sys.platform == "darwin":
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+# Initialize GPU selector first to isolate compatible GPUs BEFORE importing torch.
+# No-op on macOS and in frozen builds — see gpu_selector.initialize_gpu_visibility.
 try:
     from app.infrastructure.config.gpu_selector import initialize_gpu_visibility
     initialize_gpu_visibility()
@@ -36,7 +44,98 @@ except Exception:
 from app.interface.gui.main_window import SlicerLabApp
 
 
+def selftest() -> int:
+    """
+    Import every native dependency and report the selected compute device.
+
+    Runs with SERAPH_SELFTEST=1 and exits without opening a window. The release
+    workflow runs this against the packaged app on each target macOS version, so
+    a missing dylib or hidden import fails the build instead of the user's launch.
+    """
+    failures: list[str] = []
+    lines: list[str] = []
+
+    # A windowed build (console=False) has no usable stdout on Windows, so the
+    # CI reads the report from SERAPH_SELFTEST_LOG instead.
+    log_path = os.environ.get("SERAPH_SELFTEST_LOG")
+
+    def emit(line: str) -> None:
+        lines.append(line)
+        try:
+            print(line, flush=True)
+        except Exception:
+            pass
+
+    def check(label: str, fn, *, optional: bool = False) -> None:
+        try:
+            detail = fn()
+            emit(f"  OK    {label}{f' — {detail}' if detail else ''}")
+        except Exception as exc:
+            if optional:
+                emit(f"  WARN  {label} (optional) — {type(exc).__name__}: {exc}")
+                return
+            failures.append(label)
+            emit(f"  FAIL  {label} — {type(exc).__name__}: {exc}")
+
+    emit(f"SERAPH selftest — python={sys.version.split()[0]} platform={sys.platform} "
+         f"frozen={getattr(sys, 'frozen', False)}")
+
+    def _torch() -> str:
+        import torch
+        from app.infrastructure.config.device import describe_device, select_device
+
+        device = select_device()
+        # Prove the backend actually executes, not just that it reports available.
+        result = (torch.ones(8, 8, device=device) @ torch.ones(8, 8, device=device)).sum().item()
+        assert result == 512.0, f"unexpected matmul result: {result}"
+        return f"torch {torch.__version__} on {describe_device(device)}"
+
+    def _openslide() -> str:
+        import openslide
+
+        return f"openslide {openslide.__library_version__}"
+
+    def _pyvips() -> str:
+        import pyvips
+
+        return f"libvips {pyvips.version(0)}.{pyvips.version(1)}"
+
+    check("torch + device", _torch)
+    check("cellpose", lambda: __import__("cellpose").version)
+    check("openslide", _openslide)
+    # pyvips is optional: the app falls back to PIL when libvips is absent
+    # (it is not shipped on Windows). It IS bundled on macOS via pyvips-binary.
+    check("pyvips", _pyvips, optional=sys.platform != "darwin")
+    check("opencv", lambda: __import__("cv2").__version__)
+    check("scikit-image", lambda: __import__("skimage").__version__)
+    check("h5py", lambda: __import__("h5py").__version__)
+    check("PyQt6", lambda: __import__("PyQt6.QtWidgets", fromlist=["QApplication"]) and "QtWidgets")
+    check("cellpose adapter", lambda: type(
+        __import__("app.infrastructure.ml_models.cellpose_adapter",
+                   fromlist=["CellposeAdapter"]).CellposeAdapter(model_type="cpsam", gpu=False)
+    ).__name__)
+    check("main window import", lambda: __import__(
+        "app.interface.gui.main_window", fromlist=["SlicerLabApp"]).SlicerLabApp.__name__)
+
+    if failures:
+        emit(f"SELFTEST FAILED — {len(failures)} check(s): {', '.join(failures)}")
+    else:
+        emit("SELFTEST PASSED")
+
+    if log_path:
+        try:
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+        except Exception as exc:  # pragma: no cover
+            logging.warning("Could not write selftest log to %s: %s", log_path, exc)
+
+    return 1 if failures else 0
+
+
 def main() -> None:
+    if os.environ.get("SERAPH_SELFTEST") == "1":
+        sys.exit(selftest())
+
     if not _PYVIPS_AVAILABLE:
         warnings.warn(
             "pyvips not installed or missing libvips — falling back to PIL. "

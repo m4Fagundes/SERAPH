@@ -145,17 +145,26 @@ class PerformanceConfig:
 
         # For macOS Monterey, splitting large tiles is recommended
         split_large_tiles = detector.is_mac_monterey
-        
-        # Increase batch size MASSIVELY to saturate GPU
-        # RTX 2060 (6GB) can process 16+ images of 512x512 simultaneously
-        batch_size = 16 if use_gpu else 2
-        
-        # Increase max_tile_size to process fewer tiles sequentially
-        # RTX 2060 supports up to ~3000px without running out of memory
-        max_tile_size = 3000 if use_gpu else 2000
-        
-        # Increase timeout for larger batches
-        timeout = 900 if use_gpu else 600  # 15 min vs 10 min
+
+        if use_gpu and detector.is_mac:
+            # Apple Silicon (MPS): the GPU shares one memory pool with the OS and
+            # the whole app, so the discrete-GPU numbers below would push the
+            # machine into swap. Stay moderate and split tiles.
+            batch_size = 4
+            max_tile_size = 2048
+            timeout = 900
+            split_large_tiles = True
+        elif use_gpu:
+            # Discrete CUDA GPU: saturate it.
+            # RTX 2060 (6GB) can process 16+ images of 512x512 simultaneously and
+            # supports up to ~3000px tiles without running out of VRAM.
+            batch_size = 16
+            max_tile_size = 3000
+            timeout = 900  # 15 min — larger batches take longer
+        else:
+            batch_size = 2
+            max_tile_size = 2000
+            timeout = 600  # 10 min
 
         return cls(
             cellpose=CellposeConfig(

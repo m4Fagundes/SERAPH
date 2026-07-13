@@ -368,75 +368,67 @@ class PathoSAMAdapter(IBatchSegmentationModel):
     # ── Device helpers ────────────────────────────────────────────────────────
 
     def _select_device(self) -> str:
-        import torch
+        from app.infrastructure.config.device import select_device
 
-        try:
-            from app.infrastructure.config.gpu_selector import get_best_cuda_device
-            if self._use_gpu and torch.cuda.is_available():
-                idx = get_best_cuda_device()
-                if idx is not None:
-                    logger.info("PathoSAM using CUDA device %d", idx)
-                    # micro_sam only accepts "cuda", not indexed strings like "cuda:0".
-                    # The app's GPU selector has already isolated the chosen GPU.
-                    return "cuda"
-        except Exception:
-            pass
+        device = select_device(use_gpu=self._use_gpu)
 
-        if self._use_gpu and torch.cuda.is_available():
+        # micro_sam only accepts a bare "cuda", not an indexed string like
+        # "cuda:0" — the GPU selector has already isolated the chosen GPU.
+        if device.type == "cuda":
+            logger.info("PathoSAM using CUDA device %s", device.index if device.index is not None else 0)
             return "cuda"
-
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps"
-
-        return "cpu"
+        return device.type
 
     @staticmethod
     def _runtime_gpu_available() -> bool:
-        try:
-            import torch
-            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-                return True
-            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                return True
-        except ImportError:
-            pass
-        return False
+        from app.infrastructure.config.device import gpu_available
 
-    @staticmethod
-    def _auto_batch_size() -> int:
+        return gpu_available()
+
+    def _auto_batch_size(self) -> int:
+        """Pick a batch size from the memory actually available on this backend."""
         try:
             import torch
-            if torch.cuda.is_available():
-                free_vram, _ = torch.cuda.mem_get_info()
-                free_gb = free_vram / 1e9
-                if free_gb > 40:
-                    return 32
-                if free_gb > 24:
-                    return 16
-                if free_gb > 14:
-                    return 10
-                if free_gb > 12:
-                    return 6
-                if free_gb > 9:
-                    return 3
+
+            if self._device == "cuda" and torch.cuda.is_available():
+                free_gb = torch.cuda.mem_get_info()[0] / 1e9
+                for threshold, batch in ((40, 32), (24, 16), (14, 10), (12, 6), (9, 3)):
+                    if free_gb > threshold:
+                        return batch
+                return 1
+
+            if self._device == "mps":
+                # Apple Silicon shares one memory pool with the OS, so there is no
+                # free-VRAM figure to read. Stay well below the recommended ceiling.
+                budget_gb = 0.0
+                mps_module = getattr(torch, "mps", None)
+                if mps_module is not None and hasattr(mps_module, "recommended_max_memory"):
+                    budget_gb = mps_module.recommended_max_memory() / 1e9
+                if budget_gb > 40:
+                    return 8
+                if budget_gb > 20:
+                    return 4
+                if budget_gb > 10:
+                    return 2
         except Exception:
             pass
         return 1
 
     @staticmethod
     def _is_cuda_oom(exc: Exception) -> bool:
-        msg = str(exc).lower()
-        return "cuda out of memory" in msg or "outofmemoryerror" in msg
+        """True on an out-of-memory error from any backend (CUDA or MPS)."""
+        from app.infrastructure.config.device import is_oom_error
+
+        return is_oom_error(exc)
 
     @staticmethod
     def _clear_cuda_cache() -> None:
         try:
             import gc
-            import torch
+
+            from app.infrastructure.config.device import empty_cache
 
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
+            empty_cache()
         except Exception:
             pass
