@@ -17,6 +17,7 @@
 #   macOS: dist/GridAnalyzer.app (unsigned, ~800MB)
 #   Windows: dist/GridAnalyzer/ folder → packaged by installer.iss
 #
+import os
 import pathlib
 import platform
 import sys
@@ -26,6 +27,13 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 # This spec lives in docs/build/, so we go up two levels to reach repo root.
 REPO_ROOT = str(pathlib.Path(SPECPATH).parent.parent)
 HOOKS_DIR = str(pathlib.Path(SPECPATH).parent.parent / 'hooks')
+
+# Release metadata — the CI passes the git tag through so the bundle version
+# matches the release instead of a constant baked into this file.
+APP_VERSION = os.environ.get('SERAPH_VERSION', '0.0.0').lstrip('v')
+# Developer ID identity, when the signing secrets are configured. Empty means
+# PyInstaller applies an ad-hoc signature (required for arm64 binaries to run).
+CODESIGN_IDENTITY = os.environ.get('SERAPH_CODESIGN_IDENTITY') or None
 LOCAL_REPO_PATHS = [
     pathlib.Path(REPO_ROOT) / 'CellViT',
     pathlib.Path(REPO_ROOT) / 'elf',
@@ -217,15 +225,25 @@ hiddenimports = list(set(hiddenimports))  # Remove duplicates
 _excludes = [
     'PyQt5', 'wx', 'PySide2', 'PySide6',
     'torchaudio',       # not used by this app
-    # Exclude heavy NVIDIA packages NOT needed for inference (saves ~750 MB).
-    # We KEEP: cuda_runtime, cublas, cudnn, curand, nvjitlink, nvtx
-    'nvidia.nccl',      # multi-GPU communication — single-GPU inference only
-    'nvidia.cufft',     # FFT — not used by Cellpose/NuClick forward pass
-    'nvidia.cusolver',  # dense linear algebra solver — not needed for inference
-    'nvidia.cusparse',  # sparse matrix ops — not used
     'objc' if not IS_MAC else None,   # objc only on macOS
     'win32' if not IS_WINDOWS else None,  # win32 only excluded on non-Windows
 ]
+
+if IS_MAC:
+    # macOS has no CUDA at all — the app runs on MPS or CPU. Any nvidia/triton
+    # package that sneaks in is dead weight in the .app (and in the DMG users
+    # download), so drop the whole namespace.
+    _excludes += ['nvidia', 'triton', 'pynvml']
+else:
+    # Exclude heavy NVIDIA packages NOT needed for inference (saves ~750 MB).
+    # We KEEP: cuda_runtime, cublas, cudnn, curand, nvjitlink, nvtx
+    _excludes += [
+        'nvidia.nccl',      # multi-GPU communication — single-GPU inference only
+        'nvidia.cufft',     # FFT — not used by Cellpose/NuClick forward pass
+        'nvidia.cusolver',  # dense linear algebra solver — not needed for inference
+        'nvidia.cusparse',  # sparse matrix ops — not used
+    ]
+
 _excludes = [e for e in _excludes if e is not None]
 
 a = Analysis(
@@ -237,6 +255,9 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[
+        # rthook_torch_env must run first: it sets PYTORCH_ENABLE_MPS_FALLBACK,
+        # which torch only reads at import time.
+        str(pathlib.Path(HOOKS_DIR) / 'rthook_torch_env.py'),
         str(pathlib.Path(HOOKS_DIR) / 'rthook_cellpose.py'),
         str(pathlib.Path(HOOKS_DIR) / 'rthook_openslide.py'),
         str(pathlib.Path(HOOKS_DIR) / 'rthook_pyvips.py'),
@@ -265,9 +286,13 @@ if IS_MAC:
         upx=False,
         console=False,
         disable_windowed_traceback=False,
-        target_arch=None,
-        codesign_identity=None,  # Signing requires Apple Developer account
-        entitlements_file=None,
+        # Apple Silicon only: PyTorch ships no macOS x86_64 wheels since 2.3,
+        # so a universal2 or x86_64 build cannot be produced from this stack.
+        target_arch='arm64',
+        # None → PyInstaller still applies an ad-hoc signature, which arm64
+        # binaries need in order to launch at all.
+        codesign_identity=CODESIGN_IDENTITY,
+        entitlements_file=str(pathlib.Path(SPECPATH) / 'entitlements.plist'),
     )
 
     coll = COLLECT(
@@ -280,7 +305,7 @@ if IS_MAC:
         upx_exclude=[],
         name='GridAnalyzer',
     )
-    
+
     # macOS app
     app = BUNDLE(
         coll,
@@ -288,9 +313,17 @@ if IS_MAC:
         icon=None,  # Set to 'path/to/icon.icns' if you have one
         bundle_identifier='com.matheus1.gridanalyzer',
         info_plist={
-            'NSHighResolutionCapable': 'True',
-            'NSRequiresIPhoneOS': False,
-            'CFBundleShortVersionString': '1.3.0',
+            'CFBundleName': 'GridAnalyzer',
+            'CFBundleDisplayName': 'Grid Image Analyzer',
+            'CFBundleShortVersionString': APP_VERSION,
+            'CFBundleVersion': APP_VERSION,
+            'LSApplicationCategoryType': 'public.app-category.medical',
+            # Ship the Retina-correct backing store rather than an upscaled one.
+            'NSHighResolutionCapable': True,
+            # Built on the macOS 15 SDK; runs on 13 and later, which covers the
+            # supported targets (macOS 15.x and macOS 26.x).
+            'LSMinimumSystemVersion': '13.0',
+            'NSHumanReadableCopyright': 'Copyright © M4Fagundes. All rights reserved.',
         },
     )
 

@@ -9,11 +9,19 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHON_VERSION: '3.11'
+  # Upstream research repos, pinned — same commits as the macOS build, so both
+  # installers ship identical model code.
+  CELLVIT_SHA: 05097e18e3d194a65121042f631b5753069f5ee3
+  PATHO_SAM_SHA: 4b6b4fe32f7fc6b0b314c270f4b1f8ca1bcc3a64
+  MICRO_SAM_SHA: 726715b61c9fb5dd4cc841c15477a311debec5de
+  TORCH_EM_SHA: ad55d59559fbb10fdc9b2dffb7e21e8bcbdd7bd6
+  ELF_SHA: 9f57884744ac5967b829349b5d46e32e9d732264
+
 jobs:
   build:
     runs-on: windows-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
     - name: Checkout Repository
@@ -21,29 +29,46 @@ jobs:
       with:
         lfs: true
 
-    - name: Clone CellViT Repository
+    - name: Resolve release version
+      id: version
+      shell: bash
       run: |
-        git clone https://github.com/TIO-IKIM/CellViT CellViT
+        if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+          VERSION="${GITHUB_REF#refs/tags/v}"
+        else
+          VERSION="0.0.0"
+        fi
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "Building version ${VERSION}"
 
-    - name: Clone Patho-SAM runtime repositories
+    - name: Clone pinned upstream repositories
+      shell: bash
       run: |
-        git clone https://github.com/computational-cell-analytics/patho-sam patho-sam
-        git clone https://github.com/computational-cell-analytics/micro-sam.git micro-sam
-        git clone https://github.com/constantinpape/torch-em.git torch-em
-        git clone https://github.com/constantinpape/elf.git elf
+        set -euo pipefail
+        clone_pinned() {
+          local url="$1" dir="$2" sha="$3"
+          git clone --filter=blob:none "$url" "$dir"
+          git -C "$dir" checkout --quiet "$sha"
+          echo "$dir @ $(git -C "$dir" rev-parse --short HEAD)"
+        }
+        clone_pinned https://github.com/TIO-IKIM/CellViT CellViT "$CELLVIT_SHA"
+        clone_pinned https://github.com/computational-cell-analytics/patho-sam patho-sam "$PATHO_SAM_SHA"
+        clone_pinned https://github.com/computational-cell-analytics/micro-sam micro-sam "$MICRO_SAM_SHA"
+        clone_pinned https://github.com/constantinpape/torch-em torch-em "$TORCH_EM_SHA"
+        clone_pinned https://github.com/constantinpape/elf elf "$ELF_SHA"
 
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: ${{ env.PYTHON_VERSION }}
 
     - name: Cache pip packages
       uses: actions/cache@v4
       with:
         path: ~\AppData\Local\pip\Cache
-        key: ${{ runner.os }}-pip-3.11-${{ hashFiles('requirements-windows.txt') }}
+        key: ${{ runner.os }}-pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements-windows.txt') }}
         restore-keys: |
-          ${{ runner.os }}-pip-3.11-
+          ${{ runner.os }}-pip-${{ env.PYTHON_VERSION }}-
 
     - name: Cache Cellpose model weights
       uses: actions/cache@v4
@@ -55,7 +80,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements-windows.txt
-        pip install pyinstaller
+        pip install "pyinstaller>=6.10"
 
     - name: Install Inno Setup
       run: choco install innosetup -y
@@ -65,6 +90,8 @@ jobs:
         python -c "from cellpose import models; models.CellposeModel(model_type='cpsam', gpu=False)"
 
     - name: Build app files with PyInstaller
+      env:
+        SERAPH_VERSION: ${{ steps.version.outputs.version }}
       run: |
         python -m PyInstaller docs\build\main_release.spec --clean --noconfirm
 
@@ -77,10 +104,26 @@ jobs:
         Write-Host "PyInstaller output OK:"
         Get-ChildItem dist\GridAnalyzer | Select-Object -First 20
 
+    - name: Smoke-test the packaged app
+      run: |
+        # The exe is windowed (no console), so the self-test writes its report to
+        # a file. This catches a missing DLL or hidden import here, in CI, instead
+        # of on a user's machine after they install it.
+        $log = "$env:RUNNER_TEMP\selftest.txt"
+        $env:SERAPH_SELFTEST = "1"
+        $env:SERAPH_SELFTEST_LOG = $log
+        $proc = Start-Process -FilePath "dist\GridAnalyzer\GridAnalyzer.exe" -Wait -PassThru -NoNewWindow
+        if (Test-Path $log) { Get-Content $log } else { Write-Warning "No self-test log produced." }
+        if ($proc.ExitCode -ne 0) {
+          Write-Error "Packaged app failed its self-test (exit $($proc.ExitCode))."
+          exit 1
+        }
+        Write-Host "Self-test passed."
+
     - name: Build Windows installer
       run: |
         New-Item -ItemType Directory -Force -Path "build_installer" | Out-Null
-        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Obuild_installer docs\build\installer.iss
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion="${{ steps.version.outputs.version }}" /Obuild_installer docs\build\installer.iss
         if ($LASTEXITCODE -ne 0) {
           Write-Error "Inno Setup failed with exit code $LASTEXITCODE"
           exit $LASTEXITCODE

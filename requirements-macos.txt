@@ -1,36 +1,43 @@
-# requirements-macos.txt — macOS ARM64 / Apple Silicon
+# requirements-macos.txt — macOS 13+ on Apple Silicon (arm64)
 # Install with: pip install -r requirements-macos.txt
 #
-# No CUDA index — torch from PyPI default includes MPS support.
+# No CUDA index — torch from PyPI ships the MPS (Metal) backend by default.
 # Do NOT add an extra index URL here; it breaks platform marker behavior
-# and is unnecessary for macOS (MPS is bundled in standard torch wheels).
-Pillow>=10.4.0
-openpyxl>=3.1.0
-PyQt6>=6.0.0
-openslide-python>=1.4.0
-openslide-bin>=4.0.0
-pyvips>=2.2.0
-pyvips-binary>=8.0.0
-torch>=2.0.0
-torchvision>=0.15.0
+# and is unnecessary on macOS.
+#
+# Apple Silicon only. PyTorch has published no macOS x86_64 wheels since 2.3,
+# and Cellpose-SAM needs a modern torch, so an Intel Mac build is not possible
+# without downgrading the whole stack. See docs/BUILD_MACOS.md.
+#
+# Upper bounds are deliberate: they keep a surprise major release from breaking
+# a tagged release build, while still allowing patch fixes.
+Pillow>=10.4.0,<13
+openpyxl>=3.1.0,<4
+PyQt6>=6.6.0,<7
+openslide-python>=1.4.0,<2
+openslide-bin>=4.0.0,<5
+pyvips>=2.2.0,<3
+pyvips-binary>=8.0.0,<9
+torch>=2.6,<2.9
+torchvision>=0.21,<0.24
 cellpose>=4.0,<5.0
-scikit-image>=0.21.0
-opencv-python>=4.8.0
-psutil>=5.9.0
-scipy>=1.11.0
-pandas>=2.2.0
-numpy>=1.26.0
-h5py>=3.10.0
+scikit-image>=0.21.0,<0.28
+opencv-python>=4.8.0,<5
+psutil>=5.9.0,<8
+scipy>=1.11.0,<2
+pandas>=2.2.0,<3
+numpy>=1.26.0,<3
+h5py>=3.10.0,<4
 # CellViT inference dependencies
-einops>=0.6.0
-numba>=0.57.0
+einops>=0.6.0,<1
+numba>=0.57.0,<1
 # Patho-SAM inference dependencies (micro-sam, patho-sam, torch-em and elf cloned locally)
-pooch>=1.6.0
-imageio>=2.31.0
+pooch>=1.6.0,<2
+imageio>=2.31.0,<3
 tifffile>=2024.0.0
-tqdm>=4.64.0
-matplotlib>=3.7.0
+tqdm>=4.64.0,<5
+matplotlib>=3.7.0,<4
 segment-anything>=1.0
-threadpoolctl>=3.0.0
-xxhash>=3.4.0
+threadpoolctl>=3.0.0,<4
+xxhash>=3.4.0,<4
 zarr>=2.18.0,<4.0

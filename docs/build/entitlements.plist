@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Entitlements for Developer ID signing + notarization (hardened runtime).
+
+      PyInstaller unpacks and executes Python bytecode and loads unsigned
+      shared libraries at runtime; the hardened runtime blocks both unless
+      these exemptions are granted. Notarization accepts them.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Reading whole-slide images the user picks from disk. -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <!-- Downloading model weights on first use. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

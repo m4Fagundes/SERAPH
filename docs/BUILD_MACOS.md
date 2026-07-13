@@ -1,420 +1,141 @@
 # macOS Build & Distribution Guide
 
-## 🎯 Overview
+How GridAnalyzer is packaged for macOS, what the CI guarantees, and what you
+need to configure to make the app open with a double-click.
 
-This guide explains how to build and distribute GridAnalyzer for macOS with:
-- **On-demand model downloads** — NuClick model downloads only when needed
-- **Fallback to bundled models** — Works offline with bundled model
-- **GitHub Actions CI/CD** — Automated builds for Intel and Apple Silicon
-- **DMG packaging** — Professional disk image distribution
+## Target platform
 
-## 🔄 Architecture Changes
+**Apple Silicon (arm64), macOS 13 or later.** Verified on **macOS 15** and **macOS 26**
+on every release — the build runs on macOS 15 and the resulting bundle is then
+launched on both versions before anything is published.
 
-### Model Loading Strategy
+**Intel Macs are not supported.** PyTorch has published no macOS `x86_64` wheels
+since version 2.3, and Cellpose-SAM (`cpsam`) needs a modern torch. Supporting
+Intel would mean pinning the whole stack back to torch 2.2, which the models no
+longer work with. There is no `universal2` build for the same reason.
 
-**Development (Current)**
-```
-NuClickAdapter
-  ↓ (on first use)
-ModelDownloader.get_model_path('nuclick.pth')
-  ├─ 1. Check cache (~/.grid-analyzer/models/nuclick.pth)
-  ├─ 2. Try download (if URL configured)
-  └─ 3. Fall back to bundled (app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth)
-```
+## Compute backend
 
-**Production (After URL Setup)**
-```
-NuClickAdapter
-  ↓ (on first use)
-ModelDownloader.get_model_path('nuclick.pth')
-  ├─ 1. Check cache (~/.grid-analyzer/models/nuclick.pth) ← user-specific, faster
-  ├─ 2. Download (150 MB/s typical) → cache
-  └─ (bundled fallback no longer needed, removed from build)
-```
+The app has no CUDA on macOS. It runs on **MPS (Metal)** when available and falls
+back to the CPU otherwise. All of that is decided in one place —
+`app/infrastructure/config/device.py`:
 
-### File Sizes
+| Function | Purpose |
+|---|---|
+| `select_device(use_gpu, device_id)` | The CUDA > MPS > CPU ladder. Every adapter calls this. |
+| `empty_cache()` | Frees CUDA **and** Metal memory. |
+| `is_gpu_failure(exc)` | Matches OOM/unsupported-op errors on both backends, which drives the CPU retry. |
+| `supports_autocast(device)` | Mixed precision on CUDA only; MPS stays fp32. |
 
-| Component | Size | Location |
-|-----------|------|----------|
-| nuclick.pth | 267.5 MB | `app/infrastructure/ml_models/nuclick_torch/weights/` (bundled) |
-| Bundled in app | 800 MB | `GridAnalyzer.app` (includes everything) |
-| **Total download** | 800 MB | First-time user downloads app + models cached on-demand |
+Two things to know about Metal:
 
-## 🔧 What Changed
+* `PYTORCH_ENABLE_MPS_FALLBACK=1` is set before torch is imported (in `main.py`
+  and in `hooks/rthook_torch_env.py` for the frozen build). Several operators
+  used by Cellpose/SAM/CellViT have no Metal kernel; without this they raise
+  instead of running on the CPU.
+* Batch sizes and tile sizes are lower on MPS than on a discrete GPU
+  (`performance_config.py`). Apple Silicon shares one memory pool with the OS,
+  so the CUDA-tuned numbers would push the machine into swap.
 
-### 1. Model Downloader (`app/infrastructure/ml_models/model_downloader.py`)
+**Forcing a backend:** set `SERAPH_DEVICE=cpu` (or `mps`, `cuda`) to override
+auto-detection — useful when debugging a Metal-specific problem.
 
-New module with fallback strategy:
+## The self-test
 
-```python
-MODELS = {
-    'nuclick.pth': {
-        'url': None,  # Set to hosting URL (HuggingFace, S3, GitHub, etc.)
-        'size_mb': 450,
-        'description': 'NuClick interactive segmentation model',
-        'bundled_path': 'app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth',
-    }
-}
-```
-
-**Features:**
-- ✅ Downloads from configured URL
-- ✅ Caches to `~/.grid-analyzer/models/`
-- ✅ Falls back to bundled copy
-- ✅ Shows progress during download
-- ✅ Automatic retry on network failure
-
-### 2. NuClickAdapter (`app/infrastructure/ml_models/nuclick_adapter.py`)
-
-Now uses ModelDownloader:
-
-```python
-adapter = NuClickAdapter()  # Auto-downloads on first predict()
-polygon = adapter.predict(image, click_x, click_y)
-```
-
-### 3. PyInstaller Spec (`main_release.spec`)
-
-- ✅ Platform-aware (macOS `.app` vs Windows `.exe`)
-- ✅ Removes nuclick.pth from bundled datas (still included, won't duplicate)
-- ✅ Creates proper macOS app bundle
-- ✅ Supports code signing
-
-### 4. GitHub Actions (`build-macos.yml`)
-
-Automated build pipeline:
-- Builds for Intel (`x86_64`) and Apple Silicon (`arm64`)
-- Creates `.app` and `.dmg` packages
-- Optional code signing with Apple Developer account
-- Auto-uploads to GitHub Releases on tag
-
-## 📋 Current Status
-
-✅ **Implemented:**
-- [x] Model downloader with fallback logic
-- [x] NuClickAdapter integration with lazy loading
-- [x] macOS PyInstaller spec with platform awareness
-- [x] GitHub Actions workflow for macOS builds
-- [x] Comprehensive documentation
-- [x] Test scripts for validation
-
-🟡 **Need Your Action:**
-- [ ] Choose model hosting (HuggingFace, S3, GitHub, custom)
-- [ ] Upload `nuclick.pth` to chosen hosting
-- [ ] Update `model_downloader.py` with URL
-- [ ] Test end-to-end build and download
-
-## 🚀 Quick Start
-
-### Step 1: Choose Model Hosting
-
-Pick ONE option:
-
-#### **Option A: HuggingFace (Recommended)**
-```python
-url = 'https://huggingface.co/YOUR_USERNAME/grid-image-analyzer/resolve/main/nuclick.pth'
-```
-
-#### **Option B: AWS S3**
-```python
-url = 'https://your-bucket.s3.amazonaws.com/nuclick.pth'
-```
-
-#### **Option C: GitHub Releases**
-```python
-url = 'https://github.com/YOUR_ORG/grid-image-analyzer/releases/download/v1.0.0/nuclick.pth'
-```
-
-#### **Option D: Custom Server**
-```python
-url = 'https://your-domain.com/downloads/nuclick.pth'
-```
-
-### Step 2: Upload Model
-
-**HuggingFace (easiest):**
-```bash
-# Create repo at https://huggingface.co/new
-# Upload file in web UI, or:
-
-huggingface-cli upload YOUR_USERNAME/grid-image-analyzer \
-  app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth \
-  nuclick.pth
-```
-
-**GitHub Releases:**
-```bash
-# Create release at https://github.com/YOUR_ORG/grid-image-analyzer/releases/new
-# Upload nuclick.pth as asset
-```
-
-**AWS S3:**
-```bash
-aws s3 cp app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth \
-  s3://your-bucket/nuclick.pth --public
-```
-
-### Step 3: Update Configuration
-
-Edit `app/infrastructure/ml_models/model_downloader.py`:
-
-```python
-MODELS = {
-    'nuclick.pth': {
-        'url': 'https://your-hosting-url/nuclick.pth',  # ← YOUR URL HERE
-        'size_mb': 450,
-        'description': 'NuClick interactive segmentation model',
-        'bundled_path': 'app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth',
-    }
-}
-```
-
-### Step 4: Test Locally
+`SERAPH_SELFTEST=1` makes the app import every native dependency, run a real
+matmul on the selected device, print a report, and exit — without opening a window.
 
 ```bash
-# Clear any cached models
-rm -rf ~/.grid-analyzer/models/nuclick.pth
-
-# Test download (will use your URL or fall back to bundled)
-python test_model_bundled.py
-
-# Expected output:
-# ✅ Model path: ...
-# Exists: True
-# Size: 267.5 MB
+SERAPH_SELFTEST=1 /Applications/GridAnalyzer.app/Contents/MacOS/GridAnalyzer
 ```
 
-### Step 5: Push Changes
+CI runs this against the packaged `.app` on both macOS 15 and macOS 26. That is
+what turns "a dylib is missing" into a failed build instead of a crash on your Mac.
+
+## What the build guarantees
+
+The `Verify bundle is self-contained` step fails the build if any bundled `.dylib`
+or `.so` links against `/opt/homebrew` or `/usr/local`. This matters: Homebrew is
+**not** used to build the app. `libvips` and `libopenslide` come from the
+`pyvips-binary` and `openslide-bin` wheels and are copied into the bundle. If we
+let Homebrew provide them, PyInstaller would link to paths that exist on the CI
+runner and on no user's machine.
+
+The `.app` is uploaded with `ditto`, not a plain zip, so symlinks, permissions and
+the code signature survive the round-trip.
+
+## Signing and notarization
+
+Without an Apple Developer account the DMG still builds, but macOS quarantines
+anything downloaded from the internet, so the first launch is blocked. Users have
+to run this once:
 
 ```bash
-git add -A
-git commit -m "feat: configure model hosting URL"
-git push origin main
+xattr -dr com.apple.quarantine /Applications/GridAnalyzer.app
 ```
 
-GitHub Actions will automatically build macOS app!
+To remove that step, add these repository secrets (Settings → Secrets and
+variables → Actions). The workflow detects them and switches to Developer ID
+signing + notarization automatically; no workflow edit is needed.
 
-## 🏗️ Local Building (macOS)
+| Secret | What it is |
+|---|---|
+| `MACOS_CERTIFICATE` | Your "Developer ID Application" certificate exported as `.p12`, then base64-encoded: `base64 -i cert.p12 \| pbcopy` |
+| `MACOS_CERTIFICATE_PWD` | The password you set when exporting the `.p12` |
+| `MACOS_SIGNING_IDENTITY` | The identity string, e.g. `Developer ID Application: Your Name (TEAM123456)` |
+| `MACOS_NOTARY_APPLE_ID` | The Apple ID email of the developer account |
+| `MACOS_NOTARY_TEAM_ID` | Your 10-character Team ID |
+| `MACOS_NOTARY_PASSWORD` | An **app-specific password** (appleid.apple.com → Sign-In and Security → App-Specific Passwords) — not your Apple ID password |
 
-### Prerequisites
+An Apple Developer membership costs ~$99/year. With all six set, the release DMG
+is signed, notarized by Apple, and stapled, so it opens with a double-click and
+the release notes say so.
+
+## Releasing
+
+The build is driven by git tags:
 
 ```bash
-pip install PyInstaller create-dmg
+git tag v1.4.0
+git push origin v1.4.0
 ```
 
-### Build App
+That triggers both platform workflows. Each one:
+
+1. Clones the pinned upstream repos (CellViT, patho-sam, micro-sam, torch-em, elf)
+   at fixed commits, so a release is reproducible.
+2. Builds with PyInstaller, stamping the tag into the bundle version.
+3. Runs the self-test against the packaged app.
+4. Publishes the DMG / installer to the GitHub Release for that tag.
+
+Pushing to `main` builds and verifies the macOS app too, but publishes nothing.
+
+## Building locally
 
 ```bash
-# From project root
-pyinstaller --clean --noconfirm main_release.spec
+pip install -r requirements-macos.txt
+pip install 'pyinstaller>=6.10'
+python -c "from cellpose import models; models.CellposeModel(model_type='cpsam', gpu=False)"
 
-# Output: dist/GridAnalyzer.app
+SERAPH_VERSION=1.4.0 pyinstaller --clean --noconfirm docs/build/main_release.spec
+SERAPH_SELFTEST=1 ./dist/GridAnalyzer.app/Contents/MacOS/GridAnalyzer
 ```
 
-### Create DMG
+## Troubleshooting
 
-```bash
-create-dmg \
-  --volname "GridAnalyzer" \
-  --window-size 800 400 \
-  --icon-size 100 \
-  --icon "GridAnalyzer.app" 200 190 \
-  --app-drop-link 600 190 \
-  dist/GridAnalyzer.dmg \
-  dist/GridAnalyzer.app
-```
+**"GridAnalyzer is damaged and can't be opened"** — the quarantine flag on an
+unsigned build. Run the `xattr -dr` command above. It is not actually damaged.
 
-### Test App
+**The app opens on the CPU when you expect the GPU** — run the self-test; it
+prints the device it selected. Check that `torch.backends.mps.is_available()` is
+true and that no `SERAPH_DEVICE` override is set.
 
-```bash
-# Direct launch
-./dist/GridAnalyzer.app/Contents/MacOS/GridAnalyzer
+**A model crashes with "not implemented for MPS"** — confirm
+`PYTORCH_ENABLE_MPS_FALLBACK=1` is in the environment. The adapters also catch
+these and retry on the CPU (`device.is_gpu_failure`), so it should degrade rather
+than crash; if it crashes, that path has a gap worth reporting.
 
-# Or mount DMG and test
-hdiutil mount dist/GridAnalyzer.dmg
-/Volumes/GridAnalyzer/GridAnalyzer.app/Contents/MacOS/GridAnalyzer
-```
-
-## ☁️ Automated Building (GitHub Actions)
-
-### Automatic Trigger
-
-Push to main/develop branch:
-```bash
-git commit -m "fix: something"
-git push origin main
-# Workflow starts automatically
-```
-
-### Manual Trigger
-
-1. Go to GitHub repo
-2. Actions tab → "Build macOS App"
-3. Click "Run workflow"
-4. Select branch
-5. Artifacts appear after build
-
-### Create Release
-
-```bash
-# Tag a version
-git tag v1.0.0
-git push origin v1.0.0
-
-# GitHub Actions will:
-# 1. Build app for Intel + Apple Silicon
-# 2. Create DMG packages
-# 3. Auto-upload to GitHub Releases
-```
-
-### Download Artifacts
-
-- **From GitHub Actions:** Settings → Actions → Workflow → Artifacts
-- **From GitHub Releases:** Select release → Assets
-
-## 🔐 Code Signing (Optional, for Production)
-
-### For macOS Distribution Outside App Store
-
-1. **Join Apple Developer Program** (~$99/year)
-2. **Create certificates** in Apple Developer portal
-3. **Configure GitHub Secrets:**
-   ```
-   APPLE_ID=your@apple.id
-   APPLE_ID_PASSWORD=app-specific-password
-   TEAM_ID=ABC123XYZ
-   ```
-4. **Workflow will auto-sign** if secrets are set
-
-The workflow already includes signing logic. Just add the secrets to GitHub repo.
-
-## 🧪 Testing & Verification
-
-### Test Model Download System
-
-```bash
-python test_model_bundled.py
-
-# Output should show:
-# ✅ Model path: ...
-# Exists: True
-# Size: 267.5 MB
-```
-
-### Test NuClickAdapter
-
-```python
-from app.infrastructure.ml_models.nuclick_adapter import NuClickAdapter
-
-adapter = NuClickAdapter()
-# First predict() will trigger lazy loading + model download
-polygons = adapter.predict(image, click_x, click_y)
-```
-
-### Monitor Download Progress
-
-```python
-from app.infrastructure.ml_models.model_downloader import get_model_with_progress
-
-def on_status(msg):
-    print(f"Status: {msg}")
-
-path = get_model_with_progress('nuclick.pth', status_callback=on_status)
-```
-
-### Verify App Bundle
-
-```bash
-# Check app structure
-ls -la dist/GridAnalyzer.app/Contents/
-
-# Verify executable
-file dist/GridAnalyzer.app/Contents/MacOS/GridAnalyzer
-
-# Check for embedded models (should be minimal or none)
-ls -la dist/GridAnalyzer.app/Contents/Resources/ | grep -i model
-```
-
-## 📊 Performance Impact
-
-| Metric | Before | After | Benefit |
-|--------|--------|-------|---------|
-| App download | 1.7 GB | 800 MB | -53% smaller |
-| Installation | ~5 min | ~2 min | 3x faster |
-| First run* | <1s | <1s | None |
-| First NuClick | download | +30-60s | Model cache |
-| App size (disk) | 1.7 GB | 800 MB | 53% less space |
-
-*With models cached
-
-## 🐛 Troubleshooting
-
-### "Model download failed (401)"
-
-**Cause:** URL not accessible or requires authentication
-
-**Fix:**
-1. Test URL in browser
-2. Verify file exists at URL
-3. Check URL format in `model_downloader.py`
-4. For HuggingFace: make repo public
-
-### "No module named 'PIL'"
-
-**Cause:** Pillow not installed in PyInstaller environment
-
-**Fix:**
-```bash
-pip install Pillow
-pyinstaller --clean --noconfirm main_release.spec
-```
-
-### "Cannot be opened" on user's Mac
-
-**If unsigned:** User can run:
-```bash
-xattr -d com.apple.quarantine GridAnalyzer.app
-```
-
-**If need signing:** Follow "Code Signing" section above
-
-### Model bundled in app (size too large)
-
-**Check:** `main_release.spec` doesn't include `nuclick.pth` in datas
-
-```python
-# ❌ Bad (model embedded)
-datas = [
-    ('app/infrastructure/ml_models/nuclick_torch/weights/nuclick.pth', '...'),
-]
-
-# ✅ Good (model downloads on-demand)
-datas = [
-    # Only cellpose weights, no nuclick.pth here
-]
-```
-
-## 📖 Next Steps
-
-1. ✅ Choose hosting (HuggingFace recommended)
-2. ✅ Upload `nuclick.pth` to hosting
-3. ✅ Update `model_downloader.py` with URL
-4. ✅ Test locally: `python test_model_bundled.py`
-5. ✅ Commit and push
-6. ✅ GitHub Actions builds automatically
-7. ✅ Download DMG from Actions artifacts or Releases
-
-## 📚 Additional Resources
-
-- [PyInstaller Documentation](https://pyinstaller.org/)
-- [HuggingFace Model Hub](https://huggingface.co/)
-- [GitHub Actions Docs](https://docs.github.com/en/actions)
-- [Apple Code Signing Guide](https://developer.apple.com/documentation/security/code_signing_and_provisioning)
-
----
-
-**Status:** ✅ System is ready. Awaiting your hosting choice and model upload.
-
-**Questions?** Refer to conversation summary or check test scripts:
-- `test_model_bundled.py` — Model downloader validation
-- `test_model_download.py` — Full system test suite
+**The build fails on "links against a Homebrew/local path"** — a dependency
+started pulling a native library from Homebrew instead of a wheel. Do not add
+`brew install` to make it pass; find the wheel that ships the library, or the
+bundle will break on machines without Homebrew.

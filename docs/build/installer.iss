@@ -6,10 +6,16 @@
 ; 3. Creates an uninstaller
 ; 4. Makes startup instant, as it doesn't extract files every time it opens.
 
+; Version comes from the git tag, passed by CI as: ISCC /DAppVersion=1.4.0
+#ifndef AppVersion
+  #define AppVersion "0.0.0"
+#endif
+
 [Setup]
 ; Program Identification
 AppName=Grid Image Analyzer
-AppVersion=1.3.0
+AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
 AppPublisher=M4Fagundes
 AppPublisherURL=https://github.com/m4Fagundes/grid-image-analyzer
 AppSupportURL=https://github.com/m4Fagundes/grid-image-analyzer

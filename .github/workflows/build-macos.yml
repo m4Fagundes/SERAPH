@@ -1,55 +1,101 @@
 name: Build macOS App
 
+# Produces a self-contained GridAnalyzer.app + DMG for Apple Silicon.
+#
+# Apple Silicon only: PyTorch has published no macOS x86_64 wheels since 2.3 and
+# Cellpose-SAM requires a modern torch, so an Intel build is not possible without
+# downgrading the entire stack.
+#
+# Native libraries (libvips, libopenslide) come from the pyvips-binary and
+# openslide-bin wheels and are bundled into the .app. Homebrew is deliberately
+# NOT used: PyInstaller would capture dylibs from /opt/homebrew, which does not
+# exist on a user's machine. The "Verify bundle is self-contained" step enforces this.
+#
+# Signing: if the Apple Developer secrets are configured the app is signed with a
+# Developer ID and the DMG is notarized + stapled, so it opens with a double-click.
+# Without them the build still succeeds with an ad-hoc signature, but macOS
+# Gatekeeper will quarantine the download — see docs/BUILD_MACOS.md.
+
 on:
   push:
-    branches: [ main, develop ]
     tags:
       - 'v*'
+    branches: [ main, develop ]
     paths:
       - 'app/**'
       - 'main.py'
       - 'requirements-macos.txt'
       - 'docs/build/main_release.spec'
-      - 'hooks/rthook_cellpose.py'
-      - 'hooks/rthook_openslide.py'
-      - 'hooks/rthook_pyvips.py'
+      - 'docs/build/entitlements.plist'
+      - 'hooks/**'
       - '.github/workflows/build-macos.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  PYTHON_VERSION: '3.12'
+  # Upstream research repos, pinned. Unpinned clones made every release build
+  # depend on whatever those projects had on main that day.
+  CELLVIT_SHA: 05097e18e3d194a65121042f631b5753069f5ee3
+  PATHO_SAM_SHA: 4b6b4fe32f7fc6b0b314c270f4b1f8ca1bcc3a64
+  MICRO_SAM_SHA: 726715b61c9fb5dd4cc841c15477a311debec5de
+  TORCH_EM_SHA: ad55d59559fbb10fdc9b2dffb7e21e8bcbdd7bd6
+  ELF_SHA: 9f57884744ac5967b829349b5d46e32e9d732264
+
 jobs:
-  build-macos:
-    runs-on: macos-14
+  build:
+    name: Build (arm64)
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signed: ${{ steps.signing.outputs.enabled }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
-      - name: Clone CellViT Repository
+      - name: Resolve release version
+        id: version
         run: |
-          git clone https://github.com/TIO-IKIM/CellViT CellViT
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-dev+${GITHUB_SHA::7}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version ${VERSION}"
 
-      - name: Clone Patho-SAM runtime repositories
+      - name: Clone pinned upstream repositories
         run: |
-          git clone https://github.com/computational-cell-analytics/patho-sam patho-sam
-          git clone https://github.com/computational-cell-analytics/micro-sam.git micro-sam
-          git clone https://github.com/constantinpape/torch-em.git torch-em
-          git clone https://github.com/constantinpape/elf.git elf
+          set -euo pipefail
+          clone_pinned() {
+            local url="$1" dir="$2" sha="$3"
+            git clone --filter=blob:none "$url" "$dir"
+            git -C "$dir" checkout --quiet "$sha"
+            echo "$dir @ $(git -C "$dir" rev-parse --short HEAD)"
+          }
+          clone_pinned https://github.com/TIO-IKIM/CellViT CellViT "$CELLVIT_SHA"
+          clone_pinned https://github.com/computational-cell-analytics/patho-sam patho-sam "$PATHO_SAM_SHA"
+          clone_pinned https://github.com/computational-cell-analytics/micro-sam micro-sam "$MICRO_SAM_SHA"
+          clone_pinned https://github.com/constantinpape/torch-em torch-em "$TORCH_EM_SHA"
+          clone_pinned https://github.com/constantinpape/elf elf "$ELF_SHA"
 
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-macos.txt') }}
+          path: ~/Library/Caches/pip
+          key: ${{ runner.os }}-${{ runner.arch }}-pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements-macos.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-
+            ${{ runner.os }}-${{ runner.arch }}-pip-${{ env.PYTHON_VERSION }}-
 
       - name: Cache Cellpose model weights
         uses: actions/cache@v4
@@ -57,58 +103,236 @@ jobs:
           path: ~/.cellpose/models
           key: cellpose-models-cpsam
 
-      - name: Install Homebrew dependencies
-        run: |
-          brew install libvips openslide
-
       - name: Install Python dependencies
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements-macos.txt
-          pip install pyinstaller
+          pip install 'pyinstaller>=6.10'
+          echo "--- resolved core versions ---"
+          pip show torch pyvips-binary openslide-bin | grep -E '^(Name|Version)'
 
-      - name: Download Cellpose Models
+      - name: Download Cellpose weights
+        run: python -c "from cellpose import models; models.CellposeModel(model_type='cpsam', gpu=False)"
+
+      - name: Detect signing configuration
+        id: signing
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE }}
+          IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
-          python -c "from cellpose import models; models.CellposeModel(model_type='cpsam', gpu=False)"
+          if [[ -n "$CERT" && -n "$IDENTITY" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Developer ID signing enabled."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No Apple signing secrets — building with an ad-hoc signature. Users will have to clear the quarantine flag manually (see docs/BUILD_MACOS.md)."
+          fi
+
+      - name: Import Developer ID certificate
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PWD="$(uuidgen)"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PWD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security find-identity -v -p codesigning "$KEYCHAIN"
 
       - name: Build with PyInstaller
+        env:
+          SERAPH_VERSION: ${{ steps.version.outputs.version }}
+          # Empty when unset → PyInstaller applies an ad-hoc signature instead.
+          SERAPH_CODESIGN_IDENTITY: ${{ steps.signing.outputs.enabled == 'true' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+        run: pyinstaller --clean --noconfirm docs/build/main_release.spec
+
+      - name: Verify bundle is self-contained
         run: |
-          pyinstaller --clean --noconfirm docs/build/main_release.spec
+          set -euo pipefail
+          APP="dist/GridAnalyzer.app"
+          test -x "$APP/Contents/MacOS/GridAnalyzer" || { echo "::error::Missing app executable"; exit 1; }
+
+          echo "--- architecture ---"
+          lipo -archs "$APP/Contents/MacOS/GridAnalyzer"
+          file "$APP/Contents/MacOS/GridAnalyzer" | grep -q arm64 || { echo "::error::Executable is not arm64"; exit 1; }
+
+          # Any link to a Homebrew or /usr/local path is a dylib that exists on
+          # this runner but not on a user's Mac — the classic "works in CI, crashes
+          # on launch" failure. Fail the build instead of shipping it.
+          echo "--- scanning for non-bundled native dependencies ---"
+          LEAKS=0
+          while IFS= read -r -d '' lib; do
+            if otool -L "$lib" 2>/dev/null | tail -n +2 | grep -qE '(/opt/homebrew|/usr/local/(lib|opt|Cellar))'; then
+              echo "::error::$lib links against a Homebrew/local path:"
+              otool -L "$lib" | tail -n +2 | grep -E '(/opt/homebrew|/usr/local/(lib|opt|Cellar))'
+              LEAKS=$((LEAKS + 1))
+            fi
+          done < <(find "$APP" \( -name '*.dylib' -o -name '*.so' \) -print0)
+          if [[ "$LEAKS" -gt 0 ]]; then
+            echo "::error::$LEAKS library/libraries are not self-contained."
+            exit 1
+          fi
+          echo "All native libraries are bundled."
+
+          echo "--- key native libs present ---"
+          find "$APP" -name 'libvips*' -o -name 'libopenslide*' | head -5
+
+          echo "--- signature ---"
+          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tail -3
+          du -sh "$APP"
+
+      - name: Smoke-test the packaged app (macos-15 build host)
+        run: |
+          set -euo pipefail
+          SERAPH_SELFTEST=1 ./dist/GridAnalyzer.app/Contents/MacOS/GridAnalyzer
 
       - name: Create DMG
         run: |
-          brew install create-dmg || true
+          set -euo pipefail
+          brew install create-dmg
           create-dmg \
-            --volname "GridAnalyzer" \
+            --volname "GridAnalyzer ${{ steps.version.outputs.version }}" \
             --window-pos 200 120 \
             --window-size 600 400 \
             --icon-size 100 \
-            --icon "GridAnalyzer.app" 200 190 \
+            --icon "GridAnalyzer.app" 175 190 \
             --hide-extension "GridAnalyzer.app" \
-            --app-drop-link 400 190 \
-            "dist/GridAnalyzer.dmg" \
+            --app-drop-link 425 190 \
+            "dist/GridAnalyzer-${{ steps.version.outputs.version }}-arm64.dmg" \
             "dist/GridAnalyzer.app"
-        continue-on-error: true
+
+      - name: Sign and notarize DMG
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          APP_PWD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          DMG="dist/GridAnalyzer-${{ steps.version.outputs.version }}-arm64.dmg"
+          codesign --force --sign "$IDENTITY" --timestamp "$DMG"
+          # Notarization is what lets the DMG open without the "unidentified
+          # developer" block; stapling attaches the ticket so it works offline.
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_PWD" \
+            --wait --timeout 45m
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature -v "$DMG"
+
+      - name: Package .app for artifact upload
+        run: |
+          set -euo pipefail
+          # ditto preserves symlinks, permissions and the code signature.
+          # actions/upload-artifact zips with none of those and would corrupt the bundle.
+          ditto -c -k --keepParent --sequesterRsrc \
+            dist/GridAnalyzer.app \
+            "dist/GridAnalyzer-${{ steps.version.outputs.version }}-arm64-app.zip"
 
       - name: Upload .app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GridAnalyzer-arm64.app
-          path: dist/GridAnalyzer.app
+          name: GridAnalyzer-arm64-app
+          path: dist/GridAnalyzer-*-arm64-app.zip
           retention-days: 30
 
       - name: Upload .dmg artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GridAnalyzer-arm64.dmg
-          path: dist/GridAnalyzer.dmg
+          name: GridAnalyzer-arm64-dmg
+          path: dist/GridAnalyzer-*-arm64.dmg
           retention-days: 30
-        continue-on-error: true
 
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
+  verify:
+    # The build host is macOS 15. This proves the same bundle also launches on
+    # macOS 26 (Tahoe) — the two versions actually in use — before we publish it.
+    name: Verify on ${{ matrix.os }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Download packaged app
+        uses: actions/download-artifact@v4
+        with:
+          name: GridAnalyzer-arm64-app
+          path: pkg
+
+      - name: Unpack and launch self-test
+        run: |
+          set -euo pipefail
+          sw_vers
+          ditto -x -k pkg/GridAnalyzer-*-arm64-app.zip unpacked
+          APP="unpacked/GridAnalyzer.app"
+
+          # Artifacts arrive without the quarantine bit; strip it anyway so this
+          # mirrors what a user gets after downloading the DMG.
+          xattr -dr com.apple.quarantine "$APP" || true
+
+          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tail -2
+
+          SERAPH_SELFTEST=1 "$APP/Contents/MacOS/GridAnalyzer"
+
+  release:
+    name: Publish release
+    needs: [build, verify]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: GridAnalyzer-arm64-dmg
+          path: dist
+
+      - name: Compose release notes
+        env:
+          SIGNED: ${{ needs.build.outputs.signed }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## macOS (Apple Silicon)"
+            echo
+            echo "Download the \`.dmg\`, open it, and drag **GridAnalyzer** into Applications."
+            echo
+            if [[ "$SIGNED" == "true" ]]; then
+              echo "✅ Signed and notarized by Apple — it opens with a double-click."
+            else
+              echo "⚠️ **This build is not notarized.** macOS quarantines it, so the first"
+              echo "launch is blocked. After copying it to Applications, run once:"
+              echo
+              echo '```bash'
+              echo 'xattr -dr com.apple.quarantine /Applications/GridAnalyzer.app'
+              echo '```'
+              echo
+              echo "Then open it normally. To remove this step for good, configure the Apple"
+              echo "Developer signing secrets — see \`docs/BUILD_MACOS.md\`."
+            fi
+            echo
+            echo "Requires macOS 13 or later on Apple Silicon. Verified on macOS 15 and macOS 26."
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Create/update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/GridAnalyzer.dmg
+          files: dist/*.dmg
+          generate_release_notes: true
+          body_path: release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
