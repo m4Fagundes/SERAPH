@@ -122,6 +122,7 @@ class CellposeAdapter(IBatchSegmentationModel):
         # Lazy-loaded model instance
         self._model = None
         self._load_attempted = False
+        self._last_load_error: str | None = None
 
     # ── Domain Port Implementation ──────────────────────────────────────────
 
@@ -228,7 +229,13 @@ class CellposeAdapter(IBatchSegmentationModel):
         self._ensure_model_loaded()
 
         if self._model is None:
-            logger.warning("Cellpose model not loaded. Returning empty.")
+            # This is the silent-failure path: the user clicks Segment and gets
+            # nothing back. Say why, and say it loudly enough to reach the log file.
+            logger.error(
+                "Cellpose model failed to load — segmentation cannot run. "
+                "Last load error: %s. Check the log above for the full traceback.",
+                self._last_load_error or "unknown",
+            )
             return []
 
         # Check memory usage before starting
@@ -553,7 +560,8 @@ class CellposeAdapter(IBatchSegmentationModel):
                 else:
                     raise e
         except Exception as e:
-            logger.error("Failed to load Cellpose model: %s", e)
+            logger.error("Failed to load Cellpose model: %s", e, exc_info=True)
+            self._last_load_error = f"{type(e).__name__}: {e}"
             self._model = None
 
     @staticmethod

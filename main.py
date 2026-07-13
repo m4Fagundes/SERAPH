@@ -5,6 +5,16 @@ import warnings
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
+# A frozen windowed build has no console, so stderr goes nowhere. Without a log
+# file on disk, a failure inside segmentation is invisible to the user.
+try:
+    from app.infrastructure.logging_setup import configure_logging, unhandled_exception_hook
+
+    configure_logging()
+    unhandled_exception_hook()
+except Exception as e:  # never block startup on logging
+    logging.warning("File logging unavailable: %s", e)
+
 # On Apple Silicon, several operators used by Cellpose/SAM/CellViT have no Metal
 # kernel. This must be set before torch is imported or they raise instead of
 # falling back to the CPU. (The frozen build also sets it in hooks/rthook_torch_env.py.)
