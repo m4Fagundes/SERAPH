@@ -1,0 +1,32 @@
+% Oral Epithelium — Cellpose + per-cell SICLE (UVA / IMScience template)
+% Build: pdflatex oral-cellseg-uva.tex  (run twice for TOC)
+
+\documentclass[aspectratio=169]{beamer}
+
+\def\insertpagenumber{1}
+
+\makeatletter
+\def\input@path{%
+  {./general/}%
+  {./presentations/}%
+}
+\graphicspath{%
+  {./presentations/oral-cellseg/images/}%
+  {./general/}%
+}
+\usepackage{grffile}
+\makeatother
+
+\newcommand{\pathtodir}{./}
+
+\input{./general/oral-beamer-preamble.tex}
+\input{./general/sj-commands.tex}
+
+\usetikzlibrary{positioning}
+\usetheme{pucvirtual}
+
+\begin{document}
+
+\input{./presentations/oral-cellseg/oral-cellseg}
+
+\end{document}

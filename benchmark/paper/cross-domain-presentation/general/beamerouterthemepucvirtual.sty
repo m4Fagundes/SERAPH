@@ -1,0 +1,115 @@
+\mode<presentation>
+
+
+
+% Frame title
+\defbeamertemplate*{frametitle}{pucvirtual}[1][]
+{
+%\definecolor{myblueframetitle}{rgb}{0.34,0.615,0.851}
+\definecolor{myblueframetitle}{rgb}{0.215,0.625,0.873}
+%\definecolor{myblueframetitle}{rgb}{86,157,0}
+\vskip1cm%
+  \begin{beamercolorbox}[wd=\paperwidth,ht=1.2cm]{frametitle} 
+  \begin{tikzpicture}
+  \useasboundingbox[fill=white](0,0) rectangle(\the\paperwidth,1.2);
+%  \fill[gray!50!white] (0,2.22) rectangle(1.22,1.0);
+%  \fill[ppginfbg] (1.32,2.22) rectangle(\the\paperwidth,1.0);
+   \ifx\insertframesubtitle\@empty%
+      {\node[anchor= west, myblueframetitle,font=\Large] at (2.2,1.55){\bf \insertframetitle};%
+      }
+      \else%
+      {\node[anchor= west, myblueframetitle,font=\Large] at (2.2,1.55){\bf \insertframetitle};%
+       %\node[anchor= west, white,font=\small] at (3.2,0.41){\insertframesubtitle};
+       }%
+      \fi
+  \end{tikzpicture}
+  \end{beamercolorbox}    
+%  \begin{frame}{XX}
+%  \end{frame}
+\vskip-1.5cm%
+}
+
+\defbeamertemplate*{footline}{pucvirtual}
+{
+  \ifx \insertframetitle \@empty
+    % There was no frame title
+  \else
+    % There was a frame title, typeset the counterpart to the frame title (this is a hack).
+%  \begin{beamercolorbox}[wd=.33\paperwidth,ht=2.25ex,dp=1ex,center]{author in head/foot}%
+%    \usebeamerfont{author in head/foot}\insertshortauthor
+%  \end{beamercolorbox}%
+%      \begin{beamercolorbox}[sep=0.5\cam@outer@pitch,leftskip=1.5\cam@outer@pitch,rightskip=0.5\cam@outer@pitch]{author in head/foot}%{palette secondry}%
+%    \usebeamerfont{author in head/foot}\insertshortauthor    
+%      \hfill
+%      \hbox{\usebeamertemplate{footprogress}}
+%    \end{beamercolorbox}%
+  \leavevmode%
+%  \vspace*{-14mm}
+%  \hbox{\hspace{-2mm}
+%  \begin{beamercolorbox}[wd=.45\paperwidth,ht=2.25ex,dp=1ex,center]{author in head/foot}%
+%    %\usebeamerfont{logo in head/foot}\insertlogo
+%    \usebeamerfont{author in head/foot}\insertshortauthor
+%  \end{beamercolorbox}%
+%  \begin{beamercolorbox}[wd=.45\paperwidth,ht=2.25ex,dp=1ex,center]{title in head/foot}%
+%    \usebeamerfont{title in head/foot}\insertshorttitle
+%  \end{beamercolorbox}%
+
+ \exactlocation{0.02\textwidth}{15.4cm}{8.5cm}{
+ 
+\ifnumequal{\insertpagenumber}{1}{
+  \begin{beamercolorbox}[wd=.10\paperwidth,ht=2.25ex,dp=1ex,center]{date in head/foot}%
+%    \usebeamerfont{date in head/foot}\insertshortdate{}\hspace*{3em}
+\color{white} \bf
+    \insertframenumber{} / \inserttotalframenumber\hspace*{3ex}
+  \hfill
+  \usebeamertemplate{footprogress}
+  \end{beamercolorbox}%
+}{}
+  }
+
+ \exactlocation{0.9\textwidth}{0.8cm}{8.67cm}{
+ 
+\ifnumequal{\insertpagenumber}{1}{
+  \begin{beamercolorbox}[wd=.8\paperwidth,ht=2.25ex,dp=1ex,left]{author in head/foot}%
+    %\usebeamerfont{logo in head/foot}\insertlogo
+%    \usebeamerfont{author in head/foot}
+    \color{white} \bf \insertshortauthor~--~\insertshorttitle
+  \end{beamercolorbox}%
+%  \begin{beamercolorbox}[wd=.45\paperwidth,ht=2.25ex,dp=1ex,center]{title in head/foot}%
+%    \usebeamerfont{title in head/foot}\insertshorttitle
+%  \end{beamercolorbox}%
+}{}
+  } 
+  
+%   \exactlocation{0.5\textwidth}{4.4cm}{8.65cm}{
+% 
+%\ifnumequal{\insertpagenumber}{1}{
+%%  \begin{beamercolorbox}[wd=.45\paperwidth,ht=2.25ex,dp=1ex,center]{author in head/foot}%
+%%    %\usebeamerfont{logo in head/foot}\insertlogo
+%%    \usebeamerfont{author in head/foot}\insertshortauthor
+%%  \end{beamercolorbox}%
+%  \begin{beamercolorbox}[wd=.45\paperwidth,ht=2.25ex,dp=1ex,center]{title in head/foot}%
+%%    \usebeamerfont{title in head/foot}
+%    \color{white} \bf
+%    \insertshorttitle
+%  \end{beamercolorbox}%
+%}{}
+%  }  
+
+% \exactlocation{1.0\textwidth}{4.4cm}{8.90cm}{
+% 
+%\ifnumequal{\insertpagenumber}{1}{
+%  \begin{beamercolorbox}[wd=.10\paperwidth,ht=2.25ex,dp=1ex,center]{date in head/foot}%
+%%    \usebeamerfont{date in head/foot}\insertshortdate{}\hspace*{3em}
+%\color{white} \bf \usebeamerfont{title in head/foot}
+%    \insertshorttitle
+%  \hfill
+%  \usebeamertemplate{footprogress}
+%  \end{beamercolorbox}%
+%}{}
+%  }  
+  
+  \fi
+}
+
+\mode<all>

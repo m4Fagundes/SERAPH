@@ -1,0 +1,111 @@
+% Minimal preamble for oral-cellseg (no carlito/biblatex/tcolorbox/animate)
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{relsize}
+% Template uses \scalefont{factor} as a relative size (not scalefnt's point size).
+\newcommand{\scalefont}[1]{\relscale{#1}}
+\usepackage{xcolor}
+\usepackage{amsmath,amsfonts}
+\usepackage{booktabs}
+\usepackage{multicol}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{ragged2e}
+\usepackage[absolute,overlay]{textpos}
+\newcommand\exactlocation[4]{%
+  \begin{textblock*}{#1}(#2,#3)#4\end{textblock*}%
+}
+\usepackage{tikz}
+\usetikzlibrary{
+  positioning,chains,fit,shapes,calc,shapes.arrows,
+  decorations.pathmorphing,fit,backgrounds,shadows,
+  shapes.symbols,arrows.meta
+}
+
+\definecolor{arrowblue}{RGB}{98,145,224}
+\definecolor{yellowvirtual}{RGB}{248,216,90}
+\definecolor{myblueauthor}{rgb}{0.215,0.625,0.873}
+\definecolor{myblue}{rgb}{0.0, 0.2, 0.45}
+\definecolor{myred}{rgb}{0.95, 0.2, 0.0}
+\definecolor{mywhite}{rgb}{0.95, 0.95, 0.95}
+\definecolor{mygreen}{rgb}{0.0, 0.55, 0.0}
+\definecolor{myorange}{rgb}{0.95, 0.5, 0.0}
+\definecolor{mygray}{rgb}{0.15, 0.15, 0.15}
+\definecolor{myblack}{rgb}{0.05, 0.05, 0.05}
+
+\newcommand\myBox[3]{{\colorbox{#1}{\color{#2} {#3}}}}
+\newcommand\emRed[1]{\myBox{myred!70!myblack}{mywhite}{#1}}
+\newcommand\parRed[2][0.999\linewidth]{{
+  \emRed{
+    \begin{minipage}{#1} \centering \rmfamily\scshape #2
+    \end{minipage}
+  }
+}}
+
+% Theme frametitle + footline consume ~2.8cm; keep figures/captions inside body
+% Tall figures: cap height.  Ultra-wide benchmark strips: cap width (height-only overflows).
+\newcommand{\oralfig}[2][0.50]{%
+  \centering
+  \includegraphics[width=\linewidth,height=#1\textheight,keepaspectratio]{#2}%
+}
+\newcommand{\oralfigwide}[2][0.98]{%
+  \centering
+  \includegraphics[width=#1\linewidth,keepaspectratio]{#2}%
+}
+\newcommand{\oralfigwidecap}[3][0.98]{%
+  \oralfigwide[#1]{#2}%
+  \oralcaption{#3}%
+}
+% 2x2 figure grid (two rows, two image+label rows)
+% One row of three slide figures + labels (#2--#4 images, #5--#7 labels)
+\newcommand{\oralrowthree}[7][0.26]{%
+  \begin{center}%
+  \footnotesize\setlength{\tabcolsep}{4pt}%
+  \renewcommand{\arraystretch}{1.02}%
+  \begin{tabular}{@{}ccc@{}}%
+    \includegraphics[width=0.31\linewidth,height=#1\textheight,keepaspectratio]{#2} &
+    \includegraphics[width=0.31\linewidth,height=#1\textheight,keepaspectratio]{#3} &
+    \includegraphics[width=0.31\linewidth,height=#1\textheight,keepaspectratio]{#4} \\[-0.1em]%
+    #5 & #6 & #7 \\%
+  \end{tabular}%
+  \end{center}%
+}
+\newcommand{\oralgridtwo}[5][0.36]{%
+  \begin{center}%
+  \footnotesize\setlength{\tabcolsep}{6pt}%
+  \renewcommand{\arraystretch}{1.05}%
+  \begin{tabular}{@{}cc@{}}%
+    \includegraphics[width=0.46\linewidth,height=#1\textheight,keepaspectratio]{#2} &
+    \includegraphics[width=0.46\linewidth,height=#1\textheight,keepaspectratio]{#3} \\[-0.12em]%
+    #4 & #5 \\%
+  \end{tabular}%
+  \end{center}%
+}
+\newcommand{\oralcaption}[1]{%
+  \vspace{0.12em}%
+  \begin{center}%
+  \begin{minipage}{0.88\linewidth}%
+  \centering\scriptsize #1%
+  \end{minipage}%
+  \end{center}%
+  \vspace{0.25em}%
+}
+
+% 2 rows x 3 columns of slide figures (path-cost comparison)
+\newcommand{\oralpathgrid}[1]{%
+  \begin{center}%
+  \setlength{\tabcolsep}{4pt}%
+  \renewcommand{\arraystretch}{1.05}%
+  \begin{tabular}{@{}ccc@{}}%
+    \includegraphics[width=0.31\linewidth]{#1_orig.png} &
+    \includegraphics[width=0.31\linewidth]{#1_gt.png} &
+    \includegraphics[width=0.31\linewidth]{#1_fmax.png} \\[-0.1em]
+    {\tiny Original} & {\tiny GT (cyan)} & {\tiny \texttt{fmax}+\texttt{minsc}} \\[0.35em]
+    \includegraphics[width=0.31\linewidth]{#1_fsum.png} &
+    \includegraphics[width=0.31\linewidth]{#1_gradvmaxmul.png} &
+    \includegraphics[width=0.31\linewidth]{#1_br_summary.png} \\[-0.1em]
+    {\tiny \texttt{fsum}+\texttt{maxsc}} & {\tiny \textbf{ours} (green)} & {\tiny mean BR} \\%
+  \end{tabular}%
+  \end{center}%
+}

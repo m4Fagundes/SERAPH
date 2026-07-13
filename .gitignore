@@ -43,4 +43,5 @@ external/torch-em/
 benchmark/data/
 benchmark/outputs/
 benchmark/results/
+benchmark/cache/
 var/

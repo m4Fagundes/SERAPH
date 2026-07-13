@@ -1,0 +1,15 @@
+\section{Evaluation protocol}
+
+\begin{frame}{How we score: pixel vs.\ boundary, swept by threshold}
+    \begin{itemize}
+        \item Sweep each model's confidence threshold $p \in \{0.1,\dots,0.9\}$ --- the precision/recall knob.
+        \item \textbf{P --- Foreground pixel-wise F1}: pixel-overlap of the nucleus region (the interior).
+        \item \textbf{B --- Boundary F-score} ($r{=}2$ px tolerance): agreement on the \emph{contour} pixels only.
+        \item Instance F1 (IoU@0.5) and matched-Dice as supporting measures.
+    \end{itemize}
+
+    \vspace{0.5em}
+    \begin{block}{Boundary tolerance $r{=}2$ px}
+        $\approx$0.25\% of the image diagonal --- absorbs the $\pm$1--2\,px noise inherent to manual annotation, yet stricter than the usual literature default.
+    \end{block}
+\end{frame}

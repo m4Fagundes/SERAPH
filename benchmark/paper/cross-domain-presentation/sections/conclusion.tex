@@ -1,0 +1,16 @@
+\section{Conclusion}
+
+\begin{frame}{Three messages}
+    \begin{enumerate}
+        \item \textbf{No universal winner} --- the best model flips with the staining modality (Cellpose on H\&E, CellViT on IHC); apparent gaps are often a \textbf{protocol} artifact (detection count), not contour quality.
+        \item \textbf{Delineation is not solved} --- pixel overlap hides that the diagnostically critical boundary is recovered poorly (B $\ll$ Dice).
+        \item \textbf{The remaining gap is detection} --- weak, low-contrast nuclei the models miss entirely; post-hoc segmentation cannot recover them.
+    \end{enumerate}
+
+    \vspace{0.4em}
+    \begin{block}{Two open problems}
+        Recover missed nuclei \emph{without} inflating false positives; recover the exact boundary that carries the morphometric signal.
+    \end{block}
+    \centering
+    \footnotesize\textbf{Recommendation:} match model + metric to the application; report boundary fidelity alongside overlap.
+\end{frame}

@@ -1,0 +1,80 @@
+\section{Results}
+
+\begin{frame}{Result 1 --- No universal winner}
+    \scriptsize
+    \centering
+    \renewcommand{\arraystretch}{1.15}
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{@{}l cc cc cc cc@{}}
+        \toprule
+        & \multicolumn{2}{c}{\textbf{Oral}} & \multicolumn{2}{c}{\textbf{NuInsSeg}}
+        & \multicolumn{2}{c}{\textbf{CryoNuSeg}} & \multicolumn{2}{c}{\textbf{IHC}} \\
+        \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}
+        Model & P & B & P & B & P & B & P & B \\
+        \midrule
+        Cellpose    & {\color{mygreen}\textbf{.811}} & {\color{mygreen}\textbf{.659}} & {\color{mygreen}\textbf{.859}} & .658 & {\color{mygreen}\textbf{.845}} & {\color{mygreen}\textbf{.760}} & .760 & .521 \\
+        CellViT-SAM & .773 & .614 & .779 & .588 & .815 & .725 & {\color{mygreen}\textbf{.808}} & {\color{mygreen}\textbf{.535}} \\
+        PathoSAM    & .767 & .622 & .803 & .601 & .812 & .724 & .786 & .507 \\
+        InstanSeg   & .697 & .570 & .850 & {\color{mygreen}\textbf{.664}} & .784 & .696 & .747 & .500 \\
+        \bottomrule
+    \end{tabular}
+
+    \vspace{0.7em}
+    \footnotesize
+    \begin{itemize}
+        \item \textbf{Cellpose} wins all three H\&E sets --- \textbf{\color{myred}including the held-out oral set} (genuine generalization).
+        \item On \textbf{IHC the ranking inverts}: {\color{mygreen}\textbf{CellViT}} leads --- and it never saw that cohort.
+        \item[$\Rightarrow$] No single model wins across staining \textbf{modalities}.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Result 1 --- the inversion, visually}
+    \oralfig[0.72]{pr_pixel_crossdomain.png}
+    \oralcaption{%
+      Pixel-wise precision--recall across domains. Cellpose leads on the three H\&E sets;
+      CellViT leads on IHC. Same models, same protocol --- the winner flips with the stain.}
+\end{frame}
+
+\begin{frame}{Result 2 --- Apparent superiority is a \emph{protocol} effect}
+    \begin{columns}[c]
+        \begin{column}{0.52\textwidth}
+            \small
+            \begin{itemize}
+                \item Once a nucleus is \textbf{matched}, all four models trace nearly the same contour: IoU $\approx$0.74--0.76, \textbf{Dice $\approx$0.85}.
+                \item The ranking is decided by \textbf{how many objects} a model reports, not contour quality.
+                \item Over-detectors (CellViT, PathoSAM) pile up false positives $\rightarrow$ lower precision-weighted scores.
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.48\textwidth}
+            \centering
+            \includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio]{overlay_oral_protocol.png}\\
+            {\tiny TP / FP / FN on one oral ROI.}
+        \end{column}
+    \end{columns}
+
+    \vspace{0.3em}
+    \footnotesize{\color{myblue}\textbf{Threshold = a tuning knob.}} Raise $p$ to suppress FP, lower it to recover missed nuclei --- \emph{except} CellViT, whose saturated probability map leaves it untunable.
+\end{frame}
+
+\begin{frame}{Result 3 --- Delineation is \emph{not} solved}
+    \begin{itemize}
+        \item Dice $\sim$0.85 looks great --- but it is dominated by the \textbf{trivial nuclear interior}.
+        \item The \textbf{boundary} (B) is recovered far less well: \textbf{B $=$ 0.50--0.76 vs.\ Dice $\sim$0.85}.
+        \item B $<$ P in \textbf{every} model and \textbf{every} domain (gap 0.08--0.28).
+    \end{itemize}
+
+    \vspace{0.4em}
+    \begin{alertblock}{Why it matters}
+        Downstream morphometry reads the chromatin distribution \emph{inside} the mask; an inaccurate boundary perturbs exactly the signal separating benign from malignant nuclei.
+    \end{alertblock}
+    \centering
+    \footnotesize The contour --- not the interior --- is the part that still needs work.
+\end{frame}
+
+\begin{frame}{Result 4 --- Seeded segmentation: the bottleneck is \emph{detection}}
+    \oralfigwide[0.92]{study_3metrics_full.png}
+    \oralcaption{%
+      Cellpose\,+\,NuClick (seeded) does \textbf{not} beat end-to-end Cellpose. Across four
+      domains a paired bootstrap finds no systematic disadvantage; the gap is which \textbf{seeds}
+      it receives --- detection, not delineation.}
+\end{frame}

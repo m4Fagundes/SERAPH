@@ -183,9 +183,17 @@ def _build_descriptor_from_points(points: list, meta: dict) -> dict | None:
         return None
 
     # Convert [{"x": X, "y": Y}, …] → [(X, Y), …]
+    # Check if 'place' is in all point dicts to sort them accordingly.
+    # This prevents self-intersecting polygons (like bowties) for annotations
+    # whose point lists are exported out of order in the JSON.
+    if points and all(isinstance(pt, dict) and "place" in pt for pt in points):
+        sorted_points = sorted(points, key=lambda pt: pt["place"])
+    else:
+        sorted_points = points
+
     try:
         polygon: List[Tuple[float, float]] = [
-            (float(pt["x"]), float(pt["y"])) for pt in points
+            (float(pt["x"]), float(pt["y"])) for pt in sorted_points
         ]
     except (KeyError, ValueError, TypeError):
         return None

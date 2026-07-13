@@ -1,0 +1,48 @@
+\section{Motivation}
+
+\begin{frame}{Why nuclei segmentation --- and why the \emph{contour} matters}
+    \begin{itemize}
+        \item Nuclei segmentation is a key step in digital pathology: nuclear morphology guides tumor grading and diagnosis.
+        \item Two diagnostic features depend directly on the \textbf{exact contour}:
+        \begin{itemize}
+            \item \textbf{Membrane irregularity} --- a smoothed or eroded mask hides the shape deviation that signals malignancy.
+            \item \textbf{Chromatin pattern} --- pixel intensity $\propto$ local chromatin density; a leaking mask corrupts the distribution read \emph{inside} it.
+        \end{itemize}
+        \item Pretrained ``foundation'' segmenters are increasingly adopted off-the-shelf.
+    \end{itemize}
+
+    \vspace{0.5em}
+    \begin{alertblock}{What we evaluate}
+        Not only \textbf{whether} a model detects a nucleus, but \textbf{how well} it recovers its boundary.
+    \end{alertblock}
+\end{frame}
+
+\begin{frame}{The gap in current evaluations}
+    \begin{block}{How foundation models are usually benchmarked}
+        On a \textbf{test split of the same dataset they were trained on} (e.g.\ PanNuke), with a \textbf{single family of metrics} (instance detection / Panoptic Quality).
+    \end{block}
+
+    \begin{itemize}
+        \item Shows in-distribution performance --- \textbf{not} generalization to new stains, tissues, resolutions.
+        \item The ``best'' model can depend on whether the task values precision, recall, or boundary fidelity.
+    \end{itemize}
+
+    \vspace{0.4em}
+    \centering
+    {\large\color{myblue}\bfseries Practitioner's question: which model should I use for \emph{my} images?}
+\end{frame}
+
+\begin{frame}{What we do}
+    \begin{itemize}
+        \item A deliberately \textbf{cross-domain} benchmark of \textbf{four foundation models}:
+        \begin{itemize}
+            \item \textbf{Cellpose-SAM} --- flow field + SAM backbone (generalist).
+            \item \textbf{CellViT-SAM-H} --- ViT encoder + HoVer-Net decoders.
+            \item \textbf{PathoSAM} (micro-sam, ViT-L) --- SAM adapted to microscopy.
+            \item \textbf{InstanSeg} --- embedding-based instance segmentation.
+        \end{itemize}
+        \item On \textbf{four datasets}: three H\&E (oral epithelium, NuInsSeg, CryoNuSeg) + one IHC cohort.
+        \item \textbf{Multi-metric}: pixel-wise F1, boundary F-score, detection-confidence \textbf{threshold sweep}.
+        \item A per-model \textbf{in/out-of-distribution provenance map} --- ``unseen'' is checked, not assumed.
+    \end{itemize}
+\end{frame}

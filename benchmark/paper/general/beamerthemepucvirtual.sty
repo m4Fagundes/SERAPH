@@ -1,0 +1,105 @@
+\mode<presentation>
+
+% Requirement
+\RequirePackage{tikz}
+\RequirePackage{textpos}
+
+% Settings
+\useinnertheme{pucvirtual}
+\useoutertheme{pucvirtual}
+\usecolortheme{pucvirtual}
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{blocks}[rounded][shadow=true]  
+\definecolor{ppginfbg}{rgb}{0.32, 0.61, 0.80}
+
+%\AtBeginDocument{
+%\begin{frame}{}
+%  \begin{tikzpicture}%[remember picture,overlay]
+%  \useasboundingbox (0,0) rectangle(\the\paperwidth,\the\paperheight);
+% 		%\node[inner sep=0,xshift=-1cm, %shifting around
+%      %yshift=+1cm] at (current page.center)
+%		%{\includegraphics[width=\paperwidth,height=\paperheight]{title-page-background}};  
+%
+%  \end{tikzpicture}
+%\end{frame}
+%}
+
+\setbeamertemplate{endpage}{%
+%\titlepagefootline
+
+\begin{frame}{The end}
+\begin{center}
+
+\Large
+Lucca Soares de Paiva Lacerda
+
+luccasplacerda@gmail.com
+
+\vspace*{0.5cm}
+% \pause
+
+%\begin{block}{}
+%\centering \Large 
+\Huge
+
+\begin{center}
+        \begin{tikzpicture}
+    \node[starburst, draw, minimum width=3cm, minimum height=2cm,black,fill=white,line width=1.5pt]
+{Thank you!};
+    \end{tikzpicture}
+\end{center}  
+
+%\parBlue{\sc Thank you!}
+%\end{block}
+
+%\begin{block}{}
+%\centering \Large 
+\parRed{Questions and comments?}
+%\end{block}
+
+
+\end{center}
+\end{frame}
+%\mainfootline
+}
+
+%\AtEndDocument{}
+
+
+\AtEndDocument{
+\def\insertpagenumber{0}
+\usebeamertemplate{endpage}
+
+\begin{frame}{}
+\begingroup
+  \begin{tikzpicture}%[remember picture,overlay]
+  \useasboundingbox (0,0) rectangle(\the\paperwidth,\the\paperheight);
+
+ 
+ % \fill[color=brown] (0,2) rectangle (\the\paperwidth,\the\paperheight);
+%  \fill[color=orange] (0,0) rectangle(2.95,1.9);
+%  \fill[color=blue!50!cyan!80] (3.05,0) rectangle(\the\paperwidth,1.9);
+  \ifnum\thepage>1\relax%
+   \fill[white,opacity=1] (0,0) rectangle(\the\paperwidth,\the\paperheight);
+	\node[inner sep=0,xshift=-1.0cm,yshift=+0.1cm] at (current page.center)
+		{\includegraphics[width=\paperwidth,height=1.015\paperheight]{slide-final-virtual}};     
+%%  \else
+%%
+%%%	  \visible<1>{
+%% 		\node[inner sep=0,xshift=0.9cm,yshift=+0.0cm] at (current page.center)
+%		{\includegraphics[width=1.03\paperwidth,height=1.02\paperheight]{title-page-background}};  
+%		}
+%  		\visible<2>{
+% 		\node[inner sep=0] at (8.05,4.45)
+%		{\includegraphics[width=\paperwidth,height=\paperheight]{author-page-background}};  
+%		}	
+	%\fi
+   \fi
+  \end{tikzpicture}
+  \endgroup  
+\end{frame}
+}
+
+
+\mode<all>

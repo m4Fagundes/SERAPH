@@ -1,0 +1,31 @@
+\section{Datasets and provenance}
+
+\begin{frame}{Four datasets --- three H\&E, one IHC}
+    \oralfig[0.62]{dataset_examples.png}
+    \oralcaption{%
+      Oral epithelium, NuInsSeg, CryoNuSeg (H\&E) and an IHC cohort.
+      \textbf{IHC} (DAB/brown) is the hardest cross-modality test vs.\ H\&E (purple).}
+\end{frame}
+
+\begin{frame}{Training-data provenance --- honesty up front}
+    \small
+    \centering
+    \renewcommand{\arraystretch}{1.15}
+    \begin{tabular}{@{}lcccc@{}}
+        \toprule
+        \textbf{Dataset} & \textbf{Cellpose-SAM} & \textbf{CellViT} & \textbf{PathoSAM} & \textbf{InstanSeg} \\
+        \midrule
+        Oral epithelium & held & held & held & held \\
+        NuInsSeg        & \textbf{in} & held & held & \textbf{in} \\
+        CryoNuSeg       & \textbf{in} & held & held & held \\
+        IHC Cohort      & \textbf{in}$^{*}$ & held & held & \textbf{in}$^{*}$ \\
+        \bottomrule
+    \end{tabular}
+
+    \vspace{0.7em}
+    \begin{itemize}
+        \item Transformer models (CellViT, PathoSAM): all four sets are \textbf{held-out}.
+        \item Generalists (Cellpose-SAM, InstanSeg): overlap several sets.
+        \item \textbf{\color{myred}Only oral epithelium is held-out for all four} --- in-distribution cells are flagged when reading rankings.
+    \end{itemize}
+\end{frame}

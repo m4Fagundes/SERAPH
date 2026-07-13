@@ -164,6 +164,122 @@ class IDISFAdapter(ISegmentationModel):
             logger.info("iDISF segmented click (%d, %d) with %d polygon points", click_x, click_y, len(polygon))
             return polygon
 
+    def predict_region(self, image: Image, mask, margin: int = 8, n_obj: int = 12) -> List[Tuple[int, int]]:
+        """Region-seeded variant (study M1): instead of a single centroid, seed
+        iDISF with several interior points of `mask` (the Cellpose instance) as
+        the object scribble, and a ring just outside the dilated mask as the
+        background scribble. `mask` is a bool array the size of `image`.
+
+        Targets iDISF's poor localization under single-point prompting; gives the
+        graph the whole Cellpose region instead of one click.
+        """
+        binary = self._ensure_binary()
+        if binary is None:
+            logger.warning("iDISF binary is not available. Returning empty segmentation.")
+            return []
+
+        import cv2
+        import numpy as np
+        from scipy import ndimage as ndi
+
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
+        mask = np.asarray(mask, dtype=bool)
+        ys, xs = np.where(mask)
+        if xs.size == 0:
+            return []
+
+        x1 = max(0, int(xs.min()) - margin)
+        y1 = max(0, int(ys.min()) - margin)
+        x2 = min(image.width, int(xs.max()) + margin + 1)
+        y2 = min(image.height, int(ys.max()) + margin + 1)
+        crop = image.crop((x1, y1, x2, y2))
+        cw, ch = crop.width, crop.height
+        local = mask[y1:y2, x1:x2]
+
+        # object seeds: subsample the eroded interior so points stay inside the cell
+        eroded = ndi.binary_erosion(local, iterations=2)
+        src = eroded if eroded.any() else local
+        oy, ox = np.where(src)
+        if ox.size == 0:
+            return []
+        sel = np.linspace(0, ox.size - 1, num=min(n_obj, ox.size)).astype(int)
+        obj_points = [(int(ox[k]), int(oy[k])) for k in sel]
+
+        # background seeds: a ring just outside the dilated mask (tight, cell-specific)
+        ring = ndi.binary_dilation(local, iterations=margin) & ~local
+        ry, rx = np.where(ring)
+        if rx.size:
+            selb = np.linspace(0, rx.size - 1, num=min(24, rx.size)).astype(int)
+            bg_points = [(int(rx[k]), int(ry[k])) for k in selb]
+        else:
+            bg_points = self._background_points(cw, ch)
+
+        label_x, label_y = int(ox.mean()), int(oy.mean())  # representative interior point
+        return self._segment_with_scribbles(crop, [obj_points, bg_points], label_x, label_y, x1, y1, image)
+
+    def _segment_with_scribbles(self, crop, scribbles, label_x, label_y, offset_x, offset_y, image):
+        """Run the iDISF binary with explicit object/background scribbles and
+        return the polygon (full-image coords) of the region under (label_x, label_y).
+        Shared by predict_region; mirrors predict()'s subprocess handling."""
+        import cv2
+        import numpy as np
+
+        binary = self._ensure_binary()
+        with tempfile.TemporaryDirectory(prefix="seraph_idisf_") as tmp:
+            tmp_dir = Path(tmp)
+            input_path = tmp_dir / "input.ppm"
+            markers_path = tmp_dir / "markers.txt"
+            output_prefix = tmp_dir / "idisf"
+
+            crop.save(input_path)
+            lines = [str(len(scribbles))]
+            for scribble in scribbles:
+                lines.append(str(len(scribble)))
+                lines.extend(f"{x};{y}" for x, y in scribble)
+            markers_path.write_text("\n".join(lines), encoding="ascii")
+
+            cmd = [
+                str(binary), "--rem", "1", "--i", str(input_path),
+                "--n0", str(self.n0), "--it", str(self.iterations),
+                "--f", str(self.path_cost_function), "--file", str(markers_path),
+                "--obj_markers", "1", "--c1", str(self.c1), "--c2", str(self.c2),
+                "--o", str(output_prefix),
+            ]
+            try:
+                proc = subprocess.run(cmd, cwd=str(self.repo_dir), text=True, capture_output=True, timeout=20)
+            except Exception as exc:
+                logger.exception("iDISF region execution failed: %s", exc)
+                return []
+            if proc.returncode != 0:
+                logger.error("iDISF region returned %s\nstderr=%s", proc.returncode, proc.stderr)
+                return []
+
+            labels_path = Path(str(output_prefix) + "_labels.pgm")
+            if not labels_path.exists():
+                return []
+            from PIL import Image as PILImage
+            labels = np.array(PILImage.open(labels_path))
+            comp = self._mask_for_click_label(labels, label_x, label_y)
+            if comp is None:
+                return []
+            contours, _ = cv2.findContours(comp.astype("uint8") * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours:
+                return []
+            contour = max(contours, key=cv2.contourArea)
+            if cv2.contourArea(contour) < 8:
+                return []
+            epsilon = max(1.0, 0.006 * cv2.arcLength(contour, True))
+            contour = cv2.approxPolyDP(contour, epsilon, True)
+            polygon: List[Tuple[int, int]] = []
+            for point in contour:
+                px, py = point[0]
+                gx = max(0, min(int(px) + offset_x, image.width - 1))
+                gy = max(0, min(int(py) + offset_y, image.height - 1))
+                polygon.append((gx, gy))
+            return polygon
+
     def _crop_around_click(self, image: Image, click_x: int, click_y: int) -> tuple[Image, int, int, int, int]:
         crop_size = max(64, int(self.crop_size))
         half = crop_size // 2

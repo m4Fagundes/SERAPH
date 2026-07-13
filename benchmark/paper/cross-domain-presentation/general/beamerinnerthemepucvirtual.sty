@@ -1,0 +1,161 @@
+\mode<presentation>
+
+\setbeamertemplate{background}{
+\begingroup
+  \begin{tikzpicture}%[remember picture,overlay]
+  \useasboundingbox (0,0) rectangle(\the\paperwidth,\the\paperheight);
+
+ 
+ % \fill[color=brown] (0,2) rectangle (\the\paperwidth,\the\paperheight);
+%  \fill[color=orange] (0,0) rectangle(2.95,1.9);
+%  \fill[color=blue!50!cyan!80] (3.05,0) rectangle(\the\paperwidth,1.9);
+  \ifnum\thepage>1\relax%
+   \fill[white,opacity=1] (0,0) rectangle(\the\paperwidth,\the\paperheight);
+	\node[inner sep=0] at (current page.center)
+		{\includegraphics[width=\paperwidth,height=\paperheight]{slide-background}};  
+	\node[inner sep=0] at (0.6,8.5)
+		{\includegraphics[width=0.04\paperwidth]{logo-branconovo}};  
+		   
+%%  \else
+%%
+%%%	  \visible<1>{
+%% 		\node[inner sep=0,xshift=0.9cm,yshift=+0.0cm] at (current page.center)
+%		{\includegraphics[width=1.03\paperwidth,height=1.02\paperheight]{title-page-background}};  
+%		}
+%  		\visible<2>{
+% 		\node[inner sep=0] at (8.05,4.45)
+%		{\includegraphics[width=\paperwidth,height=\paperheight]{author-page-background}};  
+%		}	
+	%\fi
+   \fi
+  \end{tikzpicture}
+  \endgroup
+}
+
+% Title page
+\defbeamertemplate*{title page}{pucvirtual}[1][]
+{ 
+ 
+\begin{textblock*}{\paperwidth}(0pt,0pt)
+  \begin{tikzpicture}%[remember picture,overlay]
+  \useasboundingbox (0,0) rectangle(\the\paperwidth,\the\paperheight);
+ 		\node[inner sep=0,xshift=0.0cm,yshift=-0.0cm] at (current page.center)
+		{\includegraphics[width=1.0\paperwidth,height=1.00\paperheight]{author-page-background}};  
+  \end{tikzpicture}
+\end{textblock*}
+
+
+\begin{textblock*}{0.77\paperwidth}(7.9cm,4.2cm)
+
+%\begin{tikzpicture}[remember picture,overlay]
+%\draw[rounded corners=15pt]
+%  (4,0) rectangle ++(2,1);
+%   \end{tikzpicture} 
+\begin{tikzpicture}[remember picture,overlay]
+\node (1) [draw=myblueauthor, minimum width=10cm, minimum height=2.7cm, fill=myblueauthor,rounded rectangle] {
+\Huge \bf \color{mywhite}
+
+%\parbox[10cm]{\inserttitle}
+\begin{minipage}{0.99\linewidth}
+\centering
+\inserttitle
+\end{minipage}
+};
+\end{tikzpicture} 
+  
+\definecolor{mybluetitle}{rgb}{0.0, 0.2, 0.45}
+
+%{
+%\begin{center}
+%\Huge \bf \color{mywhite}
+%
+%\inserttitle
+%\end{center}
+%}
+%\vspace*{1cm}
+%\Large
+%\insertauthor
+%
+%\vspace*{0.5cm}
+%\large
+%\insertdate
+\end{textblock*}
+
+
+\begin{textblock*}{0.6\paperwidth}(3.6cm,5.85cm)
+\definecolor{mybluetitle}{rgb}{0.0, 0.2, 0.45}
+
+{
+\begin{center}
+\large \bf \color{myblueauthor}
+
+\scalefont{0.8}
+
+
+\insertauthor
+
+\vspace*{0.2cm}
+
+\insertinstitute
+\end{center}
+}
+%\vspace*{1cm}
+%\Large
+%\insertauthor
+%
+%\vspace*{0.5cm}
+%\large
+%\insertdate
+\end{textblock*}
+
+
+
+   \vskip4cm%
+    \begin{beamercolorbox}[wd=5cm,leftskip=8.3cm,sep=8pt,#1]{title page header}
+     
+      \begin{tikzpicture}
+      \node[text width = 5cm,inner sep=0] at (4.05,2.45) {
+      \centering
+      \usebeamerfont{title}\inserttitle\par%
+      };
+      \end{tikzpicture}
+    \end{beamercolorbox}%
+%    \vskip0.75cm%
+%    \begin{beamercolorbox}[wd=12cm,leftskip=3cm,#1]{author}
+%      \usebeamerfont{author}\insertauthor%
+%    \end{beamercolorbox}
+%     \vskip0.2cm%
+%    \begin{beamercolorbox}[wd=12cm,leftskip=3cm,#1]{date}
+%      \usebeamerfont{author}\insertdate%
+%    \end{beamercolorbox}
+  \vfill
+
+   
+%\begin{beamercolorbox}[wd=\paperwidth,ht=0.0cm]{frametitle} 
+%  \begin{tikzpicture}[remember picture,overlay]
+%  \useasboundingbox (0,0) rectangle(\the\paperwidth,\the\paperheight);  
+%%  	  \visible<1>{
+%% 		\node[inner sep=0] at (current page.center)
+%%		{\includegraphics[width=\paperwidth,height=\paperheight]{title-page-background}};  
+%%		}
+%%  		\visible<2>{
+% 		\node[inner sep=0] at (current page.center)
+%		{\includegraphics[width=\paperwidth,height=\paperheight]{author-page-background}};  
+%		
+%%		\node[inner sep=0] at (4,-1)
+%%		{\framebox\usebeamerfont{title}\inserttitle\par};%
+%%		}
+%  \end{tikzpicture}
+%\end{beamercolorbox} 
+
+%%\vskip6cm%
+%    \begin{beamercolorbox}[wd=12cm,leftskip=3cm,sep=8pt,#1]{title page header}
+%      \usebeamerfont{title}\inserttitle\par%
+%    \end{beamercolorbox}%
+ 
+ 
+}
+
+
+\mode
+<all>

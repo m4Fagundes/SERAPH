@@ -28,4 +28,4 @@ def test_unlabeled_json_regions_inside_roi_are_named_by_roi_index(tmp_path):
     descriptors = read_json_features(str(path))
     names = [desc["slice"]["name"] for desc in descriptors]
 
-    assert names == ["ROI", "INV_C1", "N", ""]
+    assert names == ["ROI", "INV_C1", "N_C1", ""]

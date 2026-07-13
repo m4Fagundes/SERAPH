@@ -1,0 +1,50 @@
+% Title slide — wide centred pill (IMScience model layout)
+\begin{frame}[plain]
+  \setbeamertemplate{navigation symbols}{}
+
+  \begin{textblock*}{\paperwidth}(0cm,0cm)
+    \includegraphics[width=\paperwidth,height=\paperheight]{author-page-background}
+  \end{textblock*}
+
+  % Wide blue pill — horizontally centred on the slide
+  \begin{textblock*}{\paperwidth}(0cm,1.85cm)
+    \begin{center}
+    \begin{tikzpicture}
+      \node[
+        draw=myblueauthor,
+        fill=myblueauthor,
+        rounded rectangle,
+        minimum width=11.85cm,
+        minimum height=3.15cm,
+        inner sep=16pt
+      ] {
+        \begin{minipage}{11.5cm}
+          \centering
+          \color{white}\bfseries
+          {\large Cross-Domain Benchmarking of Nuclei}\\[0.35em]
+          {\large Segmentation Foundation Models in Histopathology}\\[0.7em]
+          {\normalsize Cellpose-SAM \textbullet{} CellViT \textbullet{} PathoSAM \textbullet{} InstanSeg}\\[0.4em]
+          {\footnotesize across three H\&E sets and one immunohistochemistry cohort}
+        \end{minipage}
+      };
+    \end{tikzpicture}
+    \end{center}
+  \end{textblock*}
+
+  % Authors + affiliation — centred, same width as pill
+  \begin{textblock*}{\paperwidth}(0cm,5.55cm)
+    \begin{center}
+    \begin{minipage}{11.5cm}
+      \centering
+      \color{myblueauthor}
+      {\normalsize\bfseries Matheus Fagundes \quad\textbullet\quad Lucca S.\,P.\ Lacerda}\\[0.3em]
+      {\small Advisor: Prof.\ Silvio Jamil F. Guimar\~aes}\\[0.4em]
+      {\footnotesize
+        Laboratory of Image and Multimedia Data Science -- IMScience\\
+        Graduate Program in Informatics -- PPGINF\\
+        Pontifical Catholic University of Minas Gerais -- PUC Minas}
+    \end{minipage}
+    \end{center}
+  \end{textblock*}
+
+\end{frame}

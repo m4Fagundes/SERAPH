@@ -3,17 +3,18 @@ import colorsys
 from PIL import Image
 
 # ── Segmentation mask colours ───────────────────────────────────────────────
-# Keep these intentionally cool: cyan, teal, green and blue. Avoid red, pink,
-# purple, orange and warm yellow because they blend into common H&E tissue tones.
+# Maximally-distinct categorical palette. The first four match the model colours
+# used in the benchmark figures (Cellpose=blue, CellViT=green, PathoSAM=orange,
+# InstanSeg=purple) so the SERAPH view and the paper plots are consistent.
 LAYER_COLORS = [
-    "#00E5FF",  # Vivid cyan
-    "#20E3B2",  # Teal mint
-    "#00E676",  # Spring green
-    "#339AF0",  # Clear blue
-    "#1DE9B6",  # Aquamarine
-    "#4DABF7",  # Sky blue
-    "#12D8C8",  # Blue teal
-    "#69DB7C",  # Fresh green
+    "#1F77B4",  # Blue    (Cellpose)
+    "#2CA02C",  # Green   (CellViT-SAM)
+    "#FF7F0E",  # Orange  (PathoSAM)
+    "#9467BD",  # Purple  (InstanSeg)
+    "#FFFFFF",  # White   (ground truth / reference)
+    "#E31A1C",  # Red
+    "#FFD700",  # Gold
+    "#17BECF",  # Cyan
 ]
 
 _DEFAULT_MASK_COLOR = LAYER_COLORS[0]
@@ -34,19 +35,18 @@ def _hex_to_rgb(color: str) -> tuple[int, int, int] | None:
 
 
 def is_safe_mask_color(color: str) -> bool:
-    """Return True when a colour is safely separated from H&E warm/purple tones."""
+    """Return True when a colour is bright enough to be visible over tissue.
+
+    Any hue is allowed (incl. white, red, orange, purple) so layers can use a
+    maximally-distinct categorical palette. The only rejection is colours too
+    dark to see over the image.
+    """
     rgb = _hex_to_rgb(color)
     if rgb is None:
         return False
     r, g, b = (v / 255 for v in rgb)
-    hue, saturation, value = colorsys.rgb_to_hsv(r, g, b)
-    hue_deg = hue * 360
-
-    if saturation < 0.35 or value < 0.35:
-        return False
-
-    # Safe zone: green/cyan/blue. Reject red, orange, yellow, pink and purple.
-    return 80 <= hue_deg <= 250
+    _, _, value = colorsys.rgb_to_hsv(r, g, b)
+    return value >= 0.35
 
 
 def safe_mask_color(color: Optional[str], fallback_index: int = 0) -> str:

@@ -1,0 +1,18 @@
+% Cross-Domain Nuclei Segmentation Benchmark — presentation (IMScience / PUC Minas)
+% Build: pdfLaTeX (run twice for TOC). Flat project layout.
+\documentclass[aspectratio=169]{beamer}
+\def\insertpagenumber{1}
+\makeatletter
+\def\input@path{{./}{./general/}}
+\graphicspath{{./images/}{./general/}}
+\usepackage{grffile}
+\makeatother
+\newcommand{\pathtodir}{./}
+\input{./general/oral-beamer-preamble.tex}
+\input{./general/sj-commands.tex}
+\usetikzlibrary{positioning}
+\usetheme{pucvirtual}
+\setbeamertemplate{endpage}{} % disable the theme's hardcoded "The end" slide
+\begin{document}
+\input{./cross-domain}
+\end{document}

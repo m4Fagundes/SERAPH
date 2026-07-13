@@ -176,9 +176,21 @@ class CellViTAdapter(IBatchSegmentationModel):
             return []
 
         # Detection threshold: reuse cellprob_threshold as the foreground
-        # probability cutoff (CellViT's [0,1] scale). None keeps the default 0.5.
+        # probability cutoff. CellViT's scale is a [0,1] probability, but the GUI
+        # shares Cellpose's spinbox (range -6..6). Only honour values that fall
+        # INSIDE the open (0,1) interval; the extremes silently break CellViT
+        # (>=1.0 rejects every pixel of its near-binary map -> empty mask; <=0.0
+        # marks everything foreground). Out-of-range values keep the 0.5 default.
         if cellprob_threshold is not None and self._postprocessor is not None:
-            self._postprocessor.fg_threshold = float(min(max(cellprob_threshold, 0.0), 1.0))
+            if 0.0 < cellprob_threshold < 1.0:
+                self._postprocessor.fg_threshold = float(cellprob_threshold)
+            else:
+                logger.warning(
+                    "cellprob_threshold=%.2f is outside CellViT's (0,1) range; "
+                    "keeping fg_threshold=%.2f (a value >=1.0 would yield an empty "
+                    "segmentation).",
+                    cellprob_threshold, self._postprocessor.fg_threshold,
+                )
 
         import torch
 
