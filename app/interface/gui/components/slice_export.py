@@ -2,6 +2,7 @@ import logging
 from PyQt6.QtWidgets import QWidget, QLabel, QComboBox, QPushButton, QMessageBox, QFileDialog, QProgressDialog, QInputDialog
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from app.interface.gui.theme import btn_primary, btn_nuclei, btn_hdf5, label_section
+from app.interface.gui.theme_manager import themed
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class ExportHandler:
 
     def setup_toolbar(self, toolbar):
         lbl_fmt = QLabel(" Format: ")
-        lbl_fmt.setStyleSheet(label_section())
+        themed(lbl_fmt, label_section)
         toolbar.addWidget(lbl_fmt)
 
         self.format_combo = QComboBox()
@@ -58,19 +59,19 @@ class ExportHandler:
         export_btn = QPushButton("🚀 Export Slices")
         export_btn.setToolTip("Export all slice images to a folder in the selected format")
         export_btn.clicked.connect(self.export_slices)
-        export_btn.setStyleSheet(btn_primary())
+        themed(export_btn, btn_primary)
         toolbar.addWidget(export_btn)
 
         export_nuc_btn = QPushButton("🦠 Export Nuclei")
         export_nuc_btn.setToolTip("Export individual nucleus crops to a folder")
         export_nuc_btn.clicked.connect(self.export_nuclei)
-        export_nuc_btn.setStyleSheet(btn_nuclei())
+        themed(export_nuc_btn, btn_nuclei)
         toolbar.addWidget(export_nuc_btn)
 
         export_h5_btn = QPushButton("📦 Export Nuclei (HDF5)")
         export_h5_btn.setToolTip("Export nucleus dataset to HDF5 format  [Ctrl+E]")
         export_h5_btn.clicked.connect(self.export_nuclei_h5)
-        export_h5_btn.setStyleSheet(btn_hdf5())
+        themed(export_h5_btn, btn_hdf5)
         toolbar.addWidget(export_h5_btn)
 
     def _format_changed(self, text):

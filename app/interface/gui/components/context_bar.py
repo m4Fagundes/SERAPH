@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from app.interface.gui.design_system import COLORS, SPACE
+from app.interface.gui.theme_manager import themed
 
 
 class ContextBar(QWidget):
@@ -54,7 +55,7 @@ class ContextBar(QWidget):
         self._actions_layout.addWidget(self._mpp_btn, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(self._actions_layout)
 
-        self.setStyleSheet(self._style())
+        themed(self, self._style)
 
     def add_action_widget(self, widget: QWidget) -> None:
         self._actions_layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -71,10 +72,10 @@ class ContextBar(QWidget):
             if v <= 0:
                 raise ValueError
             self._mpp_btn.setText(f"WSI: {v:g} µm/px")
-            self._mpp_btn.setStyleSheet(self._mpp_style_set())
+            themed(self._mpp_btn, self._mpp_style_set)
         except (ValueError, TypeError):
             self._mpp_btn.setText("Set WSI scale")
-            self._mpp_btn.setStyleSheet(self._mpp_style_unset())
+            themed(self._mpp_btn, self._mpp_style_unset)
 
         self._mpp_btn.setVisible(True)
 

@@ -165,6 +165,7 @@ class TileRenderer(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # tile_bg is theme-invariant: the viewport stays dark in light mode too.
         self.setStyleSheet(f"QGraphicsView {{ background-color: {PALETTE['tile_bg']}; }}")
 
         # Track mouse for brush preview
@@ -879,7 +880,7 @@ class TileRenderer(QGraphicsView):
         start_time = time.monotonic()
         if hasattr(self.main_window, "lbl_execution_time"):
             self.main_window.lbl_execution_time.setText("⏱️ Processing...")
-            self.main_window.lbl_execution_time.setStyleSheet(f"color: {PALETTE['timer_label']}; font-weight: bold; font-size: 9pt; margin-left: 8px;")
+            self.main_window.set_execution_time_state('running')
             self.main_window.lbl_execution_time.show()
 
         worker = _BatchSegWorker(
@@ -912,10 +913,10 @@ class TileRenderer(QGraphicsView):
             if hasattr(self.main_window, "lbl_execution_time"):
                 if polygons:
                     self.main_window.lbl_execution_time.setText(f"⏱️ {len(polygons)} nuclei detected in {elapsed:.2f}s")
-                    self.main_window.lbl_execution_time.setStyleSheet(f"color: {PALETTE['exec_time_done']}; font-weight: bold; font-size: 9pt; margin-left: 8px;")
+                    self.main_window.set_execution_time_state('done')
                 else:
                     self.main_window.lbl_execution_time.setText(f"⏱️ 0 nuclei in {elapsed:.2f}s")
-                    self.main_window.lbl_execution_time.setStyleSheet(f"color: {PALETTE['exec_time_error']}; font-weight: bold; font-size: 9pt; margin-left: 8px;")
+                    self.main_window.set_execution_time_state('error')
                 self.main_window.lbl_execution_time.show()
 
         if polygons:
@@ -978,7 +979,7 @@ class TileRenderer(QGraphicsView):
         start_time = time.monotonic()
         if hasattr(self.main_window, "lbl_execution_time"):
             self.main_window.lbl_execution_time.setText(f"⏱️ Processing {len(centroids)} nuclei...")
-            self.main_window.lbl_execution_time.setStyleSheet(f"color: {PALETTE['timer_label']}; font-weight: bold; font-size: 9pt; margin-left: 8px;")
+            self.main_window.set_execution_time_state('running')
             self.main_window.lbl_execution_time.show()
 
         worker = _NuclickAllWorker(seg_service, session, slice_idx, centroids)

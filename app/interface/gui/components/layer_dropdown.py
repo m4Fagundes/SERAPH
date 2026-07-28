@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter
 from app.interface.gui.theme import PALETTE, btn_danger
+from app.interface.gui.theme_manager import themed
 from app.domain.tile import safe_mask_color
 
 logger = logging.getLogger(__name__)
@@ -39,25 +40,34 @@ class LayerDropdown(QToolButton):
     """
     layerVisibilityChanged = pyqtSignal()
 
-    _BUTTON_STYLE = (
-        f"QToolButton {{"
-        f" background-color: {PALETTE['bg_control']};"
-        f" color: {PALETTE['text_primary']};"
-        f" border: 1px solid {PALETTE['border']};"
-        f" border-radius: 4px;"
-        f" padding: 4px 12px 4px 8px;"
-        f" font-size: 8pt;"
-        f" font-family: 'Segoe UI', Tahoma, sans-serif;"
-        f" min-width: 0px;"
-        f" text-align: left;"
-        f" }}"
-        f" QToolButton:hover {{ border: 1px solid {PALETTE['border_focus']}; background-color: {PALETTE['bg_hover']}; }}"
-        f" QToolButton::menu-indicator {{"
-        f" subcontrol-origin: padding;"
-        f" subcontrol-position: center right;"
-        f" right: 6px;"
-        f" }}"
-    )
+    @staticmethod
+    def _button_style() -> str:
+        return (
+            f"QToolButton {{"
+            f" background-color: {PALETTE['bg_control']};"
+            f" color: {PALETTE['text_primary']};"
+            f" border: 1px solid {PALETTE['border']};"
+            f" border-radius: 4px;"
+            f" padding: 4px 12px 4px 8px;"
+            f" font-size: 8pt;"
+            f" font-family: 'Segoe UI', Tahoma, sans-serif;"
+            f" min-width: 0px;"
+            f" text-align: left;"
+            f" }}"
+            f" QToolButton:hover {{ border: 1px solid {PALETTE['border_focus']}; background-color: {PALETTE['bg_hover']}; }}"
+            f" QToolButton::menu-indicator {{"
+            f" subcontrol-origin: padding;"
+            f" subcontrol-position: center right;"
+            f" right: 6px;"
+            f" }}"
+        )
+
+    @staticmethod
+    def _delete_button_style() -> str:
+        return (
+            f"QToolButton {{ border: none; background: transparent; font-size: 10pt; }} "
+            f"QToolButton:hover {{ background-color: {PALETTE['btn_danger']}; border-radius: 3px; }}"
+        )
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,7 +77,7 @@ class LayerDropdown(QToolButton):
         self.setText("Layers (0)")
         self.setToolTip("Toggle per-layer segmentation visibility for the active tile")
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.setStyleSheet(self._BUTTON_STYLE)
+        themed(self, self._button_style)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -161,10 +171,7 @@ class LayerDropdown(QToolButton):
             btn_delete.setText("🗑️")
             btn_delete.setToolTip("Delete this segmentation")
             btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_delete.setStyleSheet(
-                f"QToolButton {{ border: none; background: transparent; font-size: 10pt; }} "
-                f"QToolButton:hover {{ background-color: {PALETTE['btn_danger']}; border-radius: 3px; }}"
-            )
+            themed(btn_delete, self._delete_button_style)
             
             def make_delete_handler(idx=i):
                 def handler():

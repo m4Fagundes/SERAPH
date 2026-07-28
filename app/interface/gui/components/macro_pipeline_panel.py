@@ -15,6 +15,61 @@ from PyQt6.QtGui import QPixmap, QImage, QPainter, QPen, QBrush, QColor, QCursor
 from app.domain.geometry import get_polygon_centroid
 from app.domain.tile import LAYER_COLORS
 from app.interface.gui.design_system import COLORS, SPACE, SIZE, RADIUS
+from app.interface.gui.theme_manager import themed
+
+
+def _style_hint() -> str:
+    return f"color: {COLORS['text_muted']}; font-size: 12px;"
+
+
+def _style_count() -> str:
+    return f"color: {COLORS['text_primary']}; font-size: 12px; font-weight: 600;"
+
+
+def _style_card_title() -> str:
+    return (
+        f"font-size: 13px; font-weight: 600;"
+        f" color: {COLORS['text_primary']}; background: transparent; border: none;"
+    )
+
+
+def _style_card_desc() -> str:
+    return (
+        f"font-size: 11px; color: {COLORS['text_muted']};"
+        f" background: transparent; border: none;"
+    )
+
+
+def _style_field_label() -> str:
+    return f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
+
+
+def _style_field_label_strong() -> str:
+    return (
+        f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 600;"
+        " background: transparent;"
+    )
+
+
+def _style_inline_row() -> str:
+    return (
+        f"background: {COLORS['bg_panel']}; border-radius: {RADIUS['sm']}px;"
+        f" border: 1px solid {COLORS['border_default']};"
+    )
+
+
+def _style_ref_unset() -> str:
+    return (
+        f"color: {COLORS['text_muted']}; font-size: 11px;"
+        f" background: transparent; border: none;"
+    )
+
+
+def _style_ref_ready() -> str:
+    return (
+        f"color: {COLORS['accent_success']};"
+        f" font-size: 11px; font-weight: 600; background: transparent; border: none;"
+    )
 from app.interface.gui.widgets.buttons import ActionButton, SecondaryButton
 
 logger = logging.getLogger(__name__)
@@ -98,14 +153,12 @@ class DINOSimReferenceDialog(QDialog):
             "DINOSim will find visually similar cells across all tiles."
         )
         instr.setWordWrap(True)
-        instr.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        themed(instr, _style_hint)
         layout.addWidget(instr)
 
         # ── Point counter ─────────────────────────────────────────────────────
         self._lbl_count = QLabel("0 points selected")
-        self._lbl_count.setStyleSheet(
-            f"color: {COLORS['text_primary']}; font-size: 12px; font-weight: 600;"
-        )
+        themed(self._lbl_count, _style_count)
         layout.addWidget(self._lbl_count)
 
         # ── Tile image ────────────────────────────────────────────────────────
@@ -1112,15 +1165,10 @@ class _ModelCard(QWidget):
         col.setContentsMargins(0, 0, 0, 0)
 
         self._name_lbl = QLabel(model_name)
-        self._name_lbl.setStyleSheet(
-            f"font-size: 13px; font-weight: 600;"
-            f" color: {COLORS['text_primary']}; background: transparent; border: none;"
-        )
+        themed(self._name_lbl, _style_card_title)
 
         self._desc_lbl = QLabel(description)
-        self._desc_lbl.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['text_muted']}; background: transparent; border: none;"
-        )
+        themed(self._desc_lbl, _style_card_desc)
 
         col.addStretch()
         col.addWidget(self._name_lbl)
@@ -1142,22 +1190,27 @@ class _ModelCard(QWidget):
         super().mousePressEvent(event)
 
     def _refresh_style(self) -> None:
-        if self._selected:
-            self.setStyleSheet(
-                f"QWidget#ModelCard {{"
-                f" background: {COLORS['bg_elevated']};"
-                f" border-radius: {RADIUS['md']}px;"
-                f" border: 1.5px solid {COLORS['accent_action']};"
-                f"}}"
-            )
-        else:
-            self.setStyleSheet(
-                f"QWidget#ModelCard {{"
-                f" background: {COLORS['bg_panel']};"
-                f" border-radius: {RADIUS['md']}px;"
-                f" border: 1px solid {COLORS['border_default']};"
-                f"}}"
-            )
+        themed(self, self._card_selected_style if self._selected else self._card_idle_style)
+
+    @staticmethod
+    def _card_selected_style() -> str:
+        return (
+            f"QWidget#ModelCard {{"
+            f" background: {COLORS['bg_elevated']};"
+            f" border-radius: {RADIUS['md']}px;"
+            f" border: 1.5px solid {COLORS['accent_action']};"
+            f"}}"
+        )
+
+    @staticmethod
+    def _card_idle_style() -> str:
+        return (
+            f"QWidget#ModelCard {{"
+            f" background: {COLORS['bg_panel']};"
+            f" border-radius: {RADIUS['md']}px;"
+            f" border: 1px solid {COLORS['border_default']};"
+            f"}}"
+        )
 
 
 # ── Panel ─────────────────────────────────────────────────────────────────────
@@ -1217,9 +1270,7 @@ class MacroPipelinePanel(QDockWidget):
         gpu_layout.setContentsMargins(0, 0, 0, 0)
         gpu_layout.setSpacing(SPACE[2])
         self._lbl_gpu = QLabel("GPU")
-        self._lbl_gpu.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
-        )
+        themed(self._lbl_gpu, _style_field_label)
         gpu_layout.addWidget(self._lbl_gpu)
         self._cmb_gpu = QComboBox()
         self._cmb_gpu.setToolTip("Choose which visible CUDA device the selected model should use.")
@@ -1231,19 +1282,13 @@ class MacroPipelinePanel(QDockWidget):
 
         # ── NucleAI source layer — only shown when NucleAI is selected ────────
         self._nucleai_row = QWidget()
-        self._nucleai_row.setStyleSheet(
-            f"background: {COLORS['bg_panel']}; border-radius: {RADIUS['sm']}px;"
-            f" border: 1px solid {COLORS['border_default']};"
-        )
+        themed(self._nucleai_row, _style_inline_row)
         nucleai_layout = QVBoxLayout(self._nucleai_row)
         nucleai_layout.setContentsMargins(SPACE[3], SPACE[2], SPACE[3], SPACE[2])
         nucleai_layout.setSpacing(SPACE[2])
 
         self._lbl_nucleai_source = QLabel("Source layer")
-        self._lbl_nucleai_source.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 600;"
-            " background: transparent;"
-        )
+        themed(self._lbl_nucleai_source, _style_field_label_strong)
         nucleai_layout.addWidget(self._lbl_nucleai_source)
 
         self._cmb_nucleai_source = QComboBox()
@@ -1255,10 +1300,7 @@ class MacroPipelinePanel(QDockWidget):
         nucleai_layout.addWidget(self._cmb_nucleai_source)
 
         self._lbl_nucleai_click_model = QLabel("Click model")
-        self._lbl_nucleai_click_model.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 600;"
-            " background: transparent;"
-        )
+        themed(self._lbl_nucleai_click_model, _style_field_label_strong)
         nucleai_layout.addWidget(self._lbl_nucleai_click_model)
 
         self._cmb_nucleai_click_model = QComboBox()
@@ -1275,18 +1317,13 @@ class MacroPipelinePanel(QDockWidget):
 
         # ── DINOSim reference row — only shown when DINOSim is selected ───────
         self._dinosim_row = QWidget()
-        self._dinosim_row.setStyleSheet(
-            f"background: {COLORS['bg_panel']}; border-radius: {RADIUS['sm']}px;"
-            f" border: 1px solid {COLORS['border_default']};"
-        )
+        themed(self._dinosim_row, _style_inline_row)
         dinosim_layout = QHBoxLayout(self._dinosim_row)
         dinosim_layout.setContentsMargins(SPACE[2], SPACE[2], SPACE[2], SPACE[2])
         dinosim_layout.setSpacing(SPACE[2])
 
         self._lbl_dinosim_ref = QLabel("○  No reference set")
-        self._lbl_dinosim_ref.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent; border: none;"
-        )
+        themed(self._lbl_dinosim_ref, _style_ref_unset)
         dinosim_layout.addWidget(self._lbl_dinosim_ref, stretch=1)
 
         self._btn_pick_ref = SecondaryButton("Pick Points")
@@ -1315,9 +1352,7 @@ class MacroPipelinePanel(QDockWidget):
 
         self.lbl_status = QLabel("Select slices and a model to run.")
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
-        )
+        themed(self.lbl_status, _style_field_label)
         layout.addWidget(self.lbl_status)
 
         layout.addSpacing(SPACE[1])
@@ -1571,17 +1606,12 @@ class MacroPipelinePanel(QDockWidget):
     def _refresh_dinosim_ref_status(self) -> None:
         if self._dinosim_has_reference():
             self._lbl_dinosim_ref.setText("●  Reference ready")
-            self._lbl_dinosim_ref.setStyleSheet(
-                f"color: {COLORS.get('accent_success', '#50C878')};"
-                f" font-size: 11px; font-weight: 600; background: transparent; border: none;"
-            )
+            themed(self._lbl_dinosim_ref, _style_ref_ready)
             self._btn_pick_ref.setText("Change Points")
             self._btn_cellpose_ref.setText("Cellpose Points")
         else:
             self._lbl_dinosim_ref.setText("○  No reference set")
-            self._lbl_dinosim_ref.setStyleSheet(
-                f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent; border: none;"
-            )
+            themed(self._lbl_dinosim_ref, _style_ref_unset)
             self._btn_pick_ref.setText("Pick Points")
             self._btn_cellpose_ref.setText("Cellpose Points")
 

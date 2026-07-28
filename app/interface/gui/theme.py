@@ -28,13 +28,17 @@ _FONT = FONT_FAMILY
 
 # ── SERAPH Icon ───────────────────────────────────────────────────────────────
 
-def create_seraph_icon(size: int = 64) -> "QPixmap":
+def create_seraph_icon(size: int = 64, bg: str | None = None) -> "QPixmap":
     """
     Render the SERAPH symbol as a QPixmap at any resolution.
 
     Design: flat-top hexagon (cell cross-section) with a filled cyan nucleus at
     the centre and three organelle dots at alternating vertices. Transparent
     background so it composites cleanly over any surface.
+
+    `bg` fills the hexagon body. It defaults to the dark splash colour, which is
+    what the OS window icon and the splash screen want; callers rendering the mark
+    onto a themed surface should pass that surface's colour instead.
     """
     import math
     from PyQt6.QtCore import Qt, QPointF
@@ -49,7 +53,7 @@ def create_seraph_icon(size: int = 64) -> "QPixmap":
     c = size / 2
     stroke = max(1.5, size * 0.055)
     cyan   = QColor("#4FC3F7")
-    bg     = QColor("#0d1117")
+    bg     = QColor(bg or PALETTE["splash_bg"])
 
     # Flat-top regular hexagon
     hex_r = c * 0.87
@@ -92,8 +96,8 @@ def create_layout_sidebar_right_icon(size: int = 16, active: bool = False) -> "Q
     Render VS Code's Codicon `layout-sidebar-right`.
 
     Source shape: Microsoft VS Code Codicons, `layout-sidebar-right`.
-    The pixmap is generated at runtime so the icon can follow the current
-    dark-theme active/inactive colors without shipping extra assets.
+    The pixmap is generated at runtime so the icon can follow the active theme's
+    active/inactive colors without shipping extra assets.
     """
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPixmap
@@ -101,7 +105,7 @@ def create_layout_sidebar_right_icon(size: int = 16, active: bool = False) -> "Q
     px = QPixmap(size, size)
     px.fill(Qt.GlobalColor.transparent)
 
-    color = QColor("#ffffff" if active else PALETTE["text_muted"])
+    color = QColor(PALETTE["text_hover"] if active else PALETTE["text_muted"])
 
     p = QPainter(px)
     p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
@@ -179,11 +183,11 @@ QToolButton {{
 QToolButton:hover {{
     background-color: {p['bg_hover']};
     border: 1px solid {p['border']};
-    color: #ffffff;
+    color: {p['text_hover']};
 }}
 QToolButton:checked {{
     background-color: {p['btn_primary']};
-    color: #ffffff;
+    color: {p['text_on_accent']};
     border: 1px solid {p['border_focus']};
 }}
 QToolButton:pressed {{
@@ -213,7 +217,7 @@ QMenuBar::item:selected {{
 }}
 QMenuBar::item:pressed {{
     background-color: {p['btn_primary']};
-    color: #ffffff;
+    color: {p['text_on_accent']};
 }}
 
 /* ── Menus ────────────────────────────────────────────────────────────────── */
@@ -233,7 +237,7 @@ QMenu::item {{
 }}
 QMenu::item:selected {{
     background-color: {p['btn_primary']};
-    color: #ffffff;
+    color: {p['text_on_accent']};
 }}
 QMenu::separator {{
     height: 1px;
@@ -350,7 +354,7 @@ QPushButton {{
 QPushButton:hover {{
     background-color: {p['bg_hover']};
     border: 1px solid {p['border_focus']};
-    color: #ffffff;
+    color: {p['text_hover']};
 }}
 QPushButton:pressed {{
     background-color: {p['bg_surface']};
@@ -387,20 +391,20 @@ QListWidget {{
     outline: none;
 }}
 QListWidget::item {{
-    background-color: rgba(255, 255, 255, 0.03);
+    background-color: {p['overlay_subtle']};
     border-radius: 5px;
     padding: 6px;
     margin-bottom: 3px;
     border: 1px solid transparent;
 }}
 QListWidget::item:hover {{
-    background-color: rgba(255, 255, 255, 0.07);
+    background-color: {p['overlay_hover']};
     border: 1px solid {p['border']};
 }}
 QListWidget::item:selected {{
-    background-color: rgba(34, 139, 230, 0.15);
+    background-color: {p['overlay_selected']};
     border-left: 3px solid {p['accent']};
-    color: #ffffff;
+    color: {p['text_primary']};
 }}
 
 /* ── Progress Bar ─────────────────────────────────────────────────────────── */
@@ -438,7 +442,7 @@ QSlider::handle:horizontal {{
     border-radius: 8px;
 }}
 QSlider::handle:horizontal:hover {{
-    background: #ffffff;
+    background: {p['accent_primary']};
     border: 2px solid {p['border_focus']};
 }}
 
@@ -575,7 +579,7 @@ QToolTip {{
 /* ── Semantic buttons (via objectName) ────────────────────────────────────── */
 QPushButton#btn_primary {{
     background-color: {p['accent_primary']};
-    color: white; border: none;
+    color: {p['text_on_accent']}; border: none;
     border-radius: {r['md']}px;
     padding: {s[2]}px {s[3]}px;
     font-size: 13px; font-weight: 500;
@@ -583,13 +587,13 @@ QPushButton#btn_primary {{
 QPushButton#btn_primary:hover {{ background-color: {p['accent_primary_hover']}; }}
 QPushButton#btn_primary:pressed {{ background-color: {p['accent_primary_press']}; }}
 QPushButton#btn_primary:disabled {{
-    background-color: {p['bg_control']};
+    background-color: {p['bg_muted']};
     color: {p['text_disabled']};
 }}
 
 QPushButton#btn_action {{
     background-color: {p['accent_action']};
-    color: white; border: none;
+    color: {p['text_on_accent']}; border: none;
     border-radius: {r['md']}px;
     padding: {s[2]}px {s[3]}px;
     font-size: 13px; font-weight: 500;
@@ -597,13 +601,13 @@ QPushButton#btn_action {{
 QPushButton#btn_action:hover {{ background-color: {p['accent_action_hover']}; }}
 QPushButton#btn_action:pressed {{ background-color: {p['accent_action_press']}; }}
 QPushButton#btn_action:disabled {{
-    background-color: {p['bg_control']};
+    background-color: {p['bg_muted']};
     color: {p['text_disabled']};
 }}
 
 QPushButton#btn_success {{
     background-color: {p['accent_success']};
-    color: white; border: none;
+    color: {p['text_on_accent']}; border: none;
     border-radius: {r['md']}px;
     padding: {s[2]}px {s[3]}px;
     font-size: 13px; font-weight: 500;
@@ -621,7 +625,7 @@ QPushButton#btn_secondary {{
 }}
 QPushButton#btn_secondary:hover {{
     background-color: {p['bg_hover']};
-    color: white;
+    color: {p['text_hover']};
     border-color: {p['border_strong']};
 }}
 QPushButton#btn_secondary:pressed {{ background-color: {p['bg_elevated']}; }}
@@ -648,11 +652,11 @@ QPushButton#btn_destructive {{
 }}
 QPushButton#btn_destructive:hover {{
     background-color: {p['accent_danger']};
-    color: white;
+    color: {p['text_on_accent']};
 }}
 QPushButton#btn_destructive:pressed {{
     background-color: {p['accent_danger_press']};
-    color: white;
+    color: {p['text_on_accent']};
 }}
 
 /* ── Chrome panel toggles ─────────────────────────────────────────────────── */
@@ -683,7 +687,7 @@ QPushButton#panel_toggle:checked {{
 def btn_primary() -> str:
     p = PALETTE
     return (
-        f"QPushButton {{ background-color: {p['btn_primary']}; color: white; border: none; "
+        f"QPushButton {{ background-color: {p['btn_primary']}; color: {p['text_on_accent']}; border: none; "
         f"border-radius: 4px; padding: 6px 14px; font-weight: bold; font-family: {_FONT}; }} "
         f"QPushButton:hover {{ background-color: {p['btn_primary_hover']}; }} "
         f"QPushButton:pressed {{ background-color: {p['btn_primary_press']}; }} "
@@ -694,7 +698,7 @@ def btn_primary() -> str:
 def btn_success() -> str:
     p = PALETTE
     return (
-        f"QPushButton {{ background-color: {p['btn_success']}; color: white; border: none; "
+        f"QPushButton {{ background-color: {p['btn_success']}; color: {p['text_on_accent']}; border: none; "
         f"border-radius: 4px; padding: 6px 14px; font-weight: bold; font-family: {_FONT}; }} "
         f"QPushButton:hover {{ background-color: {p['btn_success_hover']}; }} "
         f"QPushButton:pressed {{ background-color: {p['btn_success_press']}; }}"
@@ -704,7 +708,7 @@ def btn_success() -> str:
 def btn_danger() -> str:
     p = PALETTE
     return (
-        f"QPushButton {{ background-color: {p['btn_danger']}; color: white; border: none; "
+        f"QPushButton {{ background-color: {p['btn_danger']}; color: {p['text_on_accent']}; border: none; "
         f"border-radius: 4px; padding: 6px 14px; font-weight: bold; font-family: {_FONT}; }} "
         f"QPushButton:hover {{ background-color: {p['btn_danger_hover']}; }} "
         f"QPushButton:pressed {{ background-color: {p['btn_danger_press']}; }}"
@@ -714,7 +718,7 @@ def btn_danger() -> str:
 def btn_nuclei() -> str:
     p = PALETTE
     return (
-        f"QPushButton {{ background-color: {p['btn_nuclei']}; color: white; border: none; "
+        f"QPushButton {{ background-color: {p['btn_nuclei']}; color: {p['text_on_accent']}; border: none; "
         f"border-radius: 4px; padding: 6px 14px; font-weight: bold; font-family: {_FONT}; margin-left: 4px; }} "
         f"QPushButton:hover {{ background-color: {p['btn_nuclei_hover']}; }} "
         f"QPushButton:pressed {{ background-color: {p['btn_nuclei_press']}; }}"
@@ -724,7 +728,7 @@ def btn_nuclei() -> str:
 def btn_hdf5() -> str:
     p = PALETTE
     return (
-        f"QPushButton {{ background-color: {p['btn_hdf5']}; color: white; border: none; "
+        f"QPushButton {{ background-color: {p['btn_hdf5']}; color: {p['text_on_accent']}; border: none; "
         f"border-radius: 4px; padding: 6px 14px; font-weight: bold; font-family: {_FONT}; margin-left: 4px; }} "
         f"QPushButton:hover {{ background-color: {p['btn_hdf5_hover']}; }} "
         f"QPushButton:pressed {{ background-color: {p['btn_hdf5_press']}; }}"
@@ -735,7 +739,7 @@ def btn_add() -> str:
     """Sidebar '+ Add ...' action buttons."""
     p = PALETTE
     return (
-        f"QPushButton {{ background-color: {p['btn_primary']}; color: white; border: none; "
+        f"QPushButton {{ background-color: {p['btn_primary']}; color: {p['text_on_accent']}; border: none; "
         f"border-radius: 4px; padding: 7px; font-weight: bold; font-family: {_FONT}; }} "
         f"QPushButton:hover {{ background-color: {p['btn_primary_hover']}; }} "
         f"QPushButton:pressed {{ background-color: {p['btn_primary_press']}; }}"
@@ -746,7 +750,7 @@ def btn_add_tile() -> str:
     """Sidebar '+ Add Tile' — green variant."""
     p = PALETTE
     return (
-        f"QPushButton {{ background-color: {p['btn_success']}; color: white; border: none; "
+        f"QPushButton {{ background-color: {p['btn_success']}; color: {p['text_on_accent']}; border: none; "
         f"border-radius: 4px; padding: 6px; font-weight: bold; font-family: {_FONT}; margin-top: 4px; }} "
         f"QPushButton:hover {{ background-color: {p['btn_success_hover']}; }} "
         f"QPushButton:pressed {{ background-color: {p['btn_success_press']}; }}"
@@ -807,7 +811,7 @@ def tool_pill() -> str:
         f"QPushButton {{ background-color: {p['bg_control']}; color: {p['text_primary']}; "
         f"border: 1px solid {p['border_default']}; border-radius: 5px; "
         f"padding: 3px 12px; font-size: 8pt; font-weight: 500; font-family: {_FONT}; min-width: 90px; }} "
-        f"QPushButton:hover {{ background-color: {p['bg_hover']}; border: 1px solid {p['border_strong']}; color: #ffffff; }} "
+        f"QPushButton:hover {{ background-color: {p['bg_hover']}; border: 1px solid {p['border_strong']}; color: {p['text_hover']}; }} "
         f"QPushButton:pressed {{ background-color: {p['bg_elevated']}; }}"
     )
 

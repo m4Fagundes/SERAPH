@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QTabBar, QWidget
 
 from app.interface.gui.design_system import COLORS, SPACE
+from app.interface.gui.theme_manager import themed
 
 
 class ImageTabStrip(QWidget):
@@ -56,7 +57,7 @@ class ImageTabStrip(QWidget):
         self._trailing_layout.setSpacing(SPACE[2])
         layout.addLayout(self._trailing_layout)
 
-        self.setStyleSheet(self._style())
+        themed(self, self._style)
 
     def add_trailing_widget(self, widget: QWidget) -> None:
         self._trailing_layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -80,7 +81,7 @@ class ImageTabStrip(QWidget):
         close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         close_button.setFlat(True)
-        close_button.setStyleSheet(self._close_button_style())
+        themed(close_button, self._close_button_style)
         close_button.clicked.connect(self._emit_close_for_sender)
         close_layout.addWidget(close_button, 0, Qt.AlignmentFlag.AlignCenter)
 

@@ -42,6 +42,7 @@ from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from app.application.pixel_mask_service import PixelMaskService
 from app.interface.gui.theme import PALETTE
 from app.interface.gui.design_system import COLORS, SPACE, FONT_FAMILY
+from app.interface.gui.theme_manager import themed
 from app.interface.gui.widgets.section_header import SectionHeader
 from app.interface.gui.widgets.buttons import PrimaryButton, SecondaryButton
 
@@ -70,8 +71,8 @@ def _btn_delete_style() -> str:
         f"QPushButton {{ background: transparent; color: {p['accent_danger']};"
         f" border: 1px solid transparent; border-radius: 4px;"
         f" padding: 0; margin: 0; font-size: 11px; font-weight: 600; }}"
-        f"QPushButton:hover {{ background: {p['accent_danger']}; color: white; }}"
-        f"QPushButton:pressed {{ background: {p['accent_danger_press']}; color: white; }}"
+        f"QPushButton:hover {{ background: {p['accent_danger']}; color: {p['text_on_accent']}; }}"
+        f"QPushButton:pressed {{ background: {p['accent_danger_press']}; color: {p['text_on_accent']}; }}"
     )
 
 
@@ -101,6 +102,77 @@ def _slice_checkbox_style() -> str:
         f" background: {p['brand']};"
         f" border-color: {p['brand']};"
         "}"
+    )
+
+
+def _slice_name_style() -> str:
+    return (
+        f'QLineEdit[readOnly="true"] {{'
+        f" background: transparent; color: {COLORS['text_primary']};"
+        f" border: none; font-weight: 600; font-size: 12px;"
+        f" font-family: {_FONT}; padding: 0; margin: 0; min-height: 20px;"
+        f" max-height: 20px; }}"
+        f' QLineEdit[readOnly="false"] {{'
+        f" background: {COLORS['bg_surface']}; color: {COLORS['text_primary']};"
+        f" border: 1px solid {COLORS['border_strong']}; border-radius: 3px;"
+        f" padding: 1px 4px; font-size: 12px; font-family: {_FONT}; }}"
+    )
+
+
+def _row_selected_style() -> str:
+    return (
+        f"background: {COLORS['bg_selected_brand']};"
+        f" border: 1px solid {COLORS['brand']};"
+        f" border-radius: 5px;"
+    )
+
+
+def _row_idle_style() -> str:
+    return (
+        f"background: {COLORS['bg_elevated']};"
+        f" border: 1px solid {COLORS['border_default']};"
+        f" border-radius: 5px;"
+    )
+
+
+def _empty_icon_style() -> str:
+    return f"color: {COLORS['text_disabled']}; font-size: 22pt; background: transparent;"
+
+
+def _empty_msg_style() -> str:
+    return (
+        f"color: {COLORS['text_disabled']}; font-size: 8pt;"
+        f" font-family: {_FONT}; background: transparent; line-height: 160%;"
+    )
+
+
+def _selected_count_style() -> str:
+    return f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
+
+
+def _selection_bar_style() -> str:
+    return (
+        f"QWidget#slice_batch_selection {{ background: {COLORS['bg_surface']};"
+        f" border-bottom: 1px solid {COLORS['border_default']}; }}"
+    )
+
+
+def _list_style() -> str:
+    # Rows paint their own background, so the list chrome stays fully transparent.
+    return (
+        f"QListWidget {{ background: transparent; border: none;"
+        f" padding: {SPACE[3]}px; }}"
+        f"QListWidget::item {{ background: transparent; border: none;"
+        f" padding: 0; margin: 0 0 {SPACE[2]}px 0; }}"
+        f"QListWidget::item:selected {{ background: transparent; border: none; }}"
+        f"QListWidget::item:hover {{ background: transparent; border: none; }}"
+    )
+
+
+def _footer_style() -> str:
+    return (
+        f"QWidget#slice_footer {{ background: {COLORS['bg_surface']};"
+        f" border-top: 1px solid {COLORS['border_default']}; }}"
     )
 
 
@@ -143,7 +215,7 @@ class _SliceRow(QWidget):
         self.check.setCursor(Qt.CursorShape.PointingHandCursor)
         self.check.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.check.setFixedSize(16, 16)
-        self.check.setStyleSheet(_slice_checkbox_style())
+        themed(self.check, _slice_checkbox_style)
         self.check.toggled.connect(on_checked)
         root.addWidget(self.check, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -156,17 +228,7 @@ class _SliceRow(QWidget):
         self.name_edit.setReadOnly(True)
         self.name_edit.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.name_edit.setCursorPosition(0)
-        self.name_edit.setStyleSheet(
-            f'QLineEdit[readOnly="true"] {{'
-            f" background: transparent; color: {COLORS['text_primary']};"
-            f" border: none; font-weight: 600; font-size: 12px;"
-            f" font-family: {_FONT}; padding: 0; margin: 0; min-height: 20px;"
-            f" max-height: 20px; }}"
-            f' QLineEdit[readOnly="false"] {{'
-            f" background: {COLORS['bg_surface']}; color: {COLORS['text_primary']};"
-            f" border: 1px solid {COLORS['border_strong']}; border-radius: 3px;"
-            f" padding: 1px 4px; font-size: 12px; font-family: {_FONT}; }}"
-        )
+        themed(self.name_edit, _slice_name_style)
         self.name_edit.editingFinished.connect(self._finish_edit)
         root.addWidget(self.name_edit, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -177,7 +239,7 @@ class _SliceRow(QWidget):
         self._edit_btn.setToolTip("Rename slice  (double-click also works)")
         self._edit_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._edit_btn.setFlat(True)
-        self._edit_btn.setStyleSheet(_btn_edit_style())
+        themed(self._edit_btn, _btn_edit_style)
         self._edit_btn.clicked.connect(self._start_edit)
 
         self._del_btn = QPushButton("×")
@@ -186,7 +248,7 @@ class _SliceRow(QWidget):
         self._del_btn.setToolTip("Delete slice")
         self._del_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._del_btn.setFlat(True)
-        self._del_btn.setStyleSheet(_btn_delete_style())
+        themed(self._del_btn, _btn_delete_style)
         self._del_btn.clicked.connect(on_delete)
 
         root.addWidget(self._edit_btn)
@@ -197,18 +259,7 @@ class _SliceRow(QWidget):
         self._refresh_style()
 
     def _refresh_style(self) -> None:
-        if self._selected:
-            self.setStyleSheet(
-                f"background: rgba(34, 211, 238, 0.12);"
-                f" border: 1px solid {COLORS['brand']};"
-                f" border-radius: 5px;"
-            )
-        else:
-            self.setStyleSheet(
-                f"background: {COLORS['bg_elevated']};"
-                f" border: 1px solid {COLORS['border_default']};"
-                f" border-radius: 5px;"
-            )
+        themed(self, _row_selected_style if self._selected else _row_idle_style)
 
     # ── Inline rename ─────────────────────────────────────────────────────────
 
@@ -253,9 +304,7 @@ class _EmptyState(QWidget):
         # reliable than emoji on Windows across all font configurations.
         icon = QLabel("□")  # U+25A1 WHITE SQUARE — universally available
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet(
-            f"color: {PALETTE['text_disabled']}; font-size: 22pt; background: transparent;"
-        )
+        themed(icon, _empty_icon_style)
 
         if mode == "no_image":
             msg_text = "No image open.\nOpen an image to start."
@@ -265,10 +314,7 @@ class _EmptyState(QWidget):
         msg = QLabel(msg_text)
         msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
         msg.setWordWrap(True)
-        msg.setStyleSheet(
-            f"color: {PALETTE['text_disabled']}; font-size: 8pt;"
-            f" font-family: {_FONT}; background: transparent; line-height: 160%;"
-        )
+        themed(msg, _empty_msg_style)
 
         layout.addWidget(icon)
         layout.addWidget(msg)
@@ -331,9 +377,7 @@ class SlicePreviews(QWidget):
         selection_layout.addWidget(self._select_all)
 
         self._selected_count = QLabel("0 selected")
-        self._selected_count.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
-        )
+        themed(self._selected_count, _selected_count_style)
         selection_layout.addWidget(self._selected_count, stretch=1)
 
         self._clear_selection_btn = SecondaryButton("Clear", size="xs")
@@ -341,10 +385,7 @@ class SlicePreviews(QWidget):
         self._clear_selection_btn.clicked.connect(self.clear_batch_selection)
         selection_layout.addWidget(self._clear_selection_btn)
 
-        self._selection_bar.setStyleSheet(
-            f"QWidget#slice_batch_selection {{ background: {COLORS['bg_surface']};"
-            f" border-bottom: 1px solid {COLORS['border_default']}; }}"
-        )
+        themed(self._selection_bar, _selection_bar_style)
         self.layout.addWidget(self._selection_bar)
 
         # ── List ──────────────────────────────────────────────────────────────
@@ -354,14 +395,7 @@ class SlicePreviews(QWidget):
         # 2 px gap between items — visible breathing without border lines
         self.list_widget.setSpacing(2)
         self.list_widget.setContentsMargins(SPACE[3], SPACE[3], SPACE[3], SPACE[3])
-        self.list_widget.setStyleSheet(
-            f"QListWidget {{ background: transparent; border: none;"
-            f" padding: {SPACE[3]}px; }}"
-            f"QListWidget::item {{ background: transparent; border: none;"
-            f" padding: 0; margin: 0 0 {SPACE[2]}px 0; }}"
-            f"QListWidget::item:selected {{ background: transparent; border: none; }}"
-            f"QListWidget::item:hover {{ background: transparent; border: none; }}"
-        )
+        themed(self.list_widget, _list_style)
         self.list_widget.itemClicked.connect(self.on_item_clicked)
         self.list_widget.itemSelectionChanged.connect(self._sync_row_selection)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -376,10 +410,7 @@ class SlicePreviews(QWidget):
         self._footer.hide()
         self.layout.addWidget(self._footer)
 
-        self._footer.setStyleSheet(
-            f"QWidget#slice_footer {{ background: {COLORS['bg_surface']};"
-            f" border-top: 1px solid {COLORS['border_default']}; }}"
-        )
+        themed(self._footer, _footer_style)
 
     def add_footer_widget(self, widget: QWidget) -> None:
         self._footer.show()

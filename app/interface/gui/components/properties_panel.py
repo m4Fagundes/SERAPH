@@ -8,9 +8,44 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFontMetrics
 from app.interface.gui.theme import PALETTE
 from app.interface.gui.design_system import COLORS, SPACE, SIZE
+from app.interface.gui.theme_manager import themed
 from app.interface.gui.widgets.section_header import SectionHeader
 
 logger = logging.getLogger(__name__)
+
+
+def _style_placeholder() -> str:
+    return f"color: {COLORS['text_disabled']}; font-size: 11px; font-style: italic;"
+
+
+def _style_placeholder_flat() -> str:
+    return _style_placeholder() + " background: transparent;"
+
+
+def _style_row() -> str:
+    return (
+        f"QFrame#seg_summary_row {{ background: {COLORS['bg_surface']};"
+        f" border: 1px solid {COLORS['border_default']}; border-radius: 6px; }}"
+    )
+
+
+def _style_layer_name() -> str:
+    return (
+        f"color: {COLORS['text_primary']}; font-size: 12px; font-weight: 600;"
+        " background: transparent;"
+    )
+
+
+def _style_meta_10() -> str:
+    return f"color: {COLORS['text_muted']}; font-size: 10px; background: transparent;"
+
+
+def _style_meta_11() -> str:
+    return f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
+
+
+def _style_stat() -> str:
+    return f"color: {COLORS['text_secondary']}; font-size: 11px; background: transparent;"
 
 
 class PropertiesPanel(QDockWidget):
@@ -44,9 +79,7 @@ class PropertiesPanel(QDockWidget):
 
         # ── Empty state placeholder ────────────────────────────────────────────
         self._empty_lbl = QLabel("Select a slice from the\nleft panel to view properties.")
-        self._empty_lbl.setStyleSheet(
-            f"color: {COLORS['text_disabled']}; font-size: 11px; font-style: italic;"
-        )
+        themed(self._empty_lbl, _style_placeholder)
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_lbl.setVisible(True)
         self.main_layout.addWidget(self._empty_lbl)
@@ -224,9 +257,7 @@ class PropertiesPanel(QDockWidget):
         layout.addWidget(layer_dropdown)
 
         hint = QLabel("Run a segmentation model to create layers.")
-        hint.setStyleSheet(
-            f"color: {COLORS['text_disabled']}; font-size: 11px; font-style: italic;"
-        )
+        themed(hint, _style_placeholder)
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -261,10 +292,7 @@ class PropertiesPanel(QDockWidget):
         layers = tile.segmentation_layers
         if not layers:
             empty = QLabel("No segmentation layers yet.")
-            empty.setStyleSheet(
-                f"color: {COLORS['text_disabled']}; font-size: 11px; font-style: italic;"
-                " background: transparent;"
-            )
+            themed(empty, _style_placeholder_flat)
             self._seg_summary_layout.addWidget(empty)
             return
 
@@ -281,10 +309,7 @@ class PropertiesPanel(QDockWidget):
     def _make_segmentation_row(self, layer: dict) -> QWidget:
         row = QFrame()
         row.setObjectName("seg_summary_row")
-        row.setStyleSheet(
-            f"QFrame#seg_summary_row {{ background: {COLORS['bg_surface']};"
-            f" border: 1px solid {COLORS['border_default']}; border-radius: 6px; }}"
-        )
+        themed(row, _style_row)
 
         layout = QHBoxLayout(row)
         layout.setContentsMargins(SPACE[2], SPACE[2], SPACE[2], SPACE[2])
@@ -293,9 +318,10 @@ class PropertiesPanel(QDockWidget):
         marker = QLabel()
         color = layer.get("color", COLORS["brand"])
         marker.setFixedSize(9, 9)
-        marker.setStyleSheet(
-            f"background: {color}; border-radius: 3px;"
-            " border: 1px solid rgba(255,255,255,0.25);"
+        themed(
+            marker,
+            lambda c=color: f"background: {c}; border-radius: 3px;"
+                            f" border: 1px solid {COLORS['border_default']};",
         )
         layout.addWidget(marker, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -306,19 +332,14 @@ class PropertiesPanel(QDockWidget):
         name = QLabel(layer.get("name") or layer.get("model") or "Segmentation")
         name.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         name.setToolTip(name.text())
-        name.setStyleSheet(
-            f"color: {COLORS['text_primary']}; font-size: 12px; font-weight: 600;"
-            " background: transparent;"
-        )
+        themed(name, _style_layer_name)
         text_col.addWidget(name)
 
         model = layer.get("model_name") or layer.get("model")
         model_text = f"model: {model}" if model else "model: unknown"
         model_lbl = QLabel(model_text)
         model_lbl.setToolTip(model_text)
-        model_lbl.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 10px; background: transparent;"
-        )
+        themed(model_lbl, _style_meta_10)
         text_col.addWidget(model_lbl)
         layout.addLayout(text_col, stretch=1)
 
@@ -329,9 +350,7 @@ class PropertiesPanel(QDockWidget):
         count = len(layer.get("polygons", []))
         cells = QLabel(f"{count:,} cells")
         cells.setToolTip(cells.text())
-        cells.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px; background: transparent;"
-        )
+        themed(cells, _style_stat)
         cells.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         stats_col.addWidget(cells)
 
@@ -341,9 +360,7 @@ class PropertiesPanel(QDockWidget):
         timing.setToolTip(time_text)
         timing.setMinimumWidth(0)
         timing.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        timing.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
-        )
+        themed(timing, _style_meta_11)
         stats_col.addWidget(timing)
 
         vram_free = layer.get("vram_free_gb_start")
@@ -356,9 +373,7 @@ class PropertiesPanel(QDockWidget):
         vram = QLabel(vram_text)
         vram.setToolTip(vram_text)
         vram.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        vram.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 10px; background: transparent;"
-        )
+        themed(vram, _style_meta_10)
         stats_col.addWidget(vram)
         layout.addLayout(stats_col)
         row.resizeEvent = lambda event, row=row, name=name, model_lbl=model_lbl, cells=cells, timing=timing, vram=vram: self._fit_segmentation_row_text(

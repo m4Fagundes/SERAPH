@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
                              QInputDialog, QMenu, QSpinBox)
 from PyQt6.QtCore import Qt, QPoint, QSize
-from PyQt6.QtGui import QIcon, QAction, QKeySequence, QShortcut, QColor, QFont
+from PyQt6.QtGui import QIcon, QAction, QActionGroup, QKeySequence, QShortcut, QColor, QFont
 
 from app.domain.history import UndoManager
 from app.application.project_service import ProjectService
@@ -30,6 +30,7 @@ from app.interface.gui.theme import (
     create_seraph_icon,
     tool_pill,
 )
+from app.interface.gui.theme_manager import apply_theme, current_theme, themed
 from app.interface.gui.widgets import PrimaryButton, SecondaryButton, SuccessButton
 
 # Import the new PyQt Components (to be rewritten in subsequent steps)
@@ -61,7 +62,11 @@ class SlicerLabApp(QMainWindow):
         self.resize(1400, 900)
         from PyQt6.QtGui import QIcon
         self.setWindowIcon(QIcon(create_seraph_icon(64)))
-        self.setStyleSheet(f"QMainWindow {{ background-color: {PALETTE['bg_base']}; color: {PALETTE['text_primary']}; }}")
+        themed(
+            self,
+            lambda: f"QMainWindow {{ background-color: {PALETTE['bg_base']};"
+                    f" color: {PALETTE['text_primary']}; }}",
+        )
 
         self.sessions = []
         self.current_session = None
@@ -196,7 +201,7 @@ class SlicerLabApp(QMainWindow):
         self.btn_tool_pill = QPushButton("Grid  ▾")
         self.btn_tool_pill.setToolTip("Active tool — click to switch  [G / B / S / E / A]")
         self.btn_tool_pill.setFixedHeight(28)
-        self.btn_tool_pill.setStyleSheet(tool_pill())
+        themed(self.btn_tool_pill, tool_pill)
         self.btn_tool_pill.clicked.connect(self._show_tool_menu)
         self.context_bar.add_action_widget(self.btn_tool_pill)
 
@@ -316,10 +321,8 @@ class SlicerLabApp(QMainWindow):
 
         # ── Execution time label — lives in status bar, updated by tile_renderer
         self.lbl_execution_time = QLabel("")
-        self.lbl_execution_time.setStyleSheet(
-            f"color: {PALETTE['exec_time_done']}; font-weight: bold; font-size: 8pt; "
-            f"background: transparent; padding: 0 8px;"
-        )
+        self._exec_time_state = "done"
+        themed(self.lbl_execution_time, self._execution_time_style)
         self.lbl_execution_time.hide()
 
         # 3. Left Dock (Sidebar) — Slices only; images live in the tab bar
@@ -380,7 +383,7 @@ class SlicerLabApp(QMainWindow):
         self._menu_panel_controls.setObjectName("menu_panel_controls")
         self._menu_panel_controls.setStyleSheet(
             "QWidget#menu_panel_controls { background: transparent; border: none; }"
-        )
+        )  # color-free — no theme dependency
         _panel_controls_layout = QHBoxLayout(self._menu_panel_controls)
         _panel_controls_layout.setContentsMargins(0, 0, 8, 0)
         _panel_controls_layout.setSpacing(4)
@@ -401,23 +404,21 @@ class SlicerLabApp(QMainWindow):
         _sb_layout.setContentsMargins(0, 0, 4, 0)
         _sb_layout.setSpacing(0)
 
-        _lbl_style = (
-            f"color: {PALETTE['text_muted']}; font-size: 8pt; "
-            f"background: transparent; padding: 0 8px;"
-        )
-        _sep_style = f"color: {PALETTE['border']}; background: transparent; padding: 0 2px;"
+        def _lbl_style() -> str:
+            return (
+                f"color: {PALETTE['text_muted']}; font-size: 8pt; "
+                f"background: transparent; padding: 0 8px;"
+            )
 
-        self._sb_zoom = QLabel("Zoom: —")
-        self._sb_zoom.setStyleSheet(_lbl_style)
-        self._sb_nuclei = QLabel("Nuclei: —")
-        self._sb_nuclei.setStyleSheet(_lbl_style)
-        self._sb_tool = QLabel("Tool: —")
-        self._sb_tool.setStyleSheet(_lbl_style)
+        def _sep_style() -> str:
+            return f"color: {PALETTE['border']}; background: transparent; padding: 0 2px;"
 
-        sep1 = QLabel("|")
-        sep1.setStyleSheet(_sep_style)
-        sep2 = QLabel("|")
-        sep2.setStyleSheet(_sep_style)
+        self._sb_zoom = themed(QLabel("Zoom: —"), _lbl_style)
+        self._sb_nuclei = themed(QLabel("Nuclei: —"), _lbl_style)
+        self._sb_tool = themed(QLabel("Tool: —"), _lbl_style)
+
+        sep1 = themed(QLabel("|"), _sep_style)
+        sep2 = themed(QLabel("|"), _sep_style)
 
         _sb_layout.addWidget(self._sb_zoom)
         _sb_layout.addWidget(sep1)
@@ -551,6 +552,30 @@ class SlicerLabApp(QMainWindow):
         self.btn_toggle_properties.setChecked(is_open)
         self.btn_toggle_properties.setIcon(QIcon(create_layout_sidebar_right_icon(16, is_open)))
         self.btn_toggle_properties.blockSignals(False)
+
+    # ── Theme ─────────────────────────────────────────────────────────────────
+
+    def _execution_time_style(self) -> str:
+        token = {
+            "running": "timer_label",
+            "done":    "exec_time_done",
+            "error":   "exec_time_error",
+        }[getattr(self, "_exec_time_state", "done")]
+        return (
+            f"color: {PALETTE[token]}; font-weight: bold; font-size: 8pt; "
+            f"background: transparent; padding: 0 8px;"
+        )
+
+    def set_execution_time_state(self, state: str) -> None:
+        """Recolour the status-bar timer: 'running' | 'done' | 'error'."""
+        self._exec_time_state = state
+        themed(self.lbl_execution_time, self._execution_time_style)
+
+    def _set_theme(self, name: str) -> None:
+        apply_theme(name)
+        # The panel-toggle icon is a runtime-painted pixmap, not QSS — repaint it.
+        self._sync_panel_toggles()
+        self.statusBar().showMessage(f"{name.capitalize()} theme applied.", 2000)
 
     def _activate_tool(self, tool_name):
         self.active_tool = tool_name
@@ -870,6 +895,22 @@ class SlicerLabApp(QMainWindow):
         act_back.setStatusTip("Return from tile view to the full image canvas")
         act_back.triggered.connect(self._back_to_canvas)
         view_menu.addAction(act_back)
+
+        view_menu.addSeparator()
+
+        # ── Theme ─────────────────────────────────────────────────────────────
+        theme_menu = view_menu.addMenu("Theme")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+
+        for label, key in (("Dark", "dark"), ("Light", "light")):
+            act_theme = QAction(label, self)
+            act_theme.setCheckable(True)
+            act_theme.setChecked(current_theme() == key)
+            act_theme.setStatusTip(f"Switch the interface to the {key} theme")
+            act_theme.triggered.connect(lambda _checked, k=key: self._set_theme(k))
+            theme_group.addAction(act_theme)
+            theme_menu.addAction(act_theme)
 
         # ── Tools ─────────────────────────────────────────────────────────
         tools_menu = mb.addMenu("&Tools")

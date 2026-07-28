@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
 from app.interface.gui.design_system import COLORS, SPACE
+from app.interface.gui.theme_manager import themed
 
 
 class CollapsibleSidebar(QWidget):
@@ -54,7 +55,7 @@ class CollapsibleSidebar(QWidget):
         layout.addWidget(self.header)
         layout.addWidget(self._content, stretch=1)
 
-        self.setStyleSheet(self._style())
+        themed(self, self._style)
 
     def set_badge_count(self, count: int) -> None:
         return

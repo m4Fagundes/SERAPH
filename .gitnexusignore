@@ -1,0 +1,9 @@
+# Third-party libraries vendored as submodules — not SERAPH code.
+# Indexing them buries the app's own graph under ~1300 library files.
+external/
+
+# Local envs and build artifacts
+venv/
+venv-sm120/
+var/
+sample_data/

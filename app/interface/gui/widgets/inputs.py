@@ -7,6 +7,11 @@ using standardized height and spacing tokens.
 from __future__ import annotations
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QLineEdit, QComboBox
 from app.interface.gui.design_system import SIZE, COLORS, SPACE
+from app.interface.gui.theme_manager import themed
+
+
+def _label_style() -> str:
+    return f"color: {COLORS['text_muted']}; font-size: 12px; background: transparent;"
 
 
 class LabeledInput(QWidget):
@@ -21,9 +26,7 @@ class LabeledInput(QWidget):
 
         lbl = QLabel(label)
         lbl.setFixedWidth(80)
-        lbl.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 12px; background: transparent;"
-        )
+        themed(lbl, _label_style)
         self._input = QLineEdit()
         self._input.setPlaceholderText(placeholder)
         self._input.setFixedHeight(h)
@@ -55,9 +58,7 @@ class LabeledCombobox(QWidget):
 
         lbl = QLabel(label)
         lbl.setFixedWidth(80)
-        lbl.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 12px; background: transparent;"
-        )
+        themed(lbl, _label_style)
         self._combo = QComboBox()
         self._combo.setFixedHeight(h)
         self._combo.setObjectName("combo_labeled")

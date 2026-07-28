@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from app.interface.gui.design_system import COLORS, FONT_FAMILY, SPACE
 from app.interface.gui.theme import create_seraph_icon
+from app.interface.gui.theme_manager import theme_manager, themed
 from app.interface.gui.widgets.buttons import PrimaryButton, SecondaryButton
 
 
@@ -34,10 +35,13 @@ class WelcomePage(QWidget):
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.setSpacing(SPACE[4])
 
-        logo = QLabel()
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setPixmap(create_seraph_icon(72))
-        panel_layout.addWidget(logo, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._logo = QLabel()
+        self._logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._refresh_logo()
+        # The mark's body is filled with the page background, so it has to be
+        # re-rendered when the theme flips — a pixmap can't follow the QSS.
+        theme_manager.theme_changed.connect(self._refresh_logo)
+        panel_layout.addWidget(self._logo, 0, Qt.AlignmentFlag.AlignHCenter)
 
         title = QLabel("SERAPH")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -84,7 +88,10 @@ class WelcomePage(QWidget):
 
         root.addWidget(panel, 0, Qt.AlignmentFlag.AlignHCenter)
         root.addStretch(2)
-        self.setStyleSheet(self._style())
+        themed(self, self._style)
+
+    def _refresh_logo(self) -> None:
+        self._logo.setPixmap(create_seraph_icon(72, bg=COLORS["bg_canvas"]))
 
     def _style(self) -> str:
         return f"""

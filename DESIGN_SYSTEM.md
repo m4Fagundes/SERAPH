@@ -5,29 +5,74 @@ Token definitions live in `app/interface/gui/design_system.py`.
 
 ---
 
+## Themes
+
+Two palettes ship: **dark** (default) and **light**. `COLORS` is a *live* dict —
+`set_theme()` mutates it in place, so `from ... import COLORS` stays valid across a
+switch. Users flip themes at **View → Theme**; the choice persists via `QSettings`.
+
+The **image viewport stays dark in both themes** (`canvas_bg`, `tile_bg`). A dark
+backdrop maximises perceived contrast on tissue and keeps segmentation overlay
+colors reading the same way regardless of the surrounding chrome. Everything else
+— docks, menus, toolbars, panels, the welcome page — follows the theme.
+
+### Writing theme-aware widgets
+
+Read colors at style-application time, never at import time. A pre-formatted string
+freezes the palette it was built with.
+
+```python
+from app.interface.gui.theme_manager import themed
+
+# Right — re-applied automatically on every theme switch
+themed(lbl, lambda: f"color: {COLORS['text_muted']}; font-size: 11px;")
+
+# Wrong — frozen at construction, goes stale the moment the theme flips
+lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+```
+
+Calling `themed()` again on the same widget replaces its style function, so
+state-dependent styles (selected/idle, active/inactive) work unchanged. Widgets are
+held weakly — no unregistering needed. For non-QSS visuals (a painted `QPixmap`),
+connect to `theme_manager.theme_changed` and re-render.
+
+Bare `setStyleSheet()` is still fine for **color-free** rules (`background: transparent`)
+and for the theme-invariant viewport.
+
+---
+
 ## Color Tokens
 
-| Token | Value | Purpose |
-|---|---|---|
-| `bg_canvas` | `#111111` | Image/canvas area background |
-| `bg_surface` | `#1A1B1E` | Base window background |
-| `bg_elevated` | `#25262B` | Elevated surfaces (selected cards) |
-| `bg_panel` | `#2C2E33` | Sidebars, docks, toolbars |
-| `bg_control` | `#373A40` | Inputs, neutral buttons, dropdowns |
-| `bg_hover` | `#404652` | Hover overlay for any control |
-| `bg_selected` | `rgba(34,139,230,0.12)` | Selection overlay |
-| `border_default` | `#373A40` | Default separator / border |
-| `border_strong` | `#228BE6` | Focus ring |
-| `text_primary` | `#E9ECEF` | Body text |
-| `text_secondary` | `#C1C2C5` | Secondary labels |
-| `text_muted` | `#909296` | Section headers, hints |
-| `text_disabled` | `#5C5F66` | Disabled state |
-| `accent_primary` | `#228BE6` | Blue — Add, Open, Select |
-| `accent_action` | `#7950F2` | Purple — Run, Execute, Process |
-| `accent_success` | `#40C057` | Green — Save, Apply, Done |
-| `accent_warning` | `#F59F00` | Yellow — reversible alerts |
-| `accent_danger` | `#FA5252` | Red — Delete, Remove, Clear |
-| `brand` | `#15AABF` | SERAPH cyan brand color |
+| Token | Dark | Light | Purpose |
+|---|---|---|---|
+| `bg_canvas` | `#0D0F12` | `#FFFFFF` | Central content area (behind tabs / welcome) |
+| `bg_base` | `#181A20` | `#F1F3F5` | Base window background |
+| `bg_surface` / `bg_elevated` | `#20232A` | `#FFFFFF` | Raised / elevated surfaces |
+| `bg_panel` | `#252932` | `#F8F9FA` | Sidebars, docks, toolbars |
+| `bg_control` | `#303640` | `#FFFFFF` | Inputs, neutral buttons, dropdowns |
+| `bg_muted` | `#303640` | `#E9ECEF` | Recessed chips: badges, disabled fills |
+| `bg_hover` | `#3A424D` | `#E9ECEF` | Hover overlay for any control |
+| `bg_selected` | `rgba(34,139,230,0.12)` | same | Selection overlay |
+| `overlay_subtle` / `overlay_hover` | white @ 3% / 7% | black @ 2% / 5% | Tint a surface without knowing its background |
+| `border_default` | `#343B46` | `#DEE2E6` | Default separator / border |
+| `border_strong` | `#228BE6` | same | Focus ring |
+| `text_primary` | `#E9ECEF` | `#1A1B1E` | Body text |
+| `text_secondary` | `#C1C2C5` | `#495057` | Secondary labels |
+| `text_muted` | `#909296` | `#868E96` | Section headers, hints |
+| `text_disabled` | `#5C5F66` | `#ADB5BD` | Disabled state |
+| `text_on_accent` | `#FFFFFF` | same | Label on a **filled** accent button |
+| `text_hover` | `#FFFFFF` | `#1A1B1E` | Label on a **neutral hover** surface |
+| `accent_primary` | `#228BE6` | same | Blue — Add, Open, Select |
+| `accent_action` | `#7950F2` | same | Purple — Run, Execute, Process |
+| `accent_success` | `#40C057` | `#37B24D` | Green — Save, Apply, Done |
+| `accent_warning` | `#F59F00` | `#F08C00` | Yellow — reversible alerts |
+| `accent_danger` | `#FA5252` | `#F03E3E` | Red — Delete, Remove, Clear |
+| `brand` | `#22D3EE` | `#0E7490` | SERAPH cyan (darkened for legibility on white) |
+| `canvas_bg` / `tile_bg` | `#0D0F12` / `#111317` | **unchanged** | Image viewport — dark in every theme |
+
+`text_on_accent` and `text_hover` are distinct on purpose. White is correct on a
+filled blue button in both themes; white on a light-grey hover surface is invisible.
+Never hard-code `#ffffff` for either.
 
 ---
 
@@ -135,6 +180,8 @@ purple = computation. Disabled until a model is selected.
 ## Conformance Checklist
 
 - [ ] No magic numbers — use `SPACE[n]`, `SIZE["key"]`, `RADIUS["key"]`, `COLORS["key"]`
+- [x] Color-bearing inline styles go through `themed(widget, style_fn)` so they survive a theme switch
+- [x] No hard-coded `#ffffff` / `color: white` — use `text_on_accent` or `text_hover`
 - [x] No inline `setStyleSheet` on buttons using semantic variants — use objectName  *(main_window.py migrated: add_btn, add_tile_btn, btn_run)*
 - [x] Button colors follow semantics table above  *(PrimaryButton=blue, SuccessButton=green)*
 - [x] Dynamic swatches (slice color) may use inline `setStyleSheet` — this is the only exception

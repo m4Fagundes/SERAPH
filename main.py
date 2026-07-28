@@ -156,11 +156,17 @@ def main() -> None:
     from app.interface.gui.splash_screen import SeraphSplashScreen
 
     app = QApplication(sys.argv)
+    # QSettings keys the persisted theme off these — set before any settings read.
+    app.setOrganizationName("SERAPH")
+    app.setApplicationName("SERAPH")
 
     from PyQt6.QtGui import QIcon
-    from app.interface.gui.theme import global_stylesheet, create_seraph_icon
+    from app.interface.gui.theme import create_seraph_icon
+    from app.interface.gui.theme_manager import apply_theme, saved_theme
+
     app.setWindowIcon(QIcon(create_seraph_icon(256)))
-    app.setStyleSheet(global_stylesheet())
+    # Applies the palette and the global stylesheet in one shot.
+    apply_theme(saved_theme(), persist=False)
 
     splash = SeraphSplashScreen()
     splash.show()
